@@ -168,10 +168,10 @@ export default function Home() {
       for (const e of r.entries) info[e.symbol] = { kd: String(e.kd), citation: e.citation };
       setKdInfo(info);
       setRows((rs) => rs.map((row) => {
-        if (row.kdEdited) return row;
+        // Igual ao Gradio: ao trocar o solo, o Kd sempre volta ao valor de literatura.
         const lit = info[row.symbol];
         if (!lit) return row;
-        return { ...row, kd: lit.kd, kdSource: lit.citation };
+        return { ...row, kd: lit.kd, kdSource: lit.citation, kdEdited: false };
       }));
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
