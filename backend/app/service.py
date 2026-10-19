@@ -229,17 +229,6 @@ def _plots_b64(req: SimulateRequest, results, soil, crop, root_depth: float,
     return out
 
 
-def _plot_b64(req: SimulateRequest, results, soil, crop, root_depth: float, total_rain: float, out_path: str) -> str:
-    first = req.solutes[0]
-    dose_total = sum(float(s.dose_kg_ha) for s in req.solutes)
-    return _plot_one_b64(
-        results, soil, crop, root_depth, total_rain, dose_total,
-        first.symbol, first.name, (first.release_type or "immediate"),
-        float(first.release_days or 60.0),
-        out_path, _common_xmax(results),
-    )
-
-
 def run_simulation(req: SimulateRequest, with_plot: bool = True) -> SimulateResponse:
     results, soil, crop, root_depth, total_rain, _days = _run_core(req)
     plot_b64: str | None = None

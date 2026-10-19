@@ -14,10 +14,12 @@ export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; 
 
 export class ApiError extends Error {
   details: string[];
-  constructor(message: string, details: string[] = []) {
+  status: number;
+  constructor(message: string, details: string[] = [], status = 0) {
     super(message);
     this.name = "ApiError";
     this.details = details;
+    this.status = status;
   }
 }
 
@@ -82,7 +84,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* mantém mensagem genérica */
     }
-    throw new ApiError(message, details);
+    throw new ApiError(message, details, r.status);
   }
   return r.json() as Promise<T>;
 }

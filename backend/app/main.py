@@ -134,6 +134,8 @@ def simulate(req: SimulateRequest) -> SimulateResponse:
 def create_job(req: SimulateRequest) -> JobCreated:
     _validate(req)
     _cleanup_jobs()
+    if len(_jobs) >= MAX_JOBS:
+        raise HTTPException(status_code=429, detail="Fila de jobs cheia; tente novamente em instantes")
     job_id = uuid.uuid4().hex[:12]
     with _jobs_lock:
         _jobs[job_id] = {"status": "queued", "t0": time.time(), "t_end": None, "result": None, "error": None}
@@ -200,6 +202,13 @@ def _validate(req: SimulateRequest) -> None:
                 "message": f"et0_series com {len(req.et0_series)} dias, esperado {_days_eff} (igual aos dias simulados)",
             }
         )
+    _seen: set[str] = set()
+    for s in req.solutes or []:
+        _sym = getattr(s, "symbol", None)
+        if _sym in _seen:
+            errors.append({"field": "solutes", "message": f"Símbolo de soluto repetido: {_sym}"})
+            break
+        _seen.add(_sym)
     errors.extend(validate_request(req))
     if errors:
         raise HTTPException(status_code=422, detail=errors)

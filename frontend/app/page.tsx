@@ -98,13 +98,18 @@ export default function Home() {
     return vals;
   }
 
+  function num(x: string, def: number): number {
+    const v = parseFloat(x);
+    return Number.isNaN(v) ? def : v;
+  }
+
   async function run() {
     setError("");
     setFieldErrors([]);
     setResult(null);
     setReport("");
     let rain_series: number[] | undefined;
-    let total_days = parseFloat(days) || 7;
+    let total_days = num(days, 7);
     let et0_series: number[] | undefined;
     try {
       if (rainMode === "series") {
@@ -117,9 +122,9 @@ export default function Home() {
     const solutes = rows
       .filter((r) => parseFloat(r.dose) > 0)
       .map((r) => ({
-        symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(r.dose), kd: parseFloat(r.kd) || 0,
+        symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(r.dose), kd: num(r.kd, 0),
         dispersivity_cm: 20.0, initial_residual_mg_dm3: 0.0,
-        release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: parseFloat(r.relDays) || 60,
+        release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
       }));
     if (!solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
     setStep(3);
@@ -127,13 +132,13 @@ export default function Home() {
     try {
       const body = {
         soil_key: soil, crop_key: crop, depth_cm: 200, total_days,
-        rain_mm: parseFloat(rainMm) || 0, rain_series,
-        initial_moisture_pct: parseFloat(moisture) || 80,
-        et0_mm_day: parseFloat(et0) || 0, et0_series, solutes,
+        rain_mm: num(rainMm, 0), rain_series,
+        initial_moisture_pct: num(moisture, 80),
+        et0_mm_day: num(et0, 0), et0_series, solutes,
         placement: {
           mode: placement, z_top_cm: 0, z_bottom_cm: 2,
-          fertigation_c0_mg_l: parseFloat(c0) || 0, fertigation_pulse_days: parseFloat(pulse) || 0,
-          application_day: parseFloat(appDay) || 0,
+          fertigation_c0_mg_l: num(c0, 0), fertigation_pulse_days: num(pulse, 0),
+          application_day: num(appDay, 0),
         },
       };
       const { job_id } = await postJob(body);
@@ -155,9 +160,7 @@ export default function Home() {
             setJobState(st.status);
           }
         } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          const status = (e as unknown as { status?: number }).status;
-          if (status === 404 || /404|expirado|desconhecido/i.test(msg)) {
+          if (e instanceof ApiError && e.status === 404) {
             if (timer.current) clearInterval(timer.current);
             setJobState("expired");
             setFieldErrors([]);
