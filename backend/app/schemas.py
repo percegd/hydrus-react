@@ -61,6 +61,7 @@ class SimulateResponse(BaseModel):
     drainage_mm: float
     solutes: list[SoluteBalance]
     plot_png_base64: Optional[str] = None
+    plots_png_base64: Optional[dict[str, str]] = None
     profiles: Optional[dict] = None
 
 

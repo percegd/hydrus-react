@@ -171,33 +171,88 @@ def _balances(req: SimulateRequest, results) -> list[SoluteBalance]:
     return out
 
 
-def _plot_b64(req: SimulateRequest, results, soil, crop, root_depth: float, total_rain: float, out_path: str) -> str:
-    first = req.solutes[0]
+def _common_xmax(results) -> float | None:
+    """Escala X comum: maior pico entre todos os solutos (proporção comparável, como no Gradio)."""
+    try:
+        import numpy as _np
+
+        gx = 0.0
+        for _d in (getattr(results, "nutrient_results", {}) or {}).values():
+            try:
+                gx = max(gx, float(_np.max(_np.asarray(_d.get("final_profile", [0.0]), dtype=float))))
+            except Exception:
+                continue
+        return gx if gx > 0 else None
+    except Exception:
+        return None
+
+
+def _plot_one_b64(results, soil, crop, root_depth: float, total_rain: float, dose_total: float,
+                  symbol: str, name: str, release_type: str, release_days: float,
+                  out_path: str, x_max: float | None = None) -> str:
+    """Um gráfico de perfil por soluto, como a galeria por-soluto do Gradio."""
     plot_nutrient_profile(
         results=results,
         soil=soil,
         crop=crop,
         rain_mm=float(total_rain),
-        fertilizer_kg_ha=sum(float(s.dose_kg_ha) for s in req.solutes),
-        nutrient_symbol=first.symbol,
-        nutrient_name=first.name,
+        fertilizer_kg_ha=float(dose_total),
+        nutrient_symbol=symbol,
+        nutrient_name=name,
         output_path=out_path,
         target_depth_cm=root_depth,
+        solute_filter=symbol,
+        include_moisture=False,
+        banner=True,
+        x_max=x_max,
+        release_type=(release_type or "immediate"),
+        release_days=float(release_days or 60.0),
     )
     with open(out_path, "rb") as f:
         return base64.b64encode(f.read()).decode()
 
 
+def _plots_b64(req: SimulateRequest, results, soil, crop, root_depth: float,
+               total_rain: float, out_dir: str) -> dict[str, str]:
+    """Gera um PNG de perfil por soluto (símbolo -> base64)."""
+    dose_total = sum(float(s.dose_kg_ha) for s in req.solutes)
+    x_max = _common_xmax(results)
+    out: dict[str, str] = {}
+    for s in req.solutes:
+        out[s.symbol] = _plot_one_b64(
+            results, soil, crop, root_depth, total_rain, dose_total,
+            s.symbol, s.name, (s.release_type or "immediate"),
+            float(s.release_days or 60.0),
+            os.path.join(out_dir, f"perfil_{s.symbol}.png"),
+            x_max,
+        )
+    return out
+
+
+def _plot_b64(req: SimulateRequest, results, soil, crop, root_depth: float, total_rain: float, out_path: str) -> str:
+    first = req.solutes[0]
+    dose_total = sum(float(s.dose_kg_ha) for s in req.solutes)
+    return _plot_one_b64(
+        results, soil, crop, root_depth, total_rain, dose_total,
+        first.symbol, first.name, (first.release_type or "immediate"),
+        float(first.release_days or 60.0),
+        out_path, _common_xmax(results),
+    )
+
+
 def run_simulation(req: SimulateRequest, with_plot: bool = True) -> SimulateResponse:
     results, soil, crop, root_depth, total_rain, _days = _run_core(req)
     plot_b64: str | None = None
+    plots_b64: dict[str, str] | None = None
     if with_plot:
         with tempfile.TemporaryDirectory() as tmp:
-            plot_b64 = _plot_b64(req, results, soil, crop, root_depth, total_rain, os.path.join(tmp, "perfil.png"))
+            plots_b64 = _plots_b64(req, results, soil, crop, root_depth, total_rain, tmp)
+            plot_b64 = plots_b64.get(req.solutes[0].symbol)
     return SimulateResponse(
         drainage_mm=float(results.q_bottom_cum_cm) * 10.0,
         solutes=_balances(req, results),
         plot_png_base64=plot_b64,
+        plots_png_base64=plots_b64,
         profiles=_profiles_payload(results),
     )
 
@@ -206,11 +261,22 @@ def execute_job(req: SimulateRequest, job_dir: str) -> tuple[SimulateResponse, s
     """Roda uma vez e gera response + Excel + laudo no diretório do job."""
     os.makedirs(job_dir, exist_ok=True)
     results, soil, crop, root_depth, total_rain, total_days = _run_core(req)
-    plot_b64 = _plot_b64(req, results, soil, crop, root_depth, total_rain, os.path.join(job_dir, "perfil.png"))
+    plots_b64 = _plots_b64(req, results, soil, crop, root_depth, total_rain, job_dir)
+    plot_b64 = plots_b64.get(req.solutes[0].symbol)
+    # Compat: mantém perfil.png como o do primeiro soluto.
+    try:
+        import shutil
+
+        first_png = os.path.join(job_dir, f"perfil_{req.solutes[0].symbol}.png")
+        if os.path.exists(first_png):
+            shutil.copyfile(first_png, os.path.join(job_dir, "perfil.png"))
+    except Exception:
+        pass
     resp = SimulateResponse(
         drainage_mm=float(results.q_bottom_cum_cm) * 10.0,
         solutes=_balances(req, results),
         plot_png_base64=plot_b64,
+        plots_png_base64=plots_b64,
         profiles=_profiles_payload(results),
     )
     excel_path = build_excel(req, results, soil, crop, root_depth, total_rain, total_days, job_dir)
@@ -452,12 +518,55 @@ def build_excel(req: SimulateRequest, results, soil, crop, root_depth: float,
     )
 
 
+def _report_hydro(req: SimulateRequest, results, total_days: float) -> tuple[float, float, float, float, float]:
+    """Hidro-args extras do laudo coluna, iguais aos do Gradio (runoff/storage/ET)."""
+    try:
+        storage = float(_storage_mm(results))
+    except Exception:
+        storage = 0.0
+    try:
+        runoff = float(getattr(results, "runoff_cum_cm", 0.0) or 0.0) * 10.0
+    except (TypeError, ValueError):
+        runoff = 0.0
+    try:
+        evap_day = float(getattr(results, "evap_cum_cm", 0.0) or 0.0) * 10.0 / max(float(total_days), 1.0)
+        transp_day = float(getattr(results, "transp_cum_cm", 0.0) or 0.0) * 10.0 / max(float(total_days), 1.0)
+    except (TypeError, ValueError):
+        evap_day, transp_day = 0.0, 0.0
+    if req.et0_series:
+        try:
+            et0_vals = [max(0.0, float(v or 0.0)) for v in req.et0_series]
+            et0_mean = float(sum(et0_vals) / max(len(et0_vals), 1))
+        except (TypeError, ValueError):
+            et0_mean = float(req.et0_mm_day)
+    else:
+        et0_mean = float(req.et0_mm_day)
+    return storage, runoff, evap_day, transp_day, et0_mean
+
+
+def _report_active_depth(req: SimulateRequest) -> float:
+    _pmode = (req.placement.mode or "surface")
+    _ptop, _pbot = float(req.placement.z_top_cm), float(req.placement.z_bottom_cm)
+    if _pmode == "furrow":
+        _ptop, _pbot = 5.0, 10.0
+    elif _pmode == "fertigation":
+        _ptop, _pbot = 0.0, 0.0
+    return float(_pbot - _ptop) if _pbot > _ptop else 0.0
+
+
 def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
                  total_rain: float, total_days: float) -> str:
+    """Laudo multi-soluto via hydrus_core.agronomic_report (o core já cobre N solutos).
+
+    Usa as mesmas funções do Gradio (generate_advanced_report / generate_column_report);
+    como results.nutrient_results contém todos os solutos, o comparativo multi-nutriente
+    e o cabeçalho multi-soluto são gerados pelo core sem texto novo.
+    """
     from hydrus_core.agronomic_report import generate_advanced_report, generate_column_report
 
     first = req.solutes[0]
     dose_total = sum(float(s.dose_kg_ha) for s in req.solutes)
+    active_depth = _report_active_depth(req)
     if float(total_days) >= 180:
         return generate_advanced_report(
             results=results, soil=soil, crop=crop, rain_mm=float(total_rain),
@@ -465,12 +574,14 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
             nutrient_name=first.name, kd_used=float(first.kd),
             release_type=(first.release_type or "immediate"),
             release_days=float(first.release_days or 60.0),
+            active_depth_cm=float(active_depth),
         )
     z = getattr(results, "z", [0.0])
     try:
         prof_depth = float(max(z))
     except Exception:
         prof_depth = float(req.depth_cm)
+    storage, runoff, evap_day, transp_day, et0_mean = _report_hydro(req, results, total_days)
     return generate_column_report(
         results=results, soil=soil, rain_mm=float(total_rain),
         fertilizer_dose_kg_ha=dose_total, target_depth_cm=float(root_depth),
@@ -479,4 +590,10 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
         release_type=(first.release_type or "immediate"),
         release_days=float(first.release_days or 60.0),
         total_days=float(total_days),
+        active_depth_cm=float(active_depth),
+        runoff_mm=float(runoff),
+        storage_mm=float(storage),
+        evap_mm_day=float(evap_day),
+        transp_mm_day=float(transp_day),
+        et0_mm_day=float(et0_mean),
     )

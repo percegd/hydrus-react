@@ -348,10 +348,19 @@ export default function Home() {
                     <ProfileChart profiles={result.profiles as never} rootDepth={rootDepth} />
                   </div>
                 )}
-                {result.plot_png_base64 && (
-                  <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
-                    <img src={`data:image/png;base64,${result.plot_png_base64}`} alt="Perfil" style={{ width: "100%" }} />
-                  </div>
+                {result.plots_png_base64 && Object.keys(result.plots_png_base64).length > 0 ? (
+                  Object.entries(result.plots_png_base64).map(([sym, b64]) => (
+                    <div key={sym} className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
+                      <div className="muted" style={{ marginBottom: 8 }}>Perfil — {sym}</div>
+                      <img src={`data:image/png;base64,${b64}`} alt={`Perfil ${sym}`} style={{ width: "100%" }} />
+                    </div>
+                  ))
+                ) : (
+                  result.plot_png_base64 && (
+                    <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
+                      <img src={`data:image/png;base64,${result.plot_png_base64}`} alt="Perfil" style={{ width: "100%" }} />
+                    </div>
+                  )
                 )}
                 {report && <div className="wizard-step-box" style={{ padding: 16 }}><pre className="laudo-pre">{report}</pre></div>}
               </>
