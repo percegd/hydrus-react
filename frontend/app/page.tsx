@@ -37,9 +37,11 @@ export default function Home() {
   const [crops, setCrops] = useState<Crop[]>([]);
   const [soil, setSoil] = useState("latossolo_medio");
   const [crop, setCrop] = useState("soja");
-  const [days, setDays] = useState("30");
+  const [days, setDays] = useState("7");
   const [rainMode, setRainMode] = useState<"uniform" | "series">("uniform");
-  const [rainMm, setRainMm] = useState("50");
+  const [rainMm, setRainMm] = useState("60");
+  const [moisture, setMoisture] = useState("80");
+  const [et0, setEt0] = useState("4");
   const [series, setSeries] = useState("");
   const [et0Series, setEt0Series] = useState("");
   const [rows, setRows] = useState<Row[]>([{ symbol: "K", name: "Potássio", dose: "30", kd: "0.45", rel: "immediate", relDays: "60" }]);
@@ -102,7 +104,7 @@ export default function Home() {
     setResult(null);
     setReport("");
     let rain_series: number[] | undefined;
-    let total_days = parseFloat(days) || 30;
+    let total_days = parseFloat(days) || 7;
     let et0_series: number[] | undefined;
     try {
       if (rainMode === "series") {
@@ -116,6 +118,7 @@ export default function Home() {
       .filter((r) => parseFloat(r.dose) > 0)
       .map((r) => ({
         symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(r.dose), kd: parseFloat(r.kd) || 0,
+        dispersivity_cm: 20.0, initial_residual_mg_dm3: 0.0,
         release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: parseFloat(r.relDays) || 60,
       }));
     if (!solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
@@ -125,7 +128,8 @@ export default function Home() {
       const body = {
         soil_key: soil, crop_key: crop, depth_cm: 200, total_days,
         rain_mm: parseFloat(rainMm) || 0, rain_series,
-        et0_series, solutes,
+        initial_moisture_pct: parseFloat(moisture) || 80,
+        et0_mm_day: parseFloat(et0) || 0, et0_series, solutes,
         placement: {
           mode: placement, z_top_cm: 0, z_bottom_cm: 2,
           fertigation_c0_mg_l: parseFloat(c0) || 0, fertigation_pulse_days: parseFloat(pulse) || 0,
@@ -221,6 +225,12 @@ export default function Home() {
                   <input value={rainMm} onChange={(e) => setRainMm(e.target.value)} />
                 </label>
               )}
+              <label className="field">Umidade prévia (%)
+                <input value={moisture} onChange={(e) => setMoisture(e.target.value)} />
+              </label>
+              <label className="field">ET0 (mm/dia)
+                <input value={et0} onChange={(e) => setEt0(e.target.value)} />
+              </label>
             </div>
             {rainMode === "series" && (
               <div className="form-row" style={{ marginTop: 12 }}>

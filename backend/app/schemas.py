@@ -30,12 +30,12 @@ class SimulateRequest(BaseModel):
     crop_key: Optional[str] = Field(default="soja", examples=["soja"])
     depth_cm: float = Field(default=200.0, gt=0, le=300)
     root_depth_cm: Optional[float] = Field(default=None, gt=0)
-    total_days: float = Field(default=30.0, gt=0, le=730)
-    rain_mm: float = Field(default=100.0, ge=0)
+    total_days: float = Field(default=7.0, gt=0, le=730)
+    rain_mm: float = Field(default=60.0, ge=0)
     rain_series: Optional[list[float]] = Field(
         default=None, description="Chuva diária em mm; se informada, define total_days"
     )
-    initial_moisture_pct: float = Field(default=20.0, ge=0, le=100)
+    initial_moisture_pct: float = Field(default=80.0, ge=0, le=100)
     et0_mm_day: float = Field(default=4.0, ge=0)
     et0_series: Optional[list[float]] = Field(default=None, description="ET0 diária em mm")
     placement: PlacementInput = Field(default_factory=PlacementInput)
