@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Results from "../components/Results";
 import StepIntro from "../components/StepIntro";
-import StepNutrients, { DEFAULT_ROWS, SPECIES, type NutrientRow } from "../components/StepNutrients";
+import StepNutrients, { DEFAULT_ROWS, SPECIES, defaultDispForDepth, type NutrientRow } from "../components/StepNutrients";
 import StepSoil from "../components/StepSoil";
 import StepWater from "../components/StepWater";
 import WizardProgress from "../components/WizardProgress";
@@ -19,19 +19,25 @@ const STEP_TITLES = [
 
 const DEFAULTS = {
   soil: "latossolo_medio",
+  cropMode: "sem",
   crop: "soja",
+  depthCm: "200",
+  rootDepthCm: "35",
   days: "7",
   rainMode: "uniform" as const,
   rainMm: "60",
   moisture: "80",
-  et0: "4",
+  et0: "4.0",
   series: "",
   et0Series: "",
   rows: DEFAULT_ROWS,
   placement: "surface",
   appDay: "0",
+  zTop: "5",
+  zBottom: "10",
   c0: "20",
-  pulse: "0",
+  pulse: "7",
+  fertContinuous: false,
 };
 
 export default function Home() {
@@ -39,7 +45,10 @@ export default function Home() {
   const [soils, setSoils] = useState<Soil[]>([]);
   const [crops, setCrops] = useState<Crop[]>([]);
   const [soil, setSoil] = useState(DEFAULTS.soil);
+  const [cropMode, setCropModeState] = useState(DEFAULTS.cropMode);
   const [crop, setCrop] = useState(DEFAULTS.crop);
+  const [depthCm, setDepthCm] = useState(DEFAULTS.depthCm);
+  const [rootDepthCm, setRootDepthCm] = useState(DEFAULTS.rootDepthCm);
   const [days, setDays] = useState(DEFAULTS.days);
   const [rainMode, setRainMode] = useState<"uniform" | "series">(DEFAULTS.rainMode);
   const [rainMm, setRainMm] = useState(DEFAULTS.rainMm);
@@ -47,11 +56,14 @@ export default function Home() {
   const [et0, setEt0] = useState(DEFAULTS.et0);
   const [series, setSeries] = useState(DEFAULTS.series);
   const [et0Series, setEt0Series] = useState(DEFAULTS.et0Series);
-  const [rows, setRows] = useState<NutrientRow[]>(DEFAULT_ROWS.map((r) => ({ ...r })));
+  const [rows, setRows] = useState<NutrientRow[]>(DEFAULTS.rows.map((r) => ({ ...r })));
   const [placement, setPlacement] = useState(DEFAULTS.placement);
   const [appDay, setAppDay] = useState(DEFAULTS.appDay);
+  const [zTop, setZTop] = useState(DEFAULTS.zTop);
+  const [zBottom, setZBottom] = useState(DEFAULTS.zBottom);
   const [c0, setC0] = useState(DEFAULTS.c0);
   const [pulse, setPulse] = useState(DEFAULTS.pulse);
+  const [fertContinuous, setFertContinuous] = useState(DEFAULTS.fertContinuous);
   const [jobId, setJobId] = useState("");
   const [jobState, setJobState] = useState("");
   const [elapsed, setElapsed] = useState(0);
@@ -63,9 +75,31 @@ export default function Home() {
 
   useEffect(() => {
     getSoils().then(setSoils).catch(() => setError("API fora do ar (backend :8001)."));
-    getCrops().then(setCrops).catch(() => {});
+    getCrops().then((cs) => {
+      setCrops(cs);
+      // Prefill raiz da cultura selecionada (Gradio: root_depth da cultura).
+      const found = cs.find((c) => c.key === crop);
+      if (found) {
+        setRootDepthCm((prev) => (prev === "" ? String(found.root_depth_cm) : prev));
+      }
+    }).catch(() => {});
     return () => { if (timer.current) clearInterval(timer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function setCropMode(mode: string) {
+    setCropModeState(mode);
+    if (mode === "com") {
+      const found = crops.find((c) => c.key === crop);
+      if (found) setRootDepthCm(String(found.root_depth_cm));
+    }
+  }
+
+  function handleCropSelect(key: string) {
+    setCrop(key);
+    const found = crops.find((c) => c.key === key);
+    if (found) setRootDepthCm(String(found.root_depth_cm));
+  }
 
   function showApiError(e: unknown) {
     if (e instanceof ApiError && e.details.length > 0) {
@@ -82,7 +116,7 @@ export default function Home() {
   function addRow() {
     const used = new Set(rows.map((r) => r.symbol));
     const next = SPECIES.find((s) => !used.has(s.symbol)) ?? SPECIES[0];
-    setRows((rs) => [...rs, { symbol: next.symbol, name: next.name, dose: "30", kd: String(next.kd), rel: "immediate", relDays: "60" }]);
+    setRows((rs) => [...rs, { symbol: next.symbol, name: next.name, dose: "30", kd: String(next.kd), disp: defaultDispForDepth(depthCm), res: "0", rel: "immediate", relDays: "60" }]);
   }
   function removeRow(i: number) {
     setRows((rs) => rs.filter((_, j) => j !== i));
@@ -90,20 +124,23 @@ export default function Home() {
 
   function parseSeries(text: string): number[] | undefined {
     if (!text.trim()) return undefined;
-    const vals = text.split(/[\s,;]+/).filter(Boolean).map(Number);
+    const vals = text.split(/[\s,;]+/).filter(Boolean).map((t) => Number(t.replace(",", ".")));
     if (vals.some((v) => Number.isNaN(v) || v < 0)) throw new Error("Série inválida (só números ≥ 0).");
     return vals;
   }
 
   function num(x: string, def: number): number {
-    const v = parseFloat(x);
+    const v = parseFloat(String(x).replace(",", "."));
     return Number.isNaN(v) ? def : v;
   }
 
   function resetToDefaults() {
     if (timer.current) clearInterval(timer.current);
     setSoil(DEFAULTS.soil);
+    setCropModeState(DEFAULTS.cropMode);
     setCrop(DEFAULTS.crop);
+    setDepthCm(DEFAULTS.depthCm);
+    setRootDepthCm(DEFAULTS.rootDepthCm);
     setDays(DEFAULTS.days);
     setRainMode(DEFAULTS.rainMode);
     setRainMm(DEFAULTS.rainMm);
@@ -114,8 +151,11 @@ export default function Home() {
     setRows(DEFAULTS.rows.map((r) => ({ ...r })));
     setPlacement(DEFAULTS.placement);
     setAppDay(DEFAULTS.appDay);
+    setZTop(DEFAULTS.zTop);
+    setZBottom(DEFAULTS.zBottom);
     setC0(DEFAULTS.c0);
     setPulse(DEFAULTS.pulse);
+    setFertContinuous(DEFAULTS.fertContinuous);
     setJobId("");
     setJobState("");
     setElapsed(0);
@@ -148,25 +188,49 @@ export default function Home() {
       }
       et0_series = parseSeries(et0Series);
     } catch (e) { setFieldErrors([]); setError(String((e as Error).message || e)); return; }
+    const depthVal = num(depthCm, 200);
+    const dispDefault = depthVal / 10;
     const solutes = rows
-      .filter((r) => parseFloat(r.dose) > 0)
+      .filter((r) => parseFloat(String(r.dose).replace(",", ".")) > 0)
       .map((r) => ({
-        symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(r.dose), kd: num(r.kd, 0),
-        dispersivity_cm: 20.0, initial_residual_mg_dm3: 0.0,
+        symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(String(r.dose).replace(",", ".")), kd: num(r.kd, 0),
+        dispersivity_cm: r.disp === "" ? dispDefault : num(r.disp, dispDefault),
+        initial_residual_mg_dm3: r.res === "" ? 0 : num(r.res, 0),
         release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
       }));
     if (!solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
     setStep(4);
     setJobState("queued");
+    // Posicionamento: faixas do Gradio (superfície 0–2, sulco 5–10, personalizada, fertirrigação).
+    let z_top = 0;
+    let z_bottom = 2;
+    if (placement === "furrow") {
+      z_top = 5;
+      z_bottom = 10;
+    } else if (placement === "custom") {
+      z_top = num(zTop, 5);
+      z_bottom = num(zBottom, 10);
+    } else if (placement === "fertigation") {
+      z_top = 0;
+      z_bottom = 0;
+    }
+    const isCom = cropMode === "com";
+    const cropEntry = crops.find((c) => c.key === crop);
+    const rootFallback = cropEntry ? cropEntry.root_depth_cm : 35;
     try {
       const body = {
-        soil_key: soil, crop_key: crop, depth_cm: 200, total_days,
+        soil_key: soil,
+        crop_key: isCom ? crop : null,
+        depth_cm: depthVal,
+        root_depth_cm: isCom ? num(rootDepthCm, rootFallback) : null,
+        total_days,
         rain_mm: num(rainMm, 0), rain_series,
         initial_moisture_pct: num(moisture, 80),
         et0_mm_day: num(et0, 0), et0_series, solutes,
         placement: {
-          mode: placement, z_top_cm: 0, z_bottom_cm: 2,
-          fertigation_c0_mg_l: num(c0, 0), fertigation_pulse_days: num(pulse, 0),
+          mode: placement, z_top_cm: z_top, z_bottom_cm: z_bottom,
+          fertigation_c0_mg_l: num(c0, 20),
+          fertigation_pulse_days: fertContinuous ? 0 : num(pulse, 7),
           application_day: num(appDay, 0),
         },
       };
@@ -222,7 +286,7 @@ export default function Home() {
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
         setFieldErrors([]);
-        setError("Job expirou; rode a simulação novamente.");
+        setError("Job expirado; rode a simulação novamente.");
         return;
       }
       showApiError(e);
@@ -244,15 +308,17 @@ export default function Home() {
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
         setFieldErrors([]);
-        setError("Job expirou; rode a simulação novamente.");
+        setError("Job expirado; rode a simulação novamente.");
         return;
       }
       showApiError(e);
     }
   }
 
-  const rootDepth = crops.find((c) => c.key === crop)?.root_depth_cm ?? 35;
-  const cropName = crops.find((c) => c.key === crop)?.name ?? crop;
+  const isCom = cropMode === "com";
+  const cropEntry = crops.find((c) => c.key === crop);
+  const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
+  const cropName = isCom ? (cropEntry?.name ?? crop) : "Sem cultura";
 
   return (
     <div className="hydrus-container">
@@ -279,8 +345,14 @@ export default function Home() {
                 crops={crops}
                 soil={soil}
                 setSoil={setSoil}
+                cropMode={cropMode}
+                setCropMode={setCropMode}
                 crop={crop}
-                setCrop={setCrop}
+                setCrop={handleCropSelect}
+                depthCm={depthCm}
+                setDepthCm={setDepthCm}
+                rootDepthCm={rootDepthCm}
+                setRootDepthCm={setRootDepthCm}
                 error={error}
                 fieldErrors={fieldErrors}
                 onNext={() => setStep(2)}
@@ -297,10 +369,16 @@ export default function Home() {
                 setPlacement={setPlacement}
                 appDay={appDay}
                 setAppDay={setAppDay}
+                zTop={zTop}
+                setZTop={setZTop}
+                zBottom={zBottom}
+                setZBottom={setZBottom}
                 c0={c0}
                 setC0={setC0}
                 pulse={pulse}
                 setPulse={setPulse}
+                fertContinuous={fertContinuous}
+                setFertContinuous={setFertContinuous}
                 error={error}
                 fieldErrors={fieldErrors}
                 onBack={() => setStep(1)}
