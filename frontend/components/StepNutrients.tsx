@@ -32,6 +32,8 @@ export function defaultDispForDepth(depthCm: string): string {
 }
 
 type Props = {
+  waterOnly: boolean;
+  setWaterOnly: (v: boolean) => void;
   rows: NutrientRow[];
   setRow: (i: number, patch: Partial<NutrientRow>) => void;
   addRow: () => void;
@@ -58,6 +60,7 @@ type Props = {
 
 export default function StepNutrients(props: Props) {
   const {
+    waterOnly, setWaterOnly,
     rows, setRow, addRow, removeRow,
     placement, setPlacement,
     appDay, setAppDay,
@@ -68,7 +71,28 @@ export default function StepNutrients(props: Props) {
   } = props;
   return (
     <>
-      {rows.map((r, i) => (
+      <div role="radiogroup" aria-label="Modo de simulação">
+        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <input type="radio" name="simulation-mode" value="nutrients" checked={!waterOnly} onChange={() => setWaterOnly(false)} />
+          Água + nutrientes
+        </label>
+        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <input type="radio" name="simulation-mode" value="water-only" checked={waterOnly} onChange={() => setWaterOnly(true)} />
+          Somente água
+        </label>
+      </div>
+      {waterOnly && (
+        <div className="water-only-note">
+          <b>Simulação somente de água.</b> Nenhum soluto será transportado — a tabela de
+          nutrientes, a liberação do fertilizante e o posicionamento do adubo ficam desativados.
+          <ul>
+            <li><b>Perfil de umidade θ(z)</b> — umidade ao longo da profundidade (inicial vs final);</li>
+            <li><b>θ(t) nos nós de observação</b> — avanço da frente de molhamento no tempo;</li>
+            <li><b>Balanço hídrico</b> — chuva/irrigação, drenagem no fundo, escoamento superficial e Δ armazenamento.</li>
+          </ul>
+        </div>
+      )}
+      {!waterOnly && rows.map((r, i) => (
         <div className="nutrient-row" key={i}>
           <label className="field">Soluto
             <select value={r.symbol} onChange={(e) => {
@@ -104,57 +128,61 @@ export default function StepNutrients(props: Props) {
           <button className="icon-btn" onClick={() => removeRow(i)} title="Remover">✕</button>
         </div>
       ))}
-      <button className="btn" onClick={addRow}>+ soluto</button>
+      {!waterOnly && (
+        <>
+          <button className="btn" onClick={addRow}>+ soluto</button>
 
-      <h3 className="section-title" style={{ marginTop: 20 }}>Posicionamento do adubo no solo</h3>
-      <div role="radiogroup" aria-label="Posicionamento do adubo no solo">
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <input type="radio" name="placement-mode" value="surface" checked={placement === "surface"} onChange={() => setPlacement("surface")} />
-          A lanço / Superfície (0 a 2 cm)
-        </label>
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <input type="radio" name="placement-mode" value="furrow" checked={placement === "furrow"} onChange={() => setPlacement("furrow")} />
-          No Sulco de Plantio (5 a 10 cm)
-        </label>
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <input type="radio" name="placement-mode" value="custom" checked={placement === "custom"} onChange={() => setPlacement("custom")} />
-          Profundidade personalizada
-        </label>
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <input type="radio" name="placement-mode" value="fertigation" checked={placement === "fertigation"} onChange={() => setPlacement("fertigation")} />
-          Fertirrigação
-        </label>
-      </div>
-
-      <div className="form-row" style={{ marginTop: 12 }}>
-        <label className="field">Dia da aplicação
-          <input value={appDay} onChange={(e) => setAppDay(e.target.value)} />
-        </label>
-        {placement === "custom" && (
-          <>
-            <label className="field">De (profundidade inicial) [cm]
-              <input value={zTop} onChange={(e) => setZTop(e.target.value)} />
-            </label>
-            <label className="field">Até (profundidade final) [cm]
-              <input value={zBottom} onChange={(e) => setZBottom(e.target.value)} />
-            </label>
-          </>
-        )}
-        {placement === "fertigation" && (
-          <>
-            <label className="field">Concentração da Solução Injetada C₀ [mg/L]
-              <input value={c0} onChange={(e) => setC0(e.target.value)} />
-            </label>
-            <label className="field">Duração da Injeção [dias]
-              <input value={pulse} onChange={(e) => setPulse(e.target.value)} disabled={fertContinuous} />
+          <h3 className="section-title" style={{ marginTop: 20 }}>Posicionamento do adubo no solo</h3>
+          <div role="radiogroup" aria-label="Posicionamento do adubo no solo">
+            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <input type="radio" name="placement-mode" value="surface" checked={placement === "surface"} onChange={() => setPlacement("surface")} />
+              A lanço / Superfície (0 a 2 cm)
             </label>
             <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <input type="checkbox" checked={fertContinuous} onChange={(e) => setFertContinuous(e.target.checked)} />
-              Injeção contínua (toda a duração)
+              <input type="radio" name="placement-mode" value="furrow" checked={placement === "furrow"} onChange={() => setPlacement("furrow")} />
+              No Sulco de Plantio (5 a 10 cm)
             </label>
-          </>
-        )}
-      </div>
+            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <input type="radio" name="placement-mode" value="custom" checked={placement === "custom"} onChange={() => setPlacement("custom")} />
+              Profundidade personalizada
+            </label>
+            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <input type="radio" name="placement-mode" value="fertigation" checked={placement === "fertigation"} onChange={() => setPlacement("fertigation")} />
+              Fertirrigação
+            </label>
+          </div>
+
+          <div className="form-row" style={{ marginTop: 12 }}>
+            <label className="field">Dia da aplicação
+              <input value={appDay} onChange={(e) => setAppDay(e.target.value)} />
+            </label>
+            {placement === "custom" && (
+              <>
+                <label className="field">De (profundidade inicial) [cm]
+                  <input value={zTop} onChange={(e) => setZTop(e.target.value)} />
+                </label>
+                <label className="field">Até (profundidade final) [cm]
+                  <input value={zBottom} onChange={(e) => setZBottom(e.target.value)} />
+                </label>
+              </>
+            )}
+            {placement === "fertigation" && (
+              <>
+                <label className="field">Concentração da Solução Injetada C₀ [mg/L]
+                  <input value={c0} onChange={(e) => setC0(e.target.value)} />
+                </label>
+                <label className="field">Duração da Injeção [dias]
+                  <input value={pulse} onChange={(e) => setPulse(e.target.value)} disabled={fertContinuous} />
+                </label>
+                <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <input type="checkbox" checked={fertContinuous} onChange={(e) => setFertContinuous(e.target.checked)} />
+                  Injeção contínua (toda a duração)
+                </label>
+              </>
+            )}
+          </div>
+        </>
+      )}
       {fieldErrors.length > 0 && (
         <ul className="error-text">
           {fieldErrors.map((m, i) => <li key={i}>{m}</li>)}

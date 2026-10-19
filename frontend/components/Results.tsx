@@ -76,17 +76,45 @@ export default function Results(props: Props) {
       {result && (
         <>
           <div className="metrics-card-grid">
-            <div className="metric-card">
-              <div className="metric-icon">💧</div>
-              <div className="metric-value">{appliedMm != null ? `${appliedMm.toFixed(0)} mm` : "—"}</div>
-              <div className="metric-label">Lâmina Aplicada</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-icon">↓</div>
-              <div className="metric-value">{result.drainage_mm.toFixed(1)} mm</div>
-              <div className="metric-label">Drenagem no Fundo</div>
-              <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
-            </div>
+            {result.water_balance ? (
+              <>
+                <div className="metric-card">
+                  <div className="metric-icon">💧</div>
+                  <div className="metric-value">{result.water_balance.applied_mm.toFixed(1)} mm</div>
+                  <div className="metric-label">{result.water_balance.applied_label}</div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-icon">↓</div>
+                  <div className="metric-value">{result.water_balance.drainage_mm.toFixed(1)} mm</div>
+                  <div className="metric-label">{result.water_balance.drainage_label}</div>
+                  <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-icon">🌊</div>
+                  <div className="metric-value">{result.water_balance.storage_mm >= 0 ? "+" : ""}{result.water_balance.storage_mm.toFixed(1)} mm</div>
+                  <div className="metric-label">{result.water_balance.storage_mm >= 0 ? "Ganho de Água no Perfil (θf − θi)" : "Perda de Água no Perfil (θf − θi)"}</div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-icon">≈</div>
+                  <div className="metric-value">{result.water_balance.runoff_mm.toFixed(1)} mm</div>
+                  <div className="metric-label">Escoamento Superficial</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="metric-card">
+                  <div className="metric-icon">💧</div>
+                  <div className="metric-value">{appliedMm != null ? `${appliedMm.toFixed(0)} mm` : "—"}</div>
+                  <div className="metric-label">Lâmina Aplicada</div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-icon">↓</div>
+                  <div className="metric-value">{result.drainage_mm.toFixed(1)} mm</div>
+                  <div className="metric-label">Drenagem no Fundo</div>
+                  <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
+                </div>
+              </>
+            )}
             {result.solutes.map((s) => {
               const [bg, fg] = ACCENTS[s.symbol] ?? ["#f1f5f9", "#334155"];
               const dose = s.dose_kg_ha;
@@ -109,7 +137,13 @@ export default function Results(props: Props) {
               );
             })}
           </div>
-          {result.profiles && (
+          {result.water_balance?.evap_mm != null && result.water_balance?.transp_mm != null && (
+            <p className="muted">
+              Evapotranspiração (E+T): {(result.water_balance.evap_mm + result.water_balance.transp_mm).toFixed(1)} mm
+              {" "}(E {result.water_balance.evap_mm.toFixed(1)} + T {result.water_balance.transp_mm.toFixed(1)} mm)
+            </p>
+          )}
+          {result.profiles && Object.keys(result.profiles.solutes ?? {}).length > 0 && (
             <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
               <ProfileChart profiles={result.profiles as never} rootDepth={rootDepth} />
             </div>

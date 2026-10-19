@@ -10,7 +10,17 @@ export type SoluteBalance = {
   uptaken_pct: number;
   peak_depth_cm: number | null;
 };
-export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; plots_png_base64?: Record<string, string> | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null };
+export type WaterBalance = {
+  applied_mm: number;
+  drainage_mm: number;
+  storage_mm: number;
+  runoff_mm: number;
+  evap_mm: number | null;
+  transp_mm: number | null;
+  applied_label: string;
+  drainage_label: string;
+};
+export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; plots_png_base64?: Record<string, string> | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null; water_only?: boolean; water_balance?: WaterBalance | null };
 
 export class ApiError extends Error {
   details: string[];

@@ -17,6 +17,12 @@ type Props = {
   setSeries: (v: string) => void;
   et0Series: string;
   setEt0Series: (v: string) => void;
+  analysisStart: string;
+  setAnalysisStart: (v: string) => void;
+  analysisEnd: string;
+  setAnalysisEnd: (v: string) => void;
+  printDays: string;
+  setPrintDays: (v: string) => void;
   error: string;
   fieldErrors: string[];
   onBack: () => void;
@@ -200,7 +206,7 @@ export function parseDailyCsv(text: string): { rain: number[]; et0?: number[] } 
 }
 
 export default function StepWater(props: Props) {
-  const { days, setDays, rainMode, setRainMode, rainMm, setRainMm, moisture, setMoisture, et0, setEt0, series, setSeries, et0Series, setEt0Series, error, fieldErrors, onBack, onRun } = props;
+  const { days, setDays, rainMode, setRainMode, rainMm, setRainMm, moisture, setMoisture, et0, setEt0, series, setSeries, et0Series, setEt0Series, analysisStart, setAnalysisStart, analysisEnd, setAnalysisEnd, printDays, setPrintDays, error, fieldErrors, onBack, onRun } = props;
   const [fileError, setFileError] = useState("");
   const [fileInfo, setFileInfo] = useState("");
 
@@ -254,6 +260,19 @@ export default function StepWater(props: Props) {
       </div>
       {rainMode === "series" && (
         <>
+          <div className="form-row" style={{ marginTop: 12 }}>
+            <label className="field">Início da janela de análise [dia do ano]
+              <input value={analysisStart} onChange={(e) => setAnalysisStart(e.target.value)} />
+            </label>
+            <label className="field">Fim da janela de análise [dia do ano]
+              <input value={analysisEnd} onChange={(e) => setAnalysisEnd(e.target.value)} />
+            </label>
+          </div>
+          <div className="form-row" style={{ marginTop: 8 }}>
+            <label className="field" style={{ flex: "1 1 100%" }}>Dias de leitura [dia do ensaio] (ex: 55,128,237,365)
+              <input value={printDays} onChange={(e) => setPrintDays(e.target.value)} placeholder="obrigatório — ex: 55, 128, 237, 365" />
+            </label>
+          </div>
           <div className="form-row" style={{ marginTop: 12 }}>
             <label className="field" style={{ flex: "1 1 100%" }}>Série diária de chuva (mm, separados por espaço/vírgula/linha)
               <textarea rows={3} value={series} onChange={(e) => setSeries(e.target.value)} placeholder="0 0 12.5 0 3 ..." />

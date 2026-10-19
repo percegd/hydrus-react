@@ -30,6 +30,10 @@ const DEFAULTS = {
   et0: "4.0",
   series: "",
   et0Series: "",
+  waterOnly: false,
+  analysisStart: "1",
+  analysisEnd: "365",
+  printDays: "55, 128, 237, 365",
   rows: DEFAULT_ROWS,
   placement: "surface",
   appDay: "0",
@@ -56,6 +60,10 @@ export default function Home() {
   const [et0, setEt0] = useState(DEFAULTS.et0);
   const [series, setSeries] = useState(DEFAULTS.series);
   const [et0Series, setEt0Series] = useState(DEFAULTS.et0Series);
+  const [waterOnly, setWaterOnly] = useState(DEFAULTS.waterOnly);
+  const [analysisStart, setAnalysisStart] = useState(DEFAULTS.analysisStart);
+  const [analysisEnd, setAnalysisEnd] = useState(DEFAULTS.analysisEnd);
+  const [printDays, setPrintDays] = useState(DEFAULTS.printDays);
   const [rows, setRows] = useState<NutrientRow[]>(DEFAULTS.rows.map((r) => ({ ...r })));
   const [placement, setPlacement] = useState(DEFAULTS.placement);
   const [appDay, setAppDay] = useState(DEFAULTS.appDay);
@@ -160,6 +168,10 @@ export default function Home() {
     setEt0(DEFAULTS.et0);
     setSeries(DEFAULTS.series);
     setEt0Series(DEFAULTS.et0Series);
+    setWaterOnly(DEFAULTS.waterOnly);
+    setAnalysisStart(DEFAULTS.analysisStart);
+    setAnalysisEnd(DEFAULTS.analysisEnd);
+    setPrintDays(DEFAULTS.printDays);
     setRows(DEFAULTS.rows.map((r) => ({ ...r })));
     setPlacement(DEFAULTS.placement);
     setAppDay(DEFAULTS.appDay);
@@ -205,7 +217,7 @@ export default function Home() {
     } catch (e) { setFieldErrors([]); setError(String((e as Error).message || e)); return; }
     const depthVal = num(depthCm, 200);
     const dispDefault = depthVal / 10;
-    const solutes = rows
+    const solutes = waterOnly ? [] : rows
       .filter((r) => parseFloat(String(r.dose).replace(",", ".")) > 0)
       .map((r) => {
         const dispNum = num(r.disp, dispDefault);
@@ -216,7 +228,21 @@ export default function Home() {
           release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
         };
       });
-    if (!solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
+    if (!waterOnly && !solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
+    let print_days: number[] | undefined;
+    let analysis_start_day = 1;
+    let analysis_end_day = 365;
+    if (rainMode === "series") {
+      try {
+        analysis_start_day = Math.round(num(analysisStart, 1));
+        analysis_end_day = Math.round(num(analysisEnd, 365));
+        const raw = String(printDays).trim();
+        if (raw) {
+          print_days = raw.split(/[\s;,]+/).filter(Boolean).map((t) => Number(t.replace(",", ".")));
+          if (print_days.some((v) => !Number.isFinite(v) || v < 0)) throw new Error("Dias de leitura inválidos (só números ≥ 0).");
+        }
+      } catch (e) { setFieldErrors([]); setError(String((e as Error).message || e)); return; }
+    }
     const appliedTotal = rain_series ? rain_series.reduce((a, b) => a + b, 0) : num(rainMm, 0);
     setAppliedMm(appliedTotal);
     setStep(4);
@@ -247,6 +273,10 @@ export default function Home() {
         rain_mm: num(rainMm, 0), rain_series,
         initial_moisture_pct: num(moisture, 80),
         et0_mm_day: num(et0, 0), et0_series, solutes,
+        water_only: waterOnly,
+        analysis_start_day,
+        analysis_end_day,
+        print_days,
         placement: {
           mode: placement, z_top_cm: z_top, z_bottom_cm: z_bottom,
           fertigation_c0_mg_l: num(c0, 20),
@@ -381,6 +411,8 @@ export default function Home() {
 
             {step === 2 && (
               <StepNutrients
+                waterOnly={waterOnly}
+                setWaterOnly={setWaterOnly}
                 rows={rows}
                 setRow={setRow}
                 addRow={addRow}
@@ -422,6 +454,12 @@ export default function Home() {
                 setSeries={setSeries}
                 et0Series={et0Series}
                 setEt0Series={setEt0Series}
+                analysisStart={analysisStart}
+                setAnalysisStart={setAnalysisStart}
+                analysisEnd={analysisEnd}
+                setAnalysisEnd={setAnalysisEnd}
+                printDays={printDays}
+                setPrintDays={setPrintDays}
                 error={error}
                 fieldErrors={fieldErrors}
                 onBack={() => setStep(2)}
