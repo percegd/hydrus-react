@@ -52,6 +52,10 @@ _pool = ThreadPoolExecutor(max_workers=2)
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 _jobs_root = tempfile.mkdtemp(prefix="hydrus-jobs-")
+# Matplotlib (pyplot global) não é thread-safe: serializa as renderizações
+# lazy entre jobs. O lock por job evita rebuild duplicado do mesmo job;
+# este evita cross-talk entre jobs diferentes.
+_plots_lock = threading.Lock()
 
 
 def _env_float(name: str, default: float) -> float:
@@ -107,6 +111,9 @@ def _cleanup_jobs() -> None:
             except (TypeError, ValueError):
                 ref = now
             if now - ref > ttl:
+                ev = job.get("event")
+                if isinstance(ev, threading.Event):
+                    to_signal.append(ev)
                 expired.append(job_id)
         for job_id in expired:
             _jobs.pop(job_id, None)
@@ -120,7 +127,11 @@ def _cleanup_jobs() -> None:
             finished.sort(key=lambda kv: kv[0] or 0)
             overflow = len(_jobs) - max_jobs
             for _, job_id in finished[:overflow]:
-                _jobs.pop(job_id, None)
+                job = _jobs.pop(job_id, None)
+                if job is not None:
+                    ev = job.get("event")
+                    if isinstance(ev, threading.Event):
+                        to_signal.append(ev)
                 expired.append(job_id)
     for job_id in expired:
         shutil.rmtree(os.path.join(_jobs_root, job_id), ignore_errors=True)
@@ -144,6 +155,13 @@ def _is_lock(obj: object) -> bool:
     return obj is not None and hasattr(obj, "acquire") and hasattr(obj, "release")
 
 
+def _job_still_done(job_id: str) -> bool:
+    """Revalida sob _jobs_lock que o job existe e está done (evita ressuscitar expirado)."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        return job is not None and job.get("status") == "done"
+
+
 def _ensure_extra_locked(job_id: str, job_snapshot: dict) -> None:
     """Garante PNGs extras + graphs.zip (lazy). Chamar SEM _jobs_lock; usa lock do job."""
     lock = job_snapshot.get("lock")
@@ -160,10 +178,16 @@ def _ensure_extra_locked(job_id: str, job_snapshot: dict) -> None:
     with lock:
         if os.path.exists(zip_path):
             return
-        try:
-            ensure_extra_files(job_dir, lazy)
-        except Exception:
-            pass
+        if not _job_still_done(job_id):
+            return
+        # Pyplot global: serializa renderização entre jobs.
+        with _plots_lock:
+            if os.path.exists(zip_path) or not _job_still_done(job_id):
+                return
+            try:
+                ensure_extra_files(job_dir, lazy)
+            except Exception:
+                pass
 
 
 def _ensure_steps_locked(job_id: str, job_snapshot: dict) -> str | None:
@@ -187,6 +211,8 @@ def _ensure_steps_locked(job_id: str, job_snapshot: dict) -> str | None:
                     return content
         except OSError:
             pass
+        if not _job_still_done(job_id):
+            return None
         from .service import ensure_steps_file
 
         try:
@@ -715,6 +741,8 @@ def job_plot(job_id: str, key: str):
         if job is not None and job.get("status") == "done":
             job["t_end"] = time.time()
     _ensure_extra_locked(job_id, snapshot)
+    if not _job_still_done(job_id):
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
     from .graphs import plot_filename
 
     fname = plot_filename(key)
@@ -756,6 +784,8 @@ def job_steps(job_id: str) -> StepsResponse:
         if job is not None and job.get("status") == "done":
             job["t_end"] = time.time()
     md = _ensure_steps_locked(job_id, snapshot)
+    if not _job_still_done(job_id):
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
     if md is None or not str(md).strip():
         md_path = os.path.join(_jobs_root, job_id, "passo_a_passo.md")
         try:
@@ -788,6 +818,8 @@ def job_graphs_zip(job_id: str):
         if job is not None and job.get("status") == "done":
             job["t_end"] = time.time()
     _ensure_extra_locked(job_id, snapshot)
+    if not _job_still_done(job_id):
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
     zip_path = os.path.join(_jobs_root, job_id, "graphs.zip")
     if not os.path.exists(zip_path):
         raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
