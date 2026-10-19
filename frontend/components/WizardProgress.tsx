@@ -1,6 +1,14 @@
 "use client";
 
-const STEPS = ["Apresentação", "Solo e Perfil", "Nutrientes", "Regime Hídrico", "Resultados"];
+const STEPS = ["Apresentação", "Solo & Perfil", "Nutrientes", "Regime Hídrico", "Resultados"];
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
 
 export default function WizardProgress({ current }: { current: number }) {
   return (
@@ -16,11 +24,13 @@ export default function WizardProgress({ current }: { current: number }) {
               </div>
             ) : (
               <div className={`wizard-step ${state}`}>
-                <span className={`wizard-badge ${badge}`}>{i < current ? "✓" : i}</span>
+                <span className={`wizard-badge ${badge}`}>{i < current ? <CheckIcon /> : i}</span>
                 <span className="wizard-label">{title}</span>
               </div>
             )}
-            {i < STEPS.length - 1 && <div className={`wizard-connector${i < current ? " connector-done" : ""}`} />}
+            {i < STEPS.length - 1 && (
+              <div className={`wizard-connector${i + 1 < current ? " connector-done" : ""}`} />
+            )}
           </span>
         );
       })}

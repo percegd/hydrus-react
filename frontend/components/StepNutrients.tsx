@@ -27,6 +27,19 @@ export const SPECIES = [
 
 export const NUTRIENT_SYMBOLS = ["N", "K", "P", "S", "Ca", "Mg"];
 
+/** Rótulos de exibição iguais aos do Gradio (o `name` do payload é preservado). */
+export function nutrientLabel(symbol: string, fallback: string): string {
+  switch (symbol) {
+    case "N": return "N · Nitrato (NO₃⁻)";
+    case "K": return "K · Potássio (K⁺)";
+    case "P": return "P · Fósforo (fosfato)";
+    case "S": return "S · Enxofre (sulfato)";
+    case "Ca": return "Ca · Cálcio (Ca²⁺)";
+    case "Mg": return "Mg · Magnésio (Mg²⁺)";
+    default: return fallback || symbol;
+  }
+}
+
 export const DEFAULT_ROWS: NutrientRow[] = [
   { symbol: "K", name: "Potássio", dose: "30", kd: "0.45", disp: "20", res: "0", rel: "immediate", relDays: "60", kdEdited: false, kdSource: "" },
 ];
@@ -61,11 +74,46 @@ type Props = {
   setPulse: (v: string) => void;
   fertContinuous: boolean;
   setFertContinuous: (v: boolean) => void;
-  error: string;
-  fieldErrors: string[];
-  onBack: () => void;
-  onNext: () => void;
 };
+
+function FlaskIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 3h6" />
+      <path d="M10 3v6.5L5.6 17.1A2 2 0 0 0 7.4 20h9.2a2 2 0 0 0 1.8-2.9L14 9.5V3" />
+      <path d="M7.2 15h9.6" />
+      <circle cx="10.2" cy="17.6" r="0.9" />
+      <circle cx="13.6" cy="17.6" r="0.9" />
+    </svg>
+  );
+}
+
+function DropIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
+    </svg>
+  );
+}
+
+function CubeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+      <line x1="12" y1="22.08" x2="12" y2="12" />
+    </svg>
+  );
+}
+
+function Field({ label, children, fixed }: { label: string; children: React.ReactNode; fixed?: boolean }) {
+  return (
+    <label className={`field${fixed ? " fixed" : ""}`}>
+      <span className="field-label">{label}</span>
+      {children}
+    </label>
+  );
+}
 
 export default function StepNutrients(props: Props) {
   const {
@@ -77,7 +125,6 @@ export default function StepNutrients(props: Props) {
     zTop, setZTop, zBottom, setZBottom,
     c0, setC0, pulse, setPulse,
     fertContinuous, setFertContinuous,
-    error, fieldErrors, onBack, onNext,
   } = props;
 
   const [catalog, setCatalog] = useState<FertilizerInfo[]>([]);
@@ -90,6 +137,7 @@ export default function StepNutrients(props: Props) {
   const [fertMsg, setFertMsg] = useState("");
   const [fertError, setFertError] = useState("");
   const [fertBusy, setFertBusy] = useState(false);
+  const [fertOpen, setFertOpen] = useState(false);
 
   useEffect(() => {
     getFertilizers().then((c) => {
@@ -126,6 +174,7 @@ export default function StepNutrients(props: Props) {
       const res = await postFertilizerDose(body);
       onApplyFertilizer(res.elemental_doses);
       setFertMsg(res.message);
+      setFertOpen(false);
     } catch (e) {
       setFertError(e instanceof ApiError ? e.message : String(e instanceof Error ? e.message : e));
     } finally {
@@ -142,18 +191,43 @@ export default function StepNutrients(props: Props) {
     }
   }
 
+  function rowActive(r: NutrientRow): boolean {
+    const v = parseFloat(String(r.dose).replace(",", "."));
+    return Number.isFinite(v) && v > 0;
+  }
+
+  function toggleRow(i: number, on: boolean) {
+    if (on) {
+      const cur = rows[i];
+      const v = parseFloat(String(cur.dose).replace(",", "."));
+      setRow(i, { dose: Number.isFinite(v) && v > 0 ? cur.dose : "30" });
+    } else {
+      setRow(i, { dose: "0" });
+    }
+  }
+
+  const PLACEMENTS = [
+    { value: "surface", label: "A lanço / Superfície (0 a 2 cm)" },
+    { value: "furrow", label: "No Sulco de Plantio (5 a 10 cm)" },
+    { value: "custom", label: "Profundidade Personalizada" },
+    { value: "fertigation", label: "Fertirrigação" },
+  ];
+
   return (
     <>
-      <div role="radiogroup" aria-label="Modo de simulação">
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+      <div className="choice-cards" role="radiogroup" aria-label="Modo de simulação">
+        <label className={`choice-card${!waterOnly ? " selected" : ""}`}>
           <input type="radio" name="simulation-mode" value="nutrients" checked={!waterOnly} onChange={() => setWaterOnly(false)} />
+          <span className="choice-icon"><FlaskIcon /></span>
           Água + nutrientes
         </label>
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <label className={`choice-card${waterOnly ? " selected" : ""}`}>
           <input type="radio" name="simulation-mode" value="water-only" checked={waterOnly} onChange={() => setWaterOnly(true)} />
+          <span className="choice-icon"><DropIcon /></span>
           Somente água
         </label>
       </div>
+
       {waterOnly && (
         <div className="water-only-note">
           <b>Simulação somente de água.</b> Nenhum soluto será transportado — a tabela de
@@ -165,163 +239,223 @@ export default function StepNutrients(props: Props) {
           </ul>
         </div>
       )}
+
       {!waterOnly && (
         <>
-          <h3 className="section-title" style={{ marginTop: 8 }}>Carregar Fertilizante Comercial</h3>
-          <div className="form-row">
-            <label className="field">Fertilizante Comercial
-              <select value={fertKey} onChange={(e) => setFertKey(e.target.value)} disabled={isCustomFert || !!blendKey}>
-                {catalog.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
-              </select>
-            </label>
-            <label className="field">Dose Bruta de Produto Comercial [kg/ha]
-              <input value={grossDose} onChange={(e) => setGrossDose(e.target.value)} inputMode="decimal" />
-            </label>
-          </div>
-          <div className="form-row" style={{ marginTop: 8 }}>
-            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <input type="checkbox" checked={isCustomFert} onChange={(e) => { setIsCustomFert(e.target.checked); setBlendKey(""); }} />
-              Fertilizante Personalizado (teores próprios)
-            </label>
-            <label className="field">Mistura pronta (blend)
-              <select value={blendKey} onChange={(e) => applyBlend(e.target.value)}>
-                <option value="">—</option>
-                {blends.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
-              </select>
-            </label>
-          </div>
-          {(isCustomFert || blendKey) && (
-            <div className="form-row" style={{ marginTop: 8 }}>
-              {NUTRIENT_SYMBOLS.map((s) => (
-                <label className="field" key={s}>Teor {s} [%]
-                  <input
-                    value={customPcts[s] ?? "0"}
-                    onChange={(e) => { setCustomPcts((p) => ({ ...p, [s]: e.target.value })); setBlendKey(""); setIsCustomFert(true); }}
-                    inputMode="decimal"
-                  />
-                </label>
-              ))}
-            </div>
-          )}
-          <div className="btn-row" style={{ marginTop: 8 }}>
-            <button className="btn" onClick={applyFertilizer} disabled={fertBusy}>
-              {fertBusy ? "Aplicando..." : "Aplicar fertilizante"}
+          <div className="section-header-row">
+            <button type="button" className="btn-modal-open" onClick={() => { setFertMsg(""); setFertError(""); setFertOpen(true); }}>
+              <span className="cube-icon"><CubeIcon /></span>
+              Carregar Fertilizante Comercial
             </button>
           </div>
-          {fertMsg && <p className="hint-text">{fertMsg}</p>}
-          {fertError && <p className="error-text">{fertError}</p>}
 
-          <h3 className="section-title" style={{ marginTop: 20 }}>Solutos e doses elementares</h3>
-        </>
-      )}
-      {!waterOnly && rows.map((r, i) => {
-        const info = kdInfo[r.symbol];
-        const edited = !!r.kdEdited;
-        const badge = edited ? "Editado" : `Literatura: ${r.kdSource || info?.citation || ""}`;
-        return (
-        <div className="nutrient-row" key={i}>
-          <label className="field">Soluto
-            <select value={r.symbol} onChange={(e) => {
-              const sp = SPECIES.find((s) => s.symbol === e.target.value)!;
-              const lit = kdInfo[sp.symbol];
-              setRow(i, { symbol: sp.symbol, name: sp.name, kd: lit?.kd ?? String(sp.kd), kdEdited: false, kdSource: lit?.citation ?? "" });
-            }}>
-              {SPECIES.map((s) => <option key={s.symbol} value={s.symbol}>{s.symbol} · {s.name}</option>)}
-            </select>
-          </label>
-          <label className="field">Dose elementar [kg/ha]
-            <input value={r.dose} onChange={(e) => setRow(i, { dose: e.target.value })} />
-          </label>
-          <label className="field">Kd - Adsorção [cm³/g]
-            <input value={r.kd} onChange={(e) => setRow(i, { kd: e.target.value, kdEdited: true })} />
-            <span className="hint-text" title={info?.citation}>{badge}</span>
-          </label>
-          <label className="field">Dispersividade λ [cm]
-            <input value={r.disp} onChange={(e) => setRow(i, { disp: e.target.value })} />
-          </label>
-          <label className="field">Resíduo inicial [mg/dm³]
-            <input value={r.res} onChange={(e) => setRow(i, { res: e.target.value })} />
-          </label>
-          <label className="field">Liberação
-            <select value={r.rel} onChange={(e) => setRow(i, { rel: e.target.value })}>
-              <option value="immediate">Convencional (Solubilização Instantânea)</option>
-              <option value="controlled">Liberação Controlada / Lenta</option>
-            </select>
-          </label>
-          {r.rel === "controlled" && (
-            <label className="field">Duração Nominal da Liberação [dias]
-              <input value={r.relDays} onChange={(e) => setRow(i, { relDays: e.target.value })} />
-            </label>
-          )}
-          <button className="icon-btn" onClick={() => removeRow(i)} title="Remover">✕</button>
-        </div>
-        );
-      })}
-      {!waterOnly && (
-        <>
-          <button className="btn" onClick={addRow}>+ soluto</button>
+          <div className="nutrient-table-header">
+            <span className="col-nutr">Nutriente</span>
+            <div className="col-dose"><span className="header-title">Dose elementar</span><span className="header-unit">[kg/ha]</span></div>
+            <div className="col-kd"><span className="header-title">Kd - Adsorção</span><span className="header-unit">[cm³/g]</span></div>
+            <div className="col-disp"><span className="header-title">Disp. (λ)</span><span className="header-unit">[cm]</span></div>
+            <div className="col-res"><span className="header-title">Teor Residual</span><span className="header-unit">[mg/dm³]</span></div>
+          </div>
+          <div className="estimate-note">
+            <b>Como estes valores são estimados:</b> o <b>Kd</b> vem de tabelas de literatura
+            para a textura do solo escolhido (Embrapa, van Raij, Sparks, SSSA); o <b>λ</b> usa o
+            padrão <b>0,1 × profundidade do domínio</b>, regra prática da comunidade HYDRUS-1D.
+            Para valores calibrados — ex.: ajuste por STANMOD/CXTFIT — digite diretamente na célula.
+          </div>
 
-          <h3 className="section-title" style={{ marginTop: 20 }}>Posicionamento do adubo no solo</h3>
-          <div role="radiogroup" aria-label="Posicionamento do adubo no solo">
-            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <input type="radio" name="placement-mode" value="surface" checked={placement === "surface"} onChange={() => setPlacement("surface")} />
-              A lanço / Superfície (0 a 2 cm)
-            </label>
-            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <input type="radio" name="placement-mode" value="furrow" checked={placement === "furrow"} onChange={() => setPlacement("furrow")} />
-              No Sulco de Plantio (5 a 10 cm)
-            </label>
-            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <input type="radio" name="placement-mode" value="custom" checked={placement === "custom"} onChange={() => setPlacement("custom")} />
-              Profundidade personalizada
-            </label>
-            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <input type="radio" name="placement-mode" value="fertigation" checked={placement === "fertigation"} onChange={() => setPlacement("fertigation")} />
-              Fertirrigação
-            </label>
+          <div style={{ marginTop: 10 }}>
+            {rows.map((r, i) => {
+              const active = rowActive(r);
+              const info = kdInfo[r.symbol];
+              const badge = r.kdEdited ? "Valor editado manualmente" : `Literatura: ${r.kdSource || info?.citation || ""}`;
+              return (
+                <div key={i}>
+                  <div className={`nutrient-row${active ? " active" : ""}`}>
+                    <div className="nutrient-col-check">
+                      <input
+                        type="checkbox"
+                        className="switch"
+                        checked={active}
+                        onChange={(e) => toggleRow(i, e.target.checked)}
+                        aria-label={`Ativar ${nutrientLabel(r.symbol, r.name)}`}
+                      />
+                      <select
+                        className="nutr-select"
+                        value={r.symbol}
+                        disabled={!active}
+                        onChange={(e) => {
+                          const sp = SPECIES.find((s) => s.symbol === e.target.value)!;
+                          const lit = kdInfo[sp.symbol];
+                          setRow(i, { symbol: sp.symbol, name: sp.name, kd: lit?.kd ?? String(sp.kd), kdEdited: false, kdSource: lit?.citation ?? "" });
+                        }}
+                        aria-label="Soluto"
+                        title={nutrientLabel(r.symbol, r.name)}
+                      >
+                        {SPECIES.map((s) => <option key={s.symbol} value={s.symbol}>{nutrientLabel(s.symbol, s.name)}</option>)}
+                      </select>
+                    </div>
+                    <div className={`nutrient-col-dose${active ? "" : " input-disabled-dim"}`}>
+                      <input value={r.dose} disabled={!active} onChange={(e) => setRow(i, { dose: e.target.value })} inputMode="decimal" aria-label="Dose elementar [kg/ha]" />
+                    </div>
+                    <div className={`nutrient-col-kd${active ? "" : " input-disabled-dim"}`} title={badge}>
+                      <input value={r.kd} disabled={!active} onChange={(e) => setRow(i, { kd: e.target.value, kdEdited: true })} inputMode="decimal" aria-label="Kd - Adsorção [cm³/g]" />
+                    </div>
+                    <div className={`nutrient-col-disp${active ? "" : " input-disabled-dim"}`}>
+                      <input value={r.disp} disabled={!active} onChange={(e) => setRow(i, { disp: e.target.value })} inputMode="decimal" aria-label="Dispersividade λ [cm]" />
+                    </div>
+                    <div className={`nutrient-col-res${active ? "" : " input-disabled-dim"}`}>
+                      <input value={r.res} disabled={!active} onChange={(e) => setRow(i, { res: e.target.value })} inputMode="decimal" aria-label="Teor residual [mg/dm³]" />
+                    </div>
+                    <button type="button" className="icon-btn" onClick={() => removeRow(i)} title="Remover soluto" aria-label="Remover soluto">✕</button>
+                  </div>
+                  {active && (
+                    <div style={{ margin: "-2px 0 8px 0" }}>
+                      <div className="seg-grid" role="radiogroup" aria-label={`Liberação de ${r.symbol}`}>
+                        <label className={`seg-option${r.rel !== "controlled" ? " selected" : ""}`}>
+                          <input type="radio" name={`rel-${i}`} checked={r.rel !== "controlled"} onChange={() => setRow(i, { rel: "immediate" })} />
+                          Convencional (Solubilização Instantânea)
+                        </label>
+                        <label className={`seg-option${r.rel === "controlled" ? " selected" : ""}`}>
+                          <input type="radio" name={`rel-${i}`} checked={r.rel === "controlled"} onChange={() => setRow(i, { rel: "controlled" })} />
+                          Liberação Controlada / Lenta
+                        </label>
+                      </div>
+                      {r.rel === "controlled" && (
+                        <div className="form-row" style={{ marginTop: 8 }}>
+                          <Field label="Duração Nominal da Liberação [dias]">
+                            <input value={r.relDays} onChange={(e) => setRow(i, { relDays: e.target.value })} inputMode="decimal" />
+                          </Field>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <button type="button" className="btn" onClick={addRow}>+ Adicionar outro soluto</button>
+
+          <div className="step-section-title">Liberação do fertilizante</div>
+          <p className="step-section-sub" style={{ fontSize: 13, color: "#64748b" }}>
+            Definida por soluto, na linha de cada nutriente acima.
+          </p>
+
+          <div className="step-section-title">Posicionamento do adubo no solo</div>
+          <div className="seg-grid" role="radiogroup" aria-label="Posicionamento do adubo no solo" style={{ marginTop: 10 }}>
+            {PLACEMENTS.map((p) => (
+              <label key={p.value} className={`seg-option${placement === p.value ? " selected" : ""}`}>
+                <input
+                  type="radio"
+                  name="placement-mode"
+                  value={p.value}
+                  checked={placement === p.value}
+                  onChange={() => setPlacement(p.value)}
+                />
+                {p.label}
+              </label>
+            ))}
           </div>
 
           <div className="form-row" style={{ marginTop: 12 }}>
-            <label className="field">Dia da aplicação
-              <input value={appDay} onChange={(e) => setAppDay(e.target.value)} />
-            </label>
+            <Field label="Dia da aplicação">
+              <input value={appDay} onChange={(e) => setAppDay(e.target.value)} inputMode="decimal" />
+            </Field>
             {placement === "custom" && (
               <>
-                <label className="field">De (profundidade inicial) [cm]
-                  <input value={zTop} onChange={(e) => setZTop(e.target.value)} />
-                </label>
-                <label className="field">Até (profundidade final) [cm]
-                  <input value={zBottom} onChange={(e) => setZBottom(e.target.value)} />
-                </label>
+                <Field label="De (profundidade inicial) [cm]">
+                  <input value={zTop} onChange={(e) => setZTop(e.target.value)} inputMode="decimal" />
+                </Field>
+                <Field label="Até (profundidade final) [cm]">
+                  <input value={zBottom} onChange={(e) => setZBottom(e.target.value)} inputMode="decimal" />
+                </Field>
               </>
             )}
             {placement === "fertigation" && (
               <>
-                <label className="field">Concentração da Solução Injetada C₀ [mg/L]
-                  <input value={c0} onChange={(e) => setC0(e.target.value)} />
-                </label>
-                <label className="field">Duração da Injeção [dias]
-                  <input value={pulse} onChange={(e) => setPulse(e.target.value)} disabled={fertContinuous} />
-                </label>
-                <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={fertContinuous} onChange={(e) => setFertContinuous(e.target.checked)} />
-                  Injeção contínua (toda a duração)
-                </label>
+                <Field label="Concentração da Solução Injetada C₀ [mg/L]">
+                  <input value={c0} onChange={(e) => setC0(e.target.value)} inputMode="decimal" />
+                </Field>
+                <Field label="Duração da Injeção [dias]">
+                  <input value={pulse} onChange={(e) => setPulse(e.target.value)} inputMode="decimal" disabled={fertContinuous} />
+                </Field>
+                <div className="field fixed">
+                  <span className="field-label">{"\u00A0"}</span>
+                  <label className="switch-row">
+                    <input type="checkbox" className="switch" checked={fertContinuous} onChange={(e) => setFertContinuous(e.target.checked)} />
+                    Injeção contínua (toda a duração)
+                  </label>
+                </div>
               </>
             )}
           </div>
         </>
       )}
-      {fieldErrors.length > 0 && (
-        <ul className="error-text">
-          {fieldErrors.map((m, i) => <li key={i}>{m}</li>)}
-        </ul>
+
+      {fertOpen && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="fert-title">
+          <div className="modal-card fert-modal-card">
+            <h3 className="fert-modal-title" id="fert-title">Carregar Fertilizante Comercial</h3>
+            <p className="fert-modal-sub">
+              Selecione o fertilizante e a dose bruta comercial. O sistema calculará e preencherá
+              automaticamente as doses elementares de cada nutriente.
+            </p>
+            <div className="form-row">
+              <Field label="Fertilizante Comercial">
+                <select value={fertKey} onChange={(e) => setFertKey(e.target.value)} disabled={isCustomFert || !!blendKey}>
+                  {catalog.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="form-row">
+              <Field label="Dose Bruta de Produto Comercial [kg/ha]">
+                <input value={grossDose} onChange={(e) => setGrossDose(e.target.value)} inputMode="decimal" />
+              </Field>
+            </div>
+            <div className="form-row">
+              <div className="field fixed">
+                <span className="field-label">{"\u00A0"}</span>
+                <label className="switch-row">
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={isCustomFert}
+                    onChange={(e) => { setIsCustomFert(e.target.checked); setBlendKey(""); }}
+                  />
+                  Fertilizante Personalizado (teores próprios)
+                </label>
+              </div>
+              <Field label="Mistura pronta (blend)">
+                <select value={blendKey} onChange={(e) => applyBlend(e.target.value)}>
+                  <option value="">—</option>
+                  {blends.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
+                </select>
+              </Field>
+            </div>
+            {(isCustomFert || blendKey) && (
+              <div className="form-row">
+                {NUTRIENT_SYMBOLS.map((s) => (
+                  <Field key={s} label={`Teor ${s} [%]`}>
+                    <input
+                      value={customPcts[s] ?? "0"}
+                      onChange={(e) => { setCustomPcts((p) => ({ ...p, [s]: e.target.value })); setBlendKey(""); setIsCustomFert(true); }}
+                      inputMode="decimal"
+                    />
+                  </Field>
+                ))}
+              </div>
+            )}
+            {fertMsg && <p className="hint-text">{fertMsg}</p>}
+            {fertError && <p className="error-text">{fertError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn-modal-cancel" onClick={() => setFertOpen(false)}>Cancelar</button>
+              <button type="button" className="btn-modal-confirm" onClick={applyFertilizer} disabled={fertBusy}>
+                {fertBusy ? "Aplicando..." : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
-      {error && <p className="error-text">{error}</p>}
-      <div className="btn-row">
-        <button className="btn" onClick={onBack}>Voltar</button>
-        <button className="btn btn-primary" onClick={onNext}>Avançar</button>
-      </div>
     </>
   );
 }

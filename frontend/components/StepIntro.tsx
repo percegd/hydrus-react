@@ -15,7 +15,7 @@ function CheckIcon() {
   );
 }
 
-export default function StepIntro({ onStart }: { onStart: () => void }) {
+export default function StepIntro() {
   return (
     <div className="intro-wrap">
       <div className="intro-icon">
@@ -27,9 +27,9 @@ export default function StepIntro({ onStart }: { onStart: () => void }) {
       </div>
       <h1 className="intro-title">Simulação de Água e Nutrientes no Solo</h1>
       <p className="intro-lead">
-        Plataforma que modela, com rigor físico, a dinâmica da água e o transporte de nutrientes
-        (N, K, Ca, Mg, S, P) no perfil do solo — de forma simples e transparente, sem a
-        complexidade da interface do HYDRUS-1D.
+        Plataforma que modela, com rigor físico, a dinâmica da água e o transporte de
+        nutrientes (N, K, Ca, Mg, S, P) no perfil do solo — de forma simples e
+        transparente, sem a complexidade da interface do HYDRUS-1D.
       </p>
       <ul className="intro-features">
         {FEATURES.map((f) => (
@@ -39,11 +39,6 @@ export default function StepIntro({ onStart }: { onStart: () => void }) {
           </li>
         ))}
       </ul>
-      <div className="wizard-nav-row">
-        <button className="btn btn-primary" onClick={onStart}>
-          Começar
-        </button>
-      </div>
     </div>
   );
 }

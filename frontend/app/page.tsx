@@ -11,10 +11,10 @@ import { ApiError, getCrops, getExcelBlob, getJob, getKd, getReport, getSoils, p
 
 const STEP_TITLES = [
   { title: "Apresentação", sub: "Visão geral da plataforma de simulação." },
-  { title: "Passo 1 de 4: Solo e cultura", sub: "Defina o solo e a cultura do cenário." },
-  { title: "Passo 2 de 4: Nutrientes e manejo", sub: "Solutos, doses, liberação e aplicação." },
-  { title: "Passo 3 de 4: Regime hídrico", sub: "Defina o cenário hídrico da simulação." },
-  { title: "Passo 4 de 4: Resultados", sub: "Balanço de massa, perfil e laudo." },
+  { title: "Passo 1 de 3: Qual o solo e as propriedades do perfil?", sub: "" },
+  { title: "Passo 2 de 3: Água e solutos", sub: "" },
+  { title: "Passo 3 de 3: Qual o regime hídrico aplicado?", sub: "" },
+  { title: "Resultados da Modelagem Física 1D", sub: "Balanço de água e nutrientes consolidado com base na Equação de Richards e Advecção-Dispersão." },
 ];
 
 const DEFAULTS = {
@@ -54,6 +54,78 @@ const DEFAULTS = {
   pulse: "7",
   fertContinuous: false,
 };
+
+function RestartIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
+    </svg>
+  );
+}
+
+function ValidationModal({ issues, onClose }: { issues: string[]; onClose: () => void }) {
+  return (
+    <div className="modal-overlay" role="alertdialog" aria-modal="true" aria-labelledby="validation-title">
+      <div className="modal-card validation-modal-card">
+        <div className="validation-modal-head">
+          <div className="validation-modal-icon">⚠</div>
+          <div>
+            <h3 className="validation-modal-title" id="validation-title">Verifique os campos destacados</h3>
+            <p className="validation-modal-sub">
+              {issues.length} campo(s) com formato inválido ou valor fisicamente impossível.
+            </p>
+          </div>
+        </div>
+        <div className="validation-issue-list">
+          {issues.map((m, i) => {
+            const sep = m.indexOf(":");
+            const head = sep > 0 ? m.slice(0, sep).trim() : "Campo";
+            const body = sep > 0 ? m.slice(sep + 1).trim() : m;
+            return (
+              <div className="validation-issue" key={i}>
+                <span className="validation-issue-num">{i + 1}</span>
+                <div className="validation-issue-body">
+                  <b>{head}</b>
+                  <p>{body}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="modal-actions">
+          <button className="btn-modal-confirm" style={{ width: "100%" }} onClick={onClose} autoFocus>
+            Entendi, vou corrigir
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RestartModal({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="modal-overlay" role="alertdialog" aria-modal="true" aria-labelledby="restart-title">
+      <div className="modal-card">
+        <div className="modal-head">
+          <div className="modal-icon-refresh"><RestartIcon /></div>
+          <div style={{ flex: 1 }}>
+            <h3 className="modal-title" id="restart-title">Iniciar Nova Simulação?</h3>
+            <p className="modal-sub">
+              Você retornará ao primeiro passo da modelagem. Os resultados calculados atualmente nesta tela serão substituídos.
+            </p>
+          </div>
+        </div>
+        <div className="modal-actions">
+          <button className="btn-modal-cancel" onClick={onCancel}>Cancelar</button>
+          <button className="btn-modal-confirm" onClick={onConfirm} autoFocus>Confirmar e Reiniciar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function Home() {
   const [step, setStep] = useState(0);
@@ -100,15 +172,15 @@ export default function Home() {
   const [jobId, setJobId] = useState("");
   const [jobState, setJobState] = useState("");
   const [elapsed, setElapsed] = useState(0);
-  const [error, setError] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<string[]>([]);
+  const [validationIssues, setValidationIssues] = useState<string[] | null>(null);
+  const [restartOpen, setRestartOpen] = useState(false);
   const [result, setResult] = useState<SimulateResponse | null>(null);
   const [report, setReport] = useState("");
   const [appliedMm, setAppliedMm] = useState<number | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    getSoils().then(setSoils).catch(() => setError("API fora do ar (backend :8001)."));
+    getSoils().then(setSoils).catch(() => setValidationIssues(["API fora do ar (backend :8001)."]));
     getCrops().then((cs) => {
       setCrops(cs);
       // Prefill raiz da cultura selecionada (Gradio: root_depth da cultura).
@@ -148,7 +220,7 @@ export default function Home() {
           setVgN(String(r.n));
           setKs(String(r.ks));
           setBulk(String(r.bulk_density));
-          setRosettaNote(`Silte: ${r.silt_pct}% • Classe: ${r.texture} • Areia (${sand}%) + Argila (${clay}%) + Silte (${r.silt_pct}%) = 100%`);
+          setRosettaNote(`Silte: ${r.silt_pct}% • Classe: ${r.texture} • Areia (${sand}%) + Argila (${clay}%) + Silte (${r.silt_pct})% = 100%`);
         })
         .catch(() => setRosettaNote("Rosetta indisponível para esta granulometria."));
     }, 400);
@@ -206,13 +278,15 @@ export default function Home() {
     if (found) setRootDepthCm(String(found.root_depth_cm));
   }
 
+  function openValidation(issues: string[]) {
+    setValidationIssues(issues.length > 0 ? issues : ["Erro desconhecido."]);
+  }
+
   function showApiError(e: unknown) {
     if (e instanceof ApiError && e.details.length > 0) {
-      setFieldErrors(e.details);
-      setError("");
+      openValidation(e.details);
     } else {
-      setFieldErrors([]);
-      setError(String(e instanceof Error ? e.message : e));
+      openValidation([String(e instanceof Error ? e.message : e)]);
     }
   }
   function setRow(i: number, patch: Partial<NutrientRow>) {
@@ -276,24 +350,17 @@ export default function Home() {
     setJobId("");
     setJobState("");
     setElapsed(0);
-    setError("");
-    setFieldErrors([]);
+    setValidationIssues(null);
+    setRestartOpen(false);
     setResult(null);
     setReport("");
     setAppliedMm(null);
     setStep(1);
   }
 
-  function handleNewSimulation() {
-    if (window.confirm("Deseja iniciar uma nova simulação? Os dados atuais serão perdidos.")) {
-      resetToDefaults();
-    }
-  }
-
   async function run() {
     if (timer.current) clearInterval(timer.current);
-    setError("");
-    setFieldErrors([]);
+    setValidationIssues(null);
     setResult(null);
     setReport("");
     setAppliedMm(null);
@@ -303,7 +370,7 @@ export default function Home() {
     let appDayEff = appDay;
     try {
       if (rainMode === "hub" || rainMode === "upload") {
-        if (!climateRows.length) { setFieldErrors([]); setError("A tabela de série diária está vazia. Preencha a coluna de chuva (mm)."); return; }
+        if (!climateRows.length) { openValidation(["Tabela de série diária: a tabela de série diária está vazia. Preencha a coluna de chuva (mm)."]); return; }
         rain_series = climateRows.map((r) => {
           if (!Number.isFinite(r.rain_mm) || r.rain_mm < 0) throw new Error("Série inválida (só números ≥ 0).");
           return r.rain_mm;
@@ -312,11 +379,11 @@ export default function Home() {
           if (!Number.isFinite(r.et0_mm) || r.et0_mm < 0) throw new Error("Série inválida (só números ≥ 0).");
           return r.et0_mm;
         });
-        if (!rain_series.some((v) => v > 0)) { setFieldErrors([]); setError("A tabela de série diária está vazia. Preencha a coluna de chuva (mm)."); return; }
+        if (!rain_series.some((v) => v > 0)) { openValidation(["Tabela de série diária: a tabela de série diária está vazia. Preencha a coluna de chuva (mm)."]); return; }
         total_days = rain_series.length;
         appDayEff = rainMode === "hub" ? hubAppDay : uploadAppDay;
       }
-    } catch (e) { setFieldErrors([]); setError(String((e as Error).message || e)); return; }
+    } catch (e) { openValidation([String((e as Error).message || e)]); return; }
     const depthVal = num(depthCm, 200);
     const dispDefault = depthVal / 10;
     const solutes = waterOnly ? [] : rows
@@ -330,7 +397,7 @@ export default function Home() {
           release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
         };
       });
-    if (!waterOnly && !solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
+    if (!waterOnly && !solutes.length) { openValidation(["Modo de simulação: modo 'Água + nutrientes' exige ao menos um soluto com dose > 0. Marque um nutriente ou troque para 'Somente água'."]); return; }
     let print_days: number[] | undefined;
     let analysis_start_day = 1;
     let analysis_end_day = 365;
@@ -345,7 +412,7 @@ export default function Home() {
           print_days = raw.split(/[\s;,]+/).filter(Boolean).map((t) => Number(t.replace(",", ".")));
           if (print_days.some((v) => !Number.isFinite(v) || v < 0)) throw new Error("Dias de leitura inválidos (só números ≥ 0).");
         }
-      } catch (e) { setFieldErrors([]); setError(String((e as Error).message || e)); return; }
+      } catch (e) { openValidation([String((e as Error).message || e)]); return; }
     }
     const appliedTotal = rain_series ? rain_series.reduce((a, b) => a + b, 0) : num(rainMm, 0);
     setAppliedMm(appliedTotal);
@@ -414,7 +481,7 @@ export default function Home() {
           } else if (st.status === "failed") {
             if (timer.current) clearInterval(timer.current);
             setJobState("failed");
-            setError(st.error || "Falha na simulação.");
+            openValidation([st.error || "Falha na simulação."]);
           } else {
             setJobState(st.status);
           }
@@ -422,16 +489,14 @@ export default function Home() {
           if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
             if (timer.current) clearInterval(timer.current);
             setJobState("expired");
-            setFieldErrors([]);
-            setError("A simulação expirou; rode novamente.");
+            openValidation(["A simulação expirou; rode novamente."]);
             return;
           }
           pollErrors += 1;
           if (pollErrors >= 5) {
             if (timer.current) clearInterval(timer.current);
             setJobState("failed");
-            setFieldErrors([]);
-            setError(e instanceof Error ? e.message : String(e));
+            openValidation([e instanceof Error ? e.message : String(e)]);
           }
           /* senão mantém polling */
         }
@@ -443,14 +508,12 @@ export default function Home() {
   }
 
   async function loadReport() {
-    setError("");
     try {
       const markdown = await getReport(jobId);
       setReport(markdown);
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
-        setFieldErrors([]);
-        setError("Job expirado; rode a simulação novamente.");
+        openValidation(["Job expirado; rode a simulação novamente."]);
         return;
       }
       showApiError(e);
@@ -458,7 +521,6 @@ export default function Home() {
   }
 
   async function downloadExcel() {
-    setError("");
     try {
       const blob = await getExcelBlob(jobId);
       const url = URL.createObjectURL(blob);
@@ -471,36 +533,64 @@ export default function Home() {
       URL.revokeObjectURL(url);
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
-        setFieldErrors([]);
-        setError("Job expirado; rode a simulação novamente.");
+        openValidation(["Job expirado; rode a simulação novamente."]);
         return;
       }
       showApiError(e);
     }
   }
 
+  function downloadGraphs() {
+    const gallery = result?.plots_png_base64 && Object.keys(result.plots_png_base64).length > 0
+      ? result.plots_png_base64
+      : result?.plot_png_base64
+        ? { [result.solutes[0]?.symbol ?? "perfil"]: result.plot_png_base64 }
+        : {};
+    const syms = Object.keys(gallery);
+    if (syms.length === 0) {
+      openValidation(["Gráficos ainda não gerados."]);
+      return;
+    }
+    syms.forEach((sym, i) => {
+      setTimeout(() => {
+        const a = document.createElement("a");
+        a.href = `data:image/png;base64,${gallery[sym]}`;
+        a.download = `perfil_${sym}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }, i * 300);
+    });
+  }
+
   const isCom = cropMode === "com";
   const cropEntry = crops.find((c) => c.key === crop);
   const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
   const cropName = isCom ? (cropEntry?.name ?? crop) : "Sem cultura";
+  const running = jobState === "queued" || jobState === "running";
 
   return (
     <div className="hydrus-container">
       <header className="app-header">
-        <h1 className="app-title"><span className="leaf">🌱</span> Simulação e Física de Solos</h1>
-        <div className="app-subtitle">Simulação de transporte de água e nutrientes no perfil do solo</div>
+        <div className="header-logos">
+          <img src="/ppg_header.png" alt="PPG Engenharia de Sistemas Agrícolas" className="header-logo-img" />
+          <img src="/gpeas_header.png" alt="GPEAS" className="header-logo-img" />
+        </div>
+        <p className="app-subtitle">Simulação de transporte de água e nutrientes no perfil do solo</p>
       </header>
 
       <WizardProgress current={step} />
 
       <div className="wizard-step-box">
         {step === 0 ? (
-          <StepIntro onStart={() => setStep(1)} />
+          <StepIntro />
         ) : (
           <>
             <div className="wizard-question-header">
               <h2 className="wizard-question-title">{STEP_TITLES[step].title}</h2>
-              <p className="wizard-question-subtitle">{STEP_TITLES[step].sub}</p>
+              {STEP_TITLES[step].sub && (
+                <p className="wizard-question-subtitle">{STEP_TITLES[step].sub}</p>
+              )}
             </div>
 
             {step === 1 && (
@@ -536,9 +626,6 @@ export default function Home() {
                 bulk={bulk}
                 setBulk={setBulk}
                 rosettaNote={rosettaNote}
-                error={error}
-                fieldErrors={fieldErrors}
-                onNext={() => setStep(2)}
               />
             )}
 
@@ -566,10 +653,6 @@ export default function Home() {
                 setPulse={setPulse}
                 fertContinuous={fertContinuous}
                 setFertContinuous={setFertContinuous}
-                error={error}
-                fieldErrors={fieldErrors}
-                onBack={() => setStep(1)}
-                onNext={() => setStep(3)}
               />
             )}
 
@@ -601,10 +684,6 @@ export default function Home() {
                 setAnalysisEnd={setAnalysisEnd}
                 printDays={printDays}
                 setPrintDays={setPrintDays}
-                error={error}
-                fieldErrors={fieldErrors}
-                onBack={() => setStep(2)}
-                onRun={run}
               />
             )}
 
@@ -614,20 +693,57 @@ export default function Home() {
                 elapsed={elapsed}
                 result={result}
                 report={report}
-                error={error}
-                fieldErrors={fieldErrors}
                 cropName={cropName}
                 rootDepth={rootDepth}
                 appliedMm={appliedMm}
-                onEdit={() => { if (timer.current) clearInterval(timer.current); setStep(3); setResult(null); setReport(""); }}
                 onDownloadExcel={downloadExcel}
+                onDownloadGraphs={downloadGraphs}
                 onLoadReport={loadReport}
-                onNewSimulation={handleNewSimulation}
               />
             )}
           </>
         )}
       </div>
+
+      <div className="wizard-nav-row">
+        {step === 0 && (
+          <button className="btn-wizard-next" onClick={() => setStep(1)}>
+            Iniciar simulação
+          </button>
+        )}
+        {(step === 1 || step === 2) && (
+          <>
+            <button className="btn-wizard-back" onClick={() => setStep(step - 1)}>
+              Voltar
+            </button>
+            <button className="btn-wizard-next" onClick={() => setStep(step + 1)}>
+              Avançar
+            </button>
+          </>
+        )}
+        {step === 3 && (
+          <>
+            <button className="btn-wizard-back" onClick={() => setStep(2)}>
+              Voltar
+            </button>
+            <button className={`btn-wizard-next${running ? " is-loading" : ""}`} onClick={run} disabled={running}>
+              {running ? "Calculando..." : "Calcular Resultados"}
+            </button>
+          </>
+        )}
+        {step === 4 && (
+          <button className="btn-wizard-next" onClick={() => setRestartOpen(true)}>
+            Nova Simulação
+          </button>
+        )}
+      </div>
+
+      {validationIssues && (
+        <ValidationModal issues={validationIssues} onClose={() => setValidationIssues(null)} />
+      )}
+      {restartOpen && (
+        <RestartModal onCancel={() => setRestartOpen(false)} onConfirm={resetToDefaults} />
+      )}
     </div>
   );
 }
