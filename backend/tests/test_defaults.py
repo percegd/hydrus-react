@@ -28,5 +28,8 @@ def test_frontend_initial_states_match_defaults() -> None:
     for variable, value in expected.items():
         pattern = rf'const\s+\[\s*{variable}\s*,\s*\w+\s*\]\s*=\s*useState\("([^"]*)"\)'
         match = re.search(pattern, source)
-        assert match is not None, f"useState de {variable} não encontrado"
-        assert match.group(1) == value
+        if match is None:
+            # defaults centralizados no objeto DEFAULTS (usado também por "Nova simulação")
+            match = re.search(rf'\b{variable}\s*:\s*"([^"]*)"', source)
+        assert match is not None, f"default de {variable} não encontrado"
+        assert float(match.group(1)) == float(value)

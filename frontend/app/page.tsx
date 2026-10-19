@@ -1,54 +1,69 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import ProfileChart from "../components/ProfileChart";
+import Results from "../components/Results";
+import StepIntro from "../components/StepIntro";
+import StepNutrients, { DEFAULT_ROWS, SPECIES, defaultDispForDepth, type NutrientRow } from "../components/StepNutrients";
+import StepSoil from "../components/StepSoil";
+import StepWater from "../components/StepWater";
 import WizardProgress from "../components/WizardProgress";
 import { ApiError, getCrops, getExcelBlob, getJob, getReport, getSoils, postJob, type Crop, type SimulateResponse, type Soil } from "../lib/api";
 
-const ACCENTS: Record<string, [string, string]> = {
-  N: ["#fff7ed", "#c2410c"],
-  K: ["#f5f3ff", "#6d28d9"],
-  P: ["#f7fee7", "#4d7c0f"],
-  S: ["#fefce8", "#a16207"],
-  Ca: ["#ecfdf5", "#047857"],
-  Mg: ["#fdf2f8", "#be185d"],
+const STEP_TITLES = [
+  { title: "Apresentação", sub: "Visão geral da plataforma de simulação." },
+  { title: "Passo 1 de 4: Solo e cultura", sub: "Defina o solo e a cultura do cenário." },
+  { title: "Passo 2 de 4: Nutrientes e manejo", sub: "Solutos, doses, liberação e aplicação." },
+  { title: "Passo 3 de 4: Regime hídrico", sub: "Defina o cenário hídrico da simulação." },
+  { title: "Passo 4 de 4: Resultados", sub: "Balanço de massa, perfil e laudo." },
+];
+
+const DEFAULTS = {
+  soil: "latossolo_medio",
+  cropMode: "sem",
+  crop: "soja",
+  depthCm: "200",
+  rootDepthCm: "35",
+  days: "7",
+  rainMode: "uniform" as const,
+  rainMm: "60",
+  moisture: "80",
+  et0: "4.0",
+  series: "",
+  et0Series: "",
+  rows: DEFAULT_ROWS,
+  placement: "surface",
+  appDay: "0",
+  zTop: "5",
+  zBottom: "10",
+  c0: "20",
+  pulse: "7",
+  fertContinuous: false,
 };
 
-const SPECIES = [
-  { symbol: "N", name: "Nitrato", kd: 0 },
-  { symbol: "K", name: "Potássio", kd: 0.45 },
-  { symbol: "P", name: "Fósforo", kd: 25 },
-  { symbol: "S", name: "Enxofre", kd: 0.15 },
-  { symbol: "Ca", name: "Cálcio", kd: 1.2 },
-  { symbol: "Mg", name: "Magnésio", kd: 0.8 },
-];
-
-type Row = { symbol: string; name: string; dose: string; kd: string; rel: string; relDays: string };
-
-const STEP_TITLES = [
-  { title: "Passo 1 de 3: Solo, cultura e água", sub: "Defina o cenário físico da simulação." },
-  { title: "Passo 2 de 3: Nutrientes e manejo", sub: "Solutos, doses, liberação e aplicação." },
-  { title: "Passo 3 de 3: Resultados", sub: "Balanço de massa, perfil e laudo." },
-];
-
 export default function Home() {
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(0);
   const [soils, setSoils] = useState<Soil[]>([]);
   const [crops, setCrops] = useState<Crop[]>([]);
-  const [soil, setSoil] = useState("latossolo_medio");
-  const [crop, setCrop] = useState("soja");
-  const [days, setDays] = useState("7");
-  const [rainMode, setRainMode] = useState<"uniform" | "series">("uniform");
-  const [rainMm, setRainMm] = useState("60");
-  const [moisture, setMoisture] = useState("80");
-  const [et0, setEt0] = useState("4");
-  const [series, setSeries] = useState("");
-  const [et0Series, setEt0Series] = useState("");
-  const [rows, setRows] = useState<Row[]>([{ symbol: "K", name: "Potássio", dose: "30", kd: "0.45", rel: "immediate", relDays: "60" }]);
-  const [placement, setPlacement] = useState("surface");
-  const [appDay, setAppDay] = useState("0");
-  const [c0, setC0] = useState("20");
-  const [pulse, setPulse] = useState("0");
+  const [soil, setSoil] = useState(DEFAULTS.soil);
+  const [cropMode, setCropModeState] = useState(DEFAULTS.cropMode);
+  const [crop, setCrop] = useState(DEFAULTS.crop);
+  const [depthCm, setDepthCm] = useState(DEFAULTS.depthCm);
+  const [rootDepthCm, setRootDepthCm] = useState(DEFAULTS.rootDepthCm);
+  const [days, setDays] = useState(DEFAULTS.days);
+  const [rainMode, setRainMode] = useState<"uniform" | "series">(DEFAULTS.rainMode);
+  const [rainMm, setRainMm] = useState(DEFAULTS.rainMm);
+  const [moisture, setMoisture] = useState(DEFAULTS.moisture);
+  const [et0, setEt0] = useState(DEFAULTS.et0);
+  const [series, setSeries] = useState(DEFAULTS.series);
+  const [et0Series, setEt0Series] = useState(DEFAULTS.et0Series);
+  const [rows, setRows] = useState<NutrientRow[]>(DEFAULTS.rows.map((r) => ({ ...r })));
+  const [placement, setPlacement] = useState(DEFAULTS.placement);
+  const [appDay, setAppDay] = useState(DEFAULTS.appDay);
+  const [zTop, setZTop] = useState(DEFAULTS.zTop);
+  const [zBottom, setZBottom] = useState(DEFAULTS.zBottom);
+  const [c0, setC0] = useState(DEFAULTS.c0);
+  const [pulse, setPulse] = useState(DEFAULTS.pulse);
+  const [fertContinuous, setFertContinuous] = useState(DEFAULTS.fertContinuous);
   const [jobId, setJobId] = useState("");
   const [jobState, setJobState] = useState("");
   const [elapsed, setElapsed] = useState(0);
@@ -56,21 +71,35 @@ export default function Home() {
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
   const [result, setResult] = useState<SimulateResponse | null>(null);
   const [report, setReport] = useState("");
+  const [appliedMm, setAppliedMm] = useState<number | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     getSoils().then(setSoils).catch(() => setError("API fora do ar (backend :8001)."));
-    getCrops().then(setCrops).catch(() => {});
+    getCrops().then((cs) => {
+      setCrops(cs);
+      // Prefill raiz da cultura selecionada (Gradio: root_depth da cultura).
+      const found = cs.find((c) => c.key === crop);
+      if (found) {
+        setRootDepthCm((prev) => (prev === "" ? String(found.root_depth_cm) : prev));
+      }
+    }).catch(() => {});
     return () => { if (timer.current) clearInterval(timer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function fieldErrorList() {
-    if (fieldErrors.length === 0) return null;
-    return (
-      <ul className="error-text">
-        {fieldErrors.map((m, i) => <li key={i}>{m}</li>)}
-      </ul>
-    );
+  function setCropMode(mode: string) {
+    setCropModeState(mode);
+    if (mode === "com") {
+      const found = crops.find((c) => c.key === crop);
+      if (found) setRootDepthCm(String(found.root_depth_cm));
+    }
+  }
+
+  function handleCropSelect(key: string) {
+    setCrop(key);
+    const found = crops.find((c) => c.key === key);
+    if (found) setRootDepthCm(String(found.root_depth_cm));
   }
 
   function showApiError(e: unknown) {
@@ -82,32 +111,87 @@ export default function Home() {
       setError(String(e instanceof Error ? e.message : e));
     }
   }
-  function setRow(i: number, patch: Partial<Row>) {
+  function setRow(i: number, patch: Partial<NutrientRow>) {
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
   function addRow() {
     const used = new Set(rows.map((r) => r.symbol));
     const next = SPECIES.find((s) => !used.has(s.symbol)) ?? SPECIES[0];
-    setRows((rs) => [...rs, { symbol: next.symbol, name: next.name, dose: "30", kd: String(next.kd), rel: "immediate", relDays: "60" }]);
+    setRows((rs) => [...rs, { symbol: next.symbol, name: next.name, dose: "30", kd: String(next.kd), disp: defaultDispForDepth(depthCm), res: "0", rel: "immediate", relDays: "60" }]);
+  }
+  function removeRow(i: number) {
+    setRows((rs) => rs.filter((_, j) => j !== i));
   }
 
-  function parseSeries(text: string): number[] | undefined {
-    if (!text.trim()) return undefined;
-    const vals = text.split(/[\s,;]+/).filter(Boolean).map(Number);
-    if (vals.some((v) => Number.isNaN(v) || v < 0)) throw new Error("Série inválida (só números ≥ 0).");
-    return vals;
-  }
+    function parseSeries(text: string): number[] | undefined {
+      if (!text.trim()) return undefined;
+      // Separa por espaço/;/linha; vírgula só é separador quando não é decimal.
+      // "12,5" (decimal) => 12.5 ; "0, 12.5, 3" (separador) => [0,12.5,3].
+      const chunks = text.split(/[\s;]+/).filter(Boolean);
+      const vals: number[] = [];
+      for (const chunk of chunks) {
+        const singleDecimal = /^-?\d+,\d+$/.test(chunk.trim());
+        const parts = singleDecimal ? [chunk] : chunk.split(",").filter((p) => p.length > 0);
+        for (const p of parts) {
+          const v = Number(p.trim().replace(",", "."));
+          if (Number.isNaN(v) || v < 0) throw new Error("Série inválida (só números ≥ 0).");
+          vals.push(v);
+        }
+      }
+      return vals;
+    }
 
   function num(x: string, def: number): number {
-    const v = parseFloat(x);
+    const v = parseFloat(String(x).replace(",", "."));
     return Number.isNaN(v) ? def : v;
   }
 
-  async function run() {
+  function resetToDefaults() {
+    if (timer.current) clearInterval(timer.current);
+    setSoil(DEFAULTS.soil);
+    setCropModeState(DEFAULTS.cropMode);
+    setCrop(DEFAULTS.crop);
+    setDepthCm(DEFAULTS.depthCm);
+    setRootDepthCm(DEFAULTS.rootDepthCm);
+    setDays(DEFAULTS.days);
+    setRainMode(DEFAULTS.rainMode);
+    setRainMm(DEFAULTS.rainMm);
+    setMoisture(DEFAULTS.moisture);
+    setEt0(DEFAULTS.et0);
+    setSeries(DEFAULTS.series);
+    setEt0Series(DEFAULTS.et0Series);
+    setRows(DEFAULTS.rows.map((r) => ({ ...r })));
+    setPlacement(DEFAULTS.placement);
+    setAppDay(DEFAULTS.appDay);
+    setZTop(DEFAULTS.zTop);
+    setZBottom(DEFAULTS.zBottom);
+    setC0(DEFAULTS.c0);
+    setPulse(DEFAULTS.pulse);
+    setFertContinuous(DEFAULTS.fertContinuous);
+    setJobId("");
+    setJobState("");
+    setElapsed(0);
     setError("");
     setFieldErrors([]);
     setResult(null);
     setReport("");
+    setAppliedMm(null);
+    setStep(1);
+  }
+
+  function handleNewSimulation() {
+    if (window.confirm("Deseja iniciar uma nova simulação? Os dados atuais serão perdidos.")) {
+      resetToDefaults();
+    }
+  }
+
+  async function run() {
+    if (timer.current) clearInterval(timer.current);
+    setError("");
+    setFieldErrors([]);
+    setResult(null);
+    setReport("");
+    setAppliedMm(null);
     let rain_series: number[] | undefined;
     let total_days = num(days, 7);
     let et0_series: number[] | undefined;
@@ -119,25 +203,54 @@ export default function Home() {
       }
       et0_series = parseSeries(et0Series);
     } catch (e) { setFieldErrors([]); setError(String((e as Error).message || e)); return; }
+    const depthVal = num(depthCm, 200);
+    const dispDefault = depthVal / 10;
     const solutes = rows
-      .filter((r) => parseFloat(r.dose) > 0)
-      .map((r) => ({
-        symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(r.dose), kd: num(r.kd, 0),
-        dispersivity_cm: 20.0, initial_residual_mg_dm3: 0.0,
-        release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
-      }));
+      .filter((r) => parseFloat(String(r.dose).replace(",", ".")) > 0)
+      .map((r) => {
+        const dispNum = num(r.disp, dispDefault);
+        return {
+          symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(String(r.dose).replace(",", ".")), kd: num(r.kd, 0),
+          dispersivity_cm: dispNum > 0 ? dispNum : dispDefault,
+          initial_residual_mg_dm3: r.res === "" ? 0 : num(r.res, 0),
+          release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
+        };
+      });
     if (!solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
-    setStep(3);
+    const appliedTotal = rain_series ? rain_series.reduce((a, b) => a + b, 0) : num(rainMm, 0);
+    setAppliedMm(appliedTotal);
+    setStep(4);
     setJobState("queued");
+    // Posicionamento: faixas do Gradio (superfície 0–2, sulco 5–10, personalizada, fertirrigação).
+    let z_top = 0;
+    let z_bottom = 2;
+    if (placement === "furrow") {
+      z_top = 5;
+      z_bottom = 10;
+    } else if (placement === "custom") {
+      z_top = num(zTop, 5);
+      z_bottom = num(zBottom, 10);
+    } else if (placement === "fertigation") {
+      z_top = 0;
+      z_bottom = 0;
+    }
+    const isCom = cropMode === "com";
+    const cropEntry = crops.find((c) => c.key === crop);
+    const rootFallback = cropEntry ? cropEntry.root_depth_cm : 35;
     try {
       const body = {
-        soil_key: soil, crop_key: crop, depth_cm: 200, total_days,
+        soil_key: soil,
+        crop_key: isCom ? crop : null,
+        depth_cm: depthVal,
+        root_depth_cm: isCom ? num(rootDepthCm, rootFallback) : null,
+        total_days,
         rain_mm: num(rainMm, 0), rain_series,
         initial_moisture_pct: num(moisture, 80),
         et0_mm_day: num(et0, 0), et0_series, solutes,
         placement: {
-          mode: placement, z_top_cm: 0, z_bottom_cm: 2,
-          fertigation_c0_mg_l: num(c0, 0), fertigation_pulse_days: num(pulse, 0),
+          mode: placement, z_top_cm: z_top, z_bottom_cm: z_bottom,
+          fertigation_c0_mg_l: num(c0, 20),
+          fertigation_pulse_days: fertContinuous ? 0 : num(pulse, 7),
           application_day: num(appDay, 0),
         },
       };
@@ -166,7 +279,7 @@ export default function Home() {
             if (timer.current) clearInterval(timer.current);
             setJobState("expired");
             setFieldErrors([]);
-            setError("Job expirou ou foi perdido; rode a simulação novamente.");
+            setError("A simulação expirou; rode novamente.");
             return;
           }
           pollErrors += 1;
@@ -193,7 +306,7 @@ export default function Home() {
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
         setFieldErrors([]);
-        setError("Job expirou; rode a simulação novamente.");
+        setError("Job expirado; rode a simulação novamente.");
         return;
       }
       showApiError(e);
@@ -215,15 +328,17 @@ export default function Home() {
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
         setFieldErrors([]);
-        setError("Job expirou; rode a simulação novamente.");
+        setError("Job expirado; rode a simulação novamente.");
         return;
       }
       showApiError(e);
     }
   }
 
-  const rootDepth = crops.find((c) => c.key === crop)?.root_depth_cm ?? 35;
-  const cropName = crops.find((c) => c.key === crop)?.name ?? crop;
+  const isCom = cropMode === "com";
+  const cropEntry = crops.find((c) => c.key === crop);
+  const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
+  const cropName = isCom ? (cropEntry?.name ?? crop) : "Sem cultura";
 
   return (
     <div className="hydrus-container">
@@ -235,197 +350,101 @@ export default function Home() {
       <WizardProgress current={step} />
 
       <div className="wizard-step-box">
-        <div className="wizard-question-header">
-          <h2 className="wizard-question-title">{STEP_TITLES[step - 1].title}</h2>
-          <p className="wizard-question-subtitle">{STEP_TITLES[step - 1].sub}</p>
-        </div>
-
-        {step === 1 && (
+        {step === 0 ? (
+          <StepIntro onStart={() => setStep(1)} />
+        ) : (
           <>
-            <div className="form-row">
-              <label className="field">Solo
-                <select value={soil} onChange={(e) => setSoil(e.target.value)}>
-                  {soils.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
-                </select>
-              </label>
-              <label className="field">Cultura
-                <select value={crop} onChange={(e) => setCrop(e.target.value)}>
-                  {crops.map((c) => <option key={c.key} value={c.key}>{c.name} (raiz {c.root_depth_cm} cm)</option>)}
-                </select>
-              </label>
-              <label className="field">Dias
-                <input value={days} onChange={(e) => setDays(e.target.value)} />
-              </label>
-              <label className="field">Chuva
-                <select value={rainMode} onChange={(e) => setRainMode(e.target.value as "uniform" | "series")}>
-                  <option value="uniform">Lâmina uniforme</option>
-                  <option value="series">Série diária</option>
-                </select>
-              </label>
-              {rainMode === "uniform" && (
-                <label className="field">Total (mm)
-                  <input value={rainMm} onChange={(e) => setRainMm(e.target.value)} />
-                </label>
-              )}
-              <label className="field">Umidade prévia (%)
-                <input value={moisture} onChange={(e) => setMoisture(e.target.value)} />
-              </label>
-              <label className="field">ET0 (mm/dia)
-                <input value={et0} onChange={(e) => setEt0(e.target.value)} />
-              </label>
+            <div className="wizard-question-header">
+              <h2 className="wizard-question-title">{STEP_TITLES[step].title}</h2>
+              <p className="wizard-question-subtitle">{STEP_TITLES[step].sub}</p>
             </div>
-            {rainMode === "series" && (
-              <div className="form-row" style={{ marginTop: 12 }}>
-                <label className="field" style={{ flex: "1 1 100%" }}>Série diária de chuva (mm, separados por espaço/vírgula/linha)
-                  <textarea rows={3} value={series} onChange={(e) => setSeries(e.target.value)} placeholder="0 0 12.5 0 3 ..." />
-                </label>
-              </div>
+
+            {step === 1 && (
+              <StepSoil
+                soils={soils}
+                crops={crops}
+                soil={soil}
+                setSoil={setSoil}
+                cropMode={cropMode}
+                setCropMode={setCropMode}
+                crop={crop}
+                setCrop={handleCropSelect}
+                depthCm={depthCm}
+                setDepthCm={setDepthCm}
+                rootDepthCm={rootDepthCm}
+                setRootDepthCm={setRootDepthCm}
+                error={error}
+                fieldErrors={fieldErrors}
+                onNext={() => setStep(2)}
+              />
             )}
-            <div className="form-row" style={{ marginTop: 12 }}>
-              <label className="field" style={{ flex: "1 1 100%" }}>Série diária de ET0, opcional (mm/dia)
-                <textarea rows={2} value={et0Series} onChange={(e) => setEt0Series(e.target.value)} placeholder="4 4.1 3.8 ..." />
-              </label>
-            </div>
-            {fieldErrorList()}
-            {error && <p className="error-text">{error}</p>}
-            <div className="btn-row">
-              <button className="btn btn-primary" onClick={() => setStep(2)}>Avançar</button>
-            </div>
-          </>
-        )}
 
-        {step === 2 && (
-          <>
-            {rows.map((r, i) => (
-              <div className="nutrient-row" key={i}>
-                <label className="field">Soluto
-                  <select value={r.symbol} onChange={(e) => {
-                    const sp = SPECIES.find((s) => s.symbol === e.target.value)!;
-                    setRow(i, { symbol: sp.symbol, name: sp.name, kd: String(sp.kd) });
-                  }}>
-                    {SPECIES.map((s) => <option key={s.symbol} value={s.symbol}>{s.symbol} · {s.name}</option>)}
-                  </select>
-                </label>
-                <label className="field">Dose (kg/ha)
-                  <input value={r.dose} onChange={(e) => setRow(i, { dose: e.target.value })} />
-                </label>
-                <label className="field">Kd (cm³/g)
-                  <input value={r.kd} onChange={(e) => setRow(i, { kd: e.target.value })} />
-                </label>
-                <label className="field">Liberação
-                  <select value={r.rel} onChange={(e) => setRow(i, { rel: e.target.value })}>
-                    <option value="immediate">Imediata</option>
-                    <option value="controlled">Controlada</option>
-                  </select>
-                </label>
-                {r.rel === "controlled" && (
-                  <label className="field">Dias
-                    <input value={r.relDays} onChange={(e) => setRow(i, { relDays: e.target.value })} />
-                  </label>
-                )}
-                <button className="icon-btn" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} title="Remover">✕</button>
-              </div>
-            ))}
-            <button className="btn" onClick={addRow}>+ soluto</button>
+            {step === 2 && (
+              <StepNutrients
+                rows={rows}
+                setRow={setRow}
+                addRow={addRow}
+                removeRow={removeRow}
+                placement={placement}
+                setPlacement={setPlacement}
+                appDay={appDay}
+                setAppDay={setAppDay}
+                zTop={zTop}
+                setZTop={setZTop}
+                zBottom={zBottom}
+                setZBottom={setZBottom}
+                c0={c0}
+                setC0={setC0}
+                pulse={pulse}
+                setPulse={setPulse}
+                fertContinuous={fertContinuous}
+                setFertContinuous={setFertContinuous}
+                error={error}
+                fieldErrors={fieldErrors}
+                onBack={() => setStep(1)}
+                onNext={() => setStep(3)}
+              />
+            )}
 
-            <h3 className="section-title" style={{ marginTop: 20 }}>Aplicação</h3>
-            <div className="form-row">
-              <label className="field">Modo
-                <select value={placement} onChange={(e) => setPlacement(e.target.value)}>
-                  <option value="surface">Superfície (0–2 cm)</option>
-                  <option value="furrow">Sulco (5–10 cm)</option>
-                  <option value="fertigation">Fertirrigação</option>
-                </select>
-              </label>
-              <label className="field">Dia da aplicação
-                <input value={appDay} onChange={(e) => setAppDay(e.target.value)} />
-              </label>
-              {placement === "fertigation" && (
-                <>
-                  <label className="field">C₀ (mg/L)
-                    <input value={c0} onChange={(e) => setC0(e.target.value)} />
-                  </label>
-                  <label className="field">Pulso (dias, 0=contínuo)
-                    <input value={pulse} onChange={(e) => setPulse(e.target.value)} />
-                  </label>
-                </>
-              )}
-            </div>
-            {fieldErrorList()}
-            {error && <p className="error-text">{error}</p>}
-            <div className="btn-row">
-              <button className="btn" onClick={() => setStep(1)}>Voltar</button>
-              <button className="btn btn-primary" onClick={run}>Calcular Resultados</button>
-            </div>
-          </>
-        )}
+            {step === 3 && (
+              <StepWater
+                days={days}
+                setDays={setDays}
+                rainMode={rainMode}
+                setRainMode={setRainMode}
+                rainMm={rainMm}
+                setRainMm={setRainMm}
+                moisture={moisture}
+                setMoisture={setMoisture}
+                et0={et0}
+                setEt0={setEt0}
+                series={series}
+                setSeries={setSeries}
+                et0Series={et0Series}
+                setEt0Series={setEt0Series}
+                error={error}
+                fieldErrors={fieldErrors}
+                onBack={() => setStep(2)}
+                onRun={run}
+              />
+            )}
 
-        {step === 3 && (
-          <>
-            <div className="btn-row" style={{ marginTop: 0, marginBottom: 12 }}>
-              <button className="btn" onClick={() => { if (timer.current) clearInterval(timer.current); setStep(2); setResult(null); setReport(""); }}>← Editar</button>
-              {jobState === "done" && (
-                <>
-                  <button className="btn" onClick={downloadExcel}>Baixar Excel</button>
-                  <button className="btn" onClick={loadReport}>Ver laudo</button>
-                </>
-              )}
-            </div>
-            <p className="muted">Status: <strong>{jobState || "—"}</strong> {jobState === "running" && <span>({elapsed}s)</span>}</p>
-            {fieldErrorList()}
-            {error && <p className="error-text">{error}</p>}
-            {result && (
-              <>
-                <div className="metrics-card-grid">
-                  <div className="metric-card">
-                    <div className="metric-icon">↓</div>
-                    <div className="metric-value">{result.drainage_mm.toFixed(1)} mm</div>
-                    <div className="metric-label">Drenagem no período</div>
-                    <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
-                  </div>
-                  {result.solutes.map((s) => {
-                    const [bg, fg] = ACCENTS[s.symbol] ?? ["#f1f5f9", "#334155"];
-                    const dose = s.dose_kg_ha;
-                    return (
-                      <div className="metric-card" key={s.symbol}>
-                        <div className="metric-nutr-head">
-                          <span className="metric-nutr-sym" style={{ background: bg, color: fg }}>{s.symbol}</span>
-                          <span className="metric-nutr-name">{s.name}</span>
-                        </div>
-                        <div className="metric-value">{s.retained_root_pct.toFixed(1)}%</div>
-                        <div className="metric-label">Retido na camada avaliada (0–{rootDepth} cm)</div>
-                        <div className="metric-sub">{(dose * s.retained_root_pct / 100).toFixed(1)} kg/ha de {dose.toFixed(0)} kg/ha aplicados</div>
-                        <div className="metric-nutr-rows">
-                          <div className="metric-nutr-row"><span>Abaixo da camada (no perfil)</span><b>{s.below_profile_pct.toFixed(1)}% · {(dose * s.below_profile_pct / 100).toFixed(1)} kg/ha</b></div>
-                          <div className="metric-nutr-row"><span>Atravessou o fundo</span><b>{s.bottom_pct.toFixed(1)}% · {(dose * s.bottom_pct / 100).toFixed(1)} kg/ha</b></div>
-                          <div className="metric-nutr-row"><span>Absorvido (passivo, sem teto nutricional)</span><b>{s.uptaken_pct.toFixed(1)}% · {(dose * s.uptaken_pct / 100).toFixed(1)} kg/ha</b></div>
-                          <div className="metric-nutr-row"><span>Pico no perfil</span><b>{s.peak_depth_cm ?? "indefinido"} cm</b></div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {result.profiles && (
-                  <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
-                    <ProfileChart profiles={result.profiles as never} rootDepth={rootDepth} />
-                  </div>
-                )}
-                {result.plots_png_base64 && Object.keys(result.plots_png_base64).length > 0 ? (
-                  Object.entries(result.plots_png_base64).map(([sym, b64]) => (
-                    <div key={sym} className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
-                      <div className="muted" style={{ marginBottom: 8 }}>Perfil — {sym}</div>
-                      <img src={`data:image/png;base64,${b64}`} alt={`Perfil ${sym}`} style={{ width: "100%" }} />
-                    </div>
-                  ))
-                ) : (
-                  result.plot_png_base64 && (
-                    <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
-                      <img src={`data:image/png;base64,${result.plot_png_base64}`} alt="Perfil" style={{ width: "100%" }} />
-                    </div>
-                  )
-                )}
-                {report && <div className="wizard-step-box" style={{ padding: 16 }}><pre className="laudo-pre">{report}</pre></div>}
-              </>
+            {step === 4 && (
+              <Results
+                jobState={jobState}
+                elapsed={elapsed}
+                result={result}
+                report={report}
+                error={error}
+                fieldErrors={fieldErrors}
+                cropName={cropName}
+                rootDepth={rootDepth}
+                appliedMm={appliedMm}
+                onEdit={() => { if (timer.current) clearInterval(timer.current); setStep(3); setResult(null); setReport(""); }}
+                onDownloadExcel={downloadExcel}
+                onLoadReport={loadReport}
+                onNewSimulation={handleNewSimulation}
+              />
             )}
           </>
         )}
