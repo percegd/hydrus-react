@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ProfileChart from "../components/ProfileChart";
 import WizardProgress from "../components/WizardProgress";
-import { ApiError, getCrops, getJob, getSoils, postJob, type Crop, type SimulateResponse, type Soil } from "../lib/api";
+import { ApiError, getCrops, getExcelBlob, getJob, getReport, getSoils, postJob, type Crop, type SimulateResponse, type Soil } from "../lib/api";
 
 const ACCENTS: Record<string, [string, string]> = {
   N: ["#fff7ed", "#c2410c"],
@@ -144,9 +144,11 @@ export default function Home() {
       const { job_id } = await postJob(body);
       setJobId(job_id);
       setJobState("running");
+      let pollErrors = 0;
       timer.current = setInterval(async () => {
         try {
           const st = await getJob(job_id);
+          pollErrors = 0;
           setElapsed(st.elapsed_s);
           if (st.status === "done") {
             if (timer.current) clearInterval(timer.current);
@@ -160,11 +162,19 @@ export default function Home() {
             setJobState(st.status);
           }
         } catch (e) {
-          if (e instanceof ApiError && e.status === 404) {
+          if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
             if (timer.current) clearInterval(timer.current);
             setJobState("expired");
             setFieldErrors([]);
             setError("Job expirou ou foi perdido; rode a simulação novamente.");
+            return;
+          }
+          pollErrors += 1;
+          if (pollErrors >= 5) {
+            if (timer.current) clearInterval(timer.current);
+            setJobState("failed");
+            setFieldErrors([]);
+            setError(e instanceof Error ? e.message : String(e));
           }
           /* senão mantém polling */
         }
@@ -176,11 +186,40 @@ export default function Home() {
   }
 
   async function loadReport() {
+    setError("");
     try {
-      const r = await fetch(`/api/jobs/${jobId}/report`);
-      const j = await r.json();
-      setReport(j.report_markdown as string);
-    } catch (e) { showApiError(e); }
+      const markdown = await getReport(jobId);
+      setReport(markdown);
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
+        setFieldErrors([]);
+        setError("Job expirou; rode a simulação novamente.");
+        return;
+      }
+      showApiError(e);
+    }
+  }
+
+  async function downloadExcel() {
+    setError("");
+    try {
+      const blob = await getExcelBlob(jobId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `perfil_${jobId}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
+        setFieldErrors([]);
+        setError("Job expirou; rode a simulação novamente.");
+        return;
+      }
+      showApiError(e);
+    }
   }
 
   const rootDepth = crops.find((c) => c.key === crop)?.root_depth_cm ?? 35;
@@ -327,7 +366,7 @@ export default function Home() {
               <button className="btn" onClick={() => { if (timer.current) clearInterval(timer.current); setStep(2); setResult(null); setReport(""); }}>← Editar</button>
               {jobState === "done" && (
                 <>
-                  <a href={`/api/jobs/${jobId}/excel`}><button className="btn">Baixar Excel</button></a>
+                  <button className="btn" onClick={downloadExcel}>Baixar Excel</button>
                   <button className="btn" onClick={loadReport}>Ver laudo</button>
                 </>
               )}
