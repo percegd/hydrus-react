@@ -1,5 +1,5 @@
 export type Soil = { key: string; name: string };
-export type Crop = { key: string; name: string; root_depth_cm: number };
+export type Crop = { key: string; name: string; root_depth_cm: number; kc: number; h1: number; h2: number; h3: number; h4: number };
 export type SoluteBalance = {
   symbol: string;
   name: string;

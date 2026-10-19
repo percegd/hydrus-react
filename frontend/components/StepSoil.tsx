@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { Crop, Soil } from "../lib/api";
 
 type Props = {
@@ -11,6 +12,18 @@ type Props = {
   setCropMode: (v: string) => void;
   crop: string;
   setCrop: (v: string) => void;
+  cropName: string;
+  setCropName: (v: string) => void;
+  cropKc: string;
+  setCropKc: (v: string) => void;
+  cropH1: string;
+  setCropH1: (v: string) => void;
+  cropH2: string;
+  setCropH2: (v: string) => void;
+  cropH3: string;
+  setCropH3: (v: string) => void;
+  cropH4: string;
+  setCropH4: (v: string) => void;
   depthCm: string;
   setDepthCm: (v: string) => void;
   rootDepthCm: string;
@@ -75,6 +88,18 @@ export default function StepSoil({
   setCropMode,
   crop,
   setCrop,
+  cropName,
+  setCropName,
+  cropKc,
+  setCropKc,
+  cropH1,
+  setCropH1,
+  cropH2,
+  setCropH2,
+  cropH3,
+  setCropH3,
+  cropH4,
+  setCropH4,
   depthCm,
   setDepthCm,
   rootDepthCm,
@@ -100,6 +125,22 @@ export default function StepSoil({
   rosettaNote,
 }: Props) {
   const comCultura = cropMode === "com";
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+
+  function pickCrop(key: string) {
+    setCrop(key);
+    const found = crops.find((c) => c.key === key);
+    if (found) {
+      setCropName(found.name);
+      setRootDepthCm(String(found.root_depth_cm));
+      setCropKc(String(found.kc));
+      setCropH1(String(found.h1));
+      setCropH2(String(found.h2));
+      setCropH3(String(found.h3));
+      setCropH4(String(found.h4));
+    }
+    setCropModalOpen(false);
+  }
   return (
     <>
       <div className="form-row">
@@ -225,10 +266,19 @@ export default function StepSoil({
         <div style={{ marginTop: 20 }}>
           <div className="form-row">
             <Field label="Cultura agrícola">
-              <select value={crop} onChange={(e) => setCrop(e.target.value)}>
-                {crops.map((c) => <option key={c.key} value={c.key}>{c.name} (raiz {c.root_depth_cm} cm)</option>)}
-              </select>
+              <input
+                value={cropName}
+                onChange={(e) => setCropName(e.target.value)}
+                placeholder="Ex: Milho safrinha, Soja RR, Cana soca..."
+              />
             </Field>
+            <div style={{ alignSelf: "end" }}>
+              <button type="button" className="btn-modal-open" onClick={() => setCropModalOpen(true)}>
+                Selecionar Cultura Agrícola
+              </button>
+            </div>
+          </div>
+          <div className="form-row">
             <Field label="Profundidade radicular [cm]">
               <input
                 value={rootDepthCm}
@@ -238,6 +288,83 @@ export default function StepSoil({
                 min={1}
               />
             </Field>
+            <Field label="Coeficiente de cultura (Kc)">
+              <input
+                value={cropKc}
+                onChange={(e) => setCropKc(e.target.value)}
+                inputMode="decimal"
+                type="number"
+                step="any"
+                min={0}
+              />
+            </Field>
+          </div>
+          <div className="form-row">
+            <Field label="Anaerobiose (encharcado) [cm c.a.]">
+              <input
+                value={cropH1}
+                onChange={(e) => setCropH1(e.target.value)}
+                inputMode="decimal"
+                type="number"
+                step="any"
+              />
+            </Field>
+            <Field label="Aeração ótima [cm c.a.]">
+              <input
+                value={cropH2}
+                onChange={(e) => setCropH2(e.target.value)}
+                inputMode="decimal"
+                type="number"
+                step="any"
+              />
+            </Field>
+          </div>
+          <div className="form-row">
+            <Field label="Início do estresse hídrico [cm c.a.]">
+              <input
+                value={cropH3}
+                onChange={(e) => setCropH3(e.target.value)}
+                inputMode="decimal"
+                type="number"
+                step="any"
+              />
+            </Field>
+            <Field label="Murcha permanente [cm c.a.]">
+              <input
+                value={cropH4}
+                onChange={(e) => setCropH4(e.target.value)}
+                inputMode="decimal"
+                type="number"
+                step="any"
+              />
+            </Field>
+          </div>
+        </div>
+      )}
+
+      {cropModalOpen && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Selecionar Cultura Agrícola">
+          <div className="modal-card fert-modal-card">
+            <h3 className="fert-modal-title" style={{ marginBottom: 14 }}>Selecionar Cultura Agrícola</h3>
+            <div className="choice-cards" role="radiogroup" aria-label="Culturas" style={{ flexDirection: "column", gap: 8 }}>
+              {crops.map((c) => (
+                <label key={c.key} className={`choice-card${crop === c.key ? " selected" : ""}`}>
+                  <input
+                    type="radio"
+                    name="crop-picker"
+                    value={c.key}
+                    checked={crop === c.key}
+                    onChange={() => pickCrop(c.key)}
+                  />
+                  <span>{c.name} (raiz {c.root_depth_cm} cm)</span>
+                </label>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn-modal-cancel" onClick={() => setCropModalOpen(false)}>
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}

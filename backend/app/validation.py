@@ -90,27 +90,51 @@ def build_payload(req: SimulateRequest) -> dict:
     except Exception:
         pass
 
-    # Cultura.
+    # Cultura (Gradio crop params box: nome editável + raiz + Kc + Feddes h1..h4).
+    # crop_key="custom" = cultura personalizada (nome + params dos campos).
     if req.crop_key:
         p["crop_mode"] = "Com cultura"
-        p["crop_name"] = req.crop_key
+        if req.crop_key == "custom":
+            p["crop_name"] = (str(req.crop_name).strip() if req.crop_name else "") or "Cultura Personalizada"
+        else:
+            p["crop_name"] = (str(req.crop_name).strip() if req.crop_name else "") or req.crop_key
         try:
             crop = CROP_DATABASE.get(req.crop_key)
         except Exception:
             crop = None
+        # Base do banco (quando há) + overrides dos campos editáveis.
         if crop is not None:
-            try:
-                p["crop_root_depth"] = float(crop.root_depth_cm)
-            except (TypeError, ValueError):
+            if req.crop_name and str(req.crop_name).strip():
+                # Nome que casa com o banco mantém rótulo; senão é personalizada
+                # (a regra de stage vive no service; aqui só repassa o nome).
                 pass
+            else:
+                p["crop_name"] = crop.name
+            base_root = float(crop.root_depth_cm)
+            base_kc = float(crop.kc)
+            base_h = (float(crop.h1), float(crop.h2), float(crop.h3), float(crop.h4))
+        else:
+            base_root, base_kc = 35.0, 1.0
+            base_h = (-15.0, -30.0, -450.0, -12000.0)
+        try:
+            p["crop_root_depth"] = float(req.root_depth_cm) if req.root_depth_cm is not None else base_root
+        except (TypeError, ValueError):
+            p["crop_root_depth"] = req.root_depth_cm
+        try:
+            p["crop_kc"] = float(req.kc) if req.kc is not None else base_kc
+        except (TypeError, ValueError):
+            p["crop_kc"] = req.kc
+        for _attr, _key, _fb in (
+            ("h1", "crop_h1", base_h[0]),
+            ("h2", "crop_h2", base_h[1]),
+            ("h3", "crop_h3", base_h[2]),
+            ("h4", "crop_h4", base_h[3]),
+        ):
+            _v = getattr(req, _attr, None)
             try:
-                p["crop_kc"] = float(crop.kc)
+                p[_key] = float(_v) if _v is not None else _fb
             except (TypeError, ValueError):
-                pass
-        elif req.root_depth_cm is not None:
-            p["crop_root_depth"] = float(req.root_depth_cm)
-        if req.root_depth_cm is not None and "crop_root_depth" not in p:
-            p["crop_root_depth"] = float(req.root_depth_cm)
+                p[_key] = _v
     else:
         p["crop_mode"] = "Sem cultura (perfil nu)"
 
@@ -134,6 +158,15 @@ def build_payload(req: SimulateRequest) -> dict:
         p["rain_mm"] = float(req.rain_mm)
         p["total_days"] = float(req.total_days)
     p["initial_moisture_pct"] = float(req.initial_moisture_pct)
+    # ET avançada (Gradio adv_et_toggle): 0 = derivar de ET0.
+    try:
+        p["evap_mm_day"] = float(req.evap_mm_day)
+    except (TypeError, ValueError):
+        p["evap_mm_day"] = req.evap_mm_day
+    try:
+        p["transp_mm_day"] = float(req.transp_mm_day)
+    except (TypeError, ValueError):
+        p["transp_mm_day"] = req.transp_mm_day
     if req.et0_series:
         try:
             vals = [float(v) for v in req.et0_series]

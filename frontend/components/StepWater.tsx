@@ -54,6 +54,14 @@ type Props = {
   setMoisture: (v: string) => void;
   et0: string;
   setEt0: (v: string) => void;
+  hasCrop: boolean;
+  cropKc: string;
+  advEt: boolean;
+  setAdvEt: (v: boolean) => void;
+  evap: string;
+  setEvap: (v: string) => void;
+  transp: string;
+  setTransp: (v: string) => void;
   climateRows: ClimateRow[];
   setClimateRows: (rows: ClimateRow[]) => void;
   hubKey: string;
@@ -165,6 +173,7 @@ const SCENARIO_ICONS: Record<string, React.ReactNode> = {
 export default function StepWater(props: Props) {
   const {
     days, setDays, rainMode, setRainMode, rainMm, setRainMm, moisture, setMoisture, et0, setEt0,
+    hasCrop, cropKc, advEt, setAdvEt, evap, setEvap, transp, setTransp,
     climateRows, setClimateRows, hubKey, setHubKey, hubScenario, setHubScenario,
     hubAppDay, setHubAppDay, uploadAppDay, setUploadAppDay,
     analysisStart, setAnalysisStart, analysisEnd, setAnalysisEnd, printDays, setPrintDays,
@@ -251,6 +260,12 @@ export default function StepWater(props: Props) {
   const isUniform = rainMode === "uniform";
   const isHub = rainMode === "hub";
 
+  // Repartição calculada de E/T (Gradio et_split_html): T = ET0·Kc, E = ET0 − T.
+  const et0Num = parseFloat(String(et0).replace(",", ".")) || 0;
+  const kcNum = hasCrop ? (parseFloat(String(cropKc).replace(",", ".")) || 0) : 0;
+  const transpCalc = Math.max(0, et0Num * kcNum);
+  const evapCalc = Math.max(0, et0Num - transpCalc);
+
   return (
     <>
       <div className="choice-cards-3" role="radiogroup" aria-label="Fonte de água">
@@ -288,6 +303,38 @@ export default function StepWater(props: Props) {
               <input value={et0} onChange={(e) => setEt0(e.target.value)} inputMode="decimal" />
             </Field>
           </div>
+          {!advEt && (
+            <div className="et-split-info">
+              {hasCrop ? (
+                <><b>Transpiração (ET0·Kc)</b> = {transpCalc.toFixed(2)} mm/dia &nbsp;•&nbsp; <b>Evaporação do solo (ET0 − T)</b> = {evapCalc.toFixed(2)} mm/dia</>
+              ) : (
+                <><b>Evaporação do solo</b> = {evapCalc.toFixed(2)} mm/dia <span style={{ color: "#64748b" }}>(solo nu: 100% do ET0)</span></>
+              )}
+            </div>
+          )}
+          <div className="custom-toggle-chk">
+            <label>
+              <input
+                type="checkbox"
+                className="switch"
+                checked={advEt}
+                onChange={(e) => setAdvEt(e.target.checked)}
+              />
+              Avançado: informar evaporação/transpiração manualmente
+            </label>
+          </div>
+          {advEt && (
+            <div className="form-row">
+              <Field label="Evaporação do solo [mm/dia] (0 = derivar de ET0)">
+                <input value={evap} onChange={(e) => setEvap(e.target.value)} inputMode="decimal" />
+              </Field>
+              {hasCrop && (
+                <Field label="Transpiração [mm/dia] (0 = ET0·Kc)">
+                  <input value={transp} onChange={(e) => setTransp(e.target.value)} inputMode="decimal" />
+                </Field>
+              )}
+            </div>
+          )}
         </>
       )}
 
