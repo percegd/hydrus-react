@@ -513,11 +513,136 @@ def run_simulation(req: SimulateRequest, with_plot: bool = True) -> SimulateResp
     )
 
 
-def execute_job(req: SimulateRequest, job_dir: str) -> tuple[SimulateResponse, str, str]:
-    """Roda uma vez e gera response + Excel + laudo no diretório do job."""
-    from .graphs import write_zip
+def expected_extra_plots(req: SimulateRequest, results) -> list[dict]:
+    """Descritores {key,title} dos gráficos extras sem renderizar (resposta imediata)."""
+    from .graphs import expected_descriptors
 
+    return expected_descriptors(results, _nutrients_list(req), water_only=bool(req.water_only))
+
+
+def _extra_plots_with_urls(descriptors: list[dict], job_id: str) -> list[dict]:
+    out: list[dict] = []
+    for d in descriptors:
+        try:
+            key = str(d.get("key"))
+            title = str(d.get("title"))
+        except Exception:
+            continue
+        if not key:
+            continue
+        out.append({"key": key, "title": title, "url": f"/jobs/{job_id}/plots/{key}.png"})
+    return out
+
+
+def ensure_extra_files(job_dir: str, lazy_ctx: dict) -> list[dict]:
+    """Gera PNGs extras + graphs.zip sob demanda (sem re-solver); idempotente.
+
+    Retorna a lista de files [{key,title,path}]. Se o zip já existe, não
+    reconstrói. Chamar com o lock do job (thread-safe).
+    """
+    from .graphs import build_graph_files, write_zip
+
+    zip_path = os.path.join(job_dir, "graphs.zip")
+    graphs_dir = os.path.join(job_dir, "graphs")
+    if os.path.exists(zip_path):
+        # Lista a partir do esperado + arquivos existentes (títulos do esperado).
+        try:
+            req = lazy_ctx["req"]
+            results = lazy_ctx["results"]
+            expected = expected_extra_plots(req, results)
+        except Exception:
+            expected = []
+        files: list[dict] = []
+        for d in expected:
+            key = str(d.get("key"))
+            title = str(d.get("title"))
+            # Localiza o PNG correspondente no graphs_dir ou job_dir.
+            found = None
+            try:
+                for base in (graphs_dir, job_dir):
+                    if not os.path.isdir(base):
+                        continue
+                    for fn in os.listdir(base):
+                        if not fn.lower().endswith(".png"):
+                            continue
+                        # Nome do arquivo contém a chave ou vice-versa (best-effort).
+                        if key.replace("_", "") in fn.replace("_", "").replace("-", "") or fn[:-4].endswith(key[-12:]):
+                            found = os.path.join(base, fn)
+                            break
+                    if found:
+                        break
+            except OSError:
+                found = None
+            # Fallback: procura qualquer PNG cujo basename case com o padrão
+            # de build_graph_files (01_*, perfil_*, avanco_*, evolucao_*).
+            if found is not None and os.path.isfile(found):
+                files.append({"key": key, "title": title, "path": found})
+        if files:
+            return files
+        # Zip existe mas não mapeamos arquivos: segue para rebuild abaixo.
+    req = lazy_ctx["req"]
+    results = lazy_ctx["results"]
+    soil = lazy_ctx["soil"]
+    crop = lazy_ctx["crop"]
+    root_depth = float(lazy_ctx["root_depth"])
+    total_rain = float(lazy_ctx["total_rain"])
+    dose_total = sum(float(s.dose_kg_ha) for s in (req.solutes or []))
+    rel_type, rel_days = _release_info(req)
+    os.makedirs(graphs_dir, exist_ok=True)
+    files = build_graph_files(
+        results, soil, crop, float(total_rain), float(dose_total),
+        rel_type, float(rel_days), float(root_depth), graphs_dir,
+        _nutrients_list(req), water_only=bool(req.water_only),
+    )
+    try:
+        if files:
+            write_zip(files, zip_path)
+    except Exception:
+        pass
+    return files
+
+
+def ensure_steps_file(job_dir: str, lazy_ctx: dict) -> str:
+    """Gera passo_a_passo.md sob demanda (sem re-solver); idempotente."""
+    md_path = os.path.join(job_dir, "passo_a_passo.md")
+    try:
+        if os.path.exists(md_path):
+            with open(md_path, encoding="utf-8") as f:
+                content = f.read()
+            if content.strip():
+                return content
+    except OSError:
+        pass
+    req = lazy_ctx["req"]
+    results = lazy_ctx["results"]
+    soil = lazy_ctx["soil"]
+    crop = lazy_ctx["crop"]
+    root_depth = float(lazy_ctx["root_depth"])
+    total_rain = float(lazy_ctx["total_rain"])
+    total_days = float(lazy_ctx["total_days"])
+    try:
+        steps_md = build_steps_markdown(req, results, soil, crop, root_depth, total_rain, total_days)
+    except Exception:
+        steps_md = ""
+    try:
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(steps_md)
+    except OSError:
+        pass
+    return steps_md
+
+
+def execute_job_fast(
+    req: SimulateRequest, job_dir: str, job_id: str | None = None
+) -> tuple[SimulateResponse, str, str, dict]:
+    """Caminho rápido do job: solve + perfis principais + excel + laudo.
+
+    NÃO gera PNGs extras, graphs.zip nem passo_a_passo.md (lazy, sob demanda
+    no GET /plots/{key}.png, /graphs.zip e /steps). Resolve o solver uma
+    única vez; o contexto lazy permite gerar os extras sem re-solver.
+    """
     os.makedirs(job_dir, exist_ok=True)
+    _jid = job_id or os.path.basename(job_dir)
     results, soil, crop, root_depth, total_rain, total_days = _run_core(req)
     water_only = bool(req.water_only)
     if water_only:
@@ -541,14 +666,10 @@ def execute_job(req: SimulateRequest, job_dir: str) -> tuple[SimulateResponse, s
     except Exception:
         pass
     try:
-        extra, files = build_extra_plots(req, results, soil, crop, root_depth, total_rain, job_dir)
+        descriptors = expected_extra_plots(req, results)
     except Exception:
-        extra, files = [], []
-    try:
-        if files:
-            write_zip(files, os.path.join(job_dir, "graphs.zip"))
-    except Exception:
-        pass
+        descriptors = []
+    extra = _extra_plots_with_urls(descriptors, _jid)
     resp = SimulateResponse(
         drainage_mm=float(results.q_bottom_cum_cm) * 10.0,
         solutes=_balances(req, results),
@@ -563,15 +684,29 @@ def execute_job(req: SimulateRequest, job_dir: str) -> tuple[SimulateResponse, s
     report_md = build_report(req, results, soil, crop, root_depth, total_rain, total_days)
     with open(os.path.join(job_dir, "laudo.md"), "w", encoding="utf-8") as f:
         f.write(report_md)
-    try:
-        steps_md = build_steps_markdown(req, results, soil, crop, root_depth, total_rain, total_days)
-    except Exception:
-        steps_md = ""
-    try:
-        with open(os.path.join(job_dir, "passo_a_passo.md"), "w", encoding="utf-8") as f:
-            f.write(steps_md)
-    except OSError:
-        pass
+    lazy_ctx = {
+        "req": req,
+        "results": results,
+        "soil": soil,
+        "crop": crop,
+        "root_depth": float(root_depth),
+        "total_rain": float(total_rain),
+        "total_days": float(total_days),
+    }
+    return resp, excel_path, report_md, lazy_ctx
+
+
+def execute_job(req: SimulateRequest, job_dir: str) -> tuple[SimulateResponse, str, str]:
+    """Roda uma vez e gera response + Excel + laudo no diretório do job.
+
+    Compat (testes diretos/bench): caminho rápido, sem PNGs extras embutidos;
+    extra_plots contém apenas {key,title,url} (sem base64). Os extras podem
+    ser materializados via ensure_extra_files/ensure_steps_file com o
+    contexto lazy de execute_job_fast (sem re-solver).
+    """
+    resp, excel_path, report_md, _lazy = execute_job_fast(
+        req, job_dir, job_id=os.path.basename(job_dir)
+    )
     return resp, excel_path, report_md
 
 

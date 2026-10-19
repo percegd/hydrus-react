@@ -200,7 +200,21 @@ export default function Home() {
   const [report, setReport] = useState("");
   const [steps, setSteps] = useState("");
   const [appliedMm, setAppliedMm] = useState<number | null>(null);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollAbort = useRef<AbortController | null>(null);
+  const pollCancelled = useRef(false);
+  const elapsedTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function stopPolling() {
+    pollCancelled.current = true;
+    if (pollAbort.current) {
+      try { pollAbort.current.abort(); } catch { /* ignore */ }
+      pollAbort.current = null;
+    }
+    if (elapsedTimer.current) {
+      clearInterval(elapsedTimer.current);
+      elapsedTimer.current = null;
+    }
+  }
 
   useEffect(() => {
     getSoils().then(setSoils).catch(() => setValidationIssues(["API fora do ar (backend :8001)."]));
@@ -212,7 +226,7 @@ export default function Home() {
         fillCropParams(found);
       }
     }).catch(() => {});
-    return () => { if (timer.current) clearInterval(timer.current); };
+    return () => { stopPolling(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -347,7 +361,7 @@ export default function Home() {
   }
 
   function resetToDefaults() {
-    if (timer.current) clearInterval(timer.current);
+    stopPolling();
     setSoil(DEFAULTS.soil);
     setIsCustomSoil(DEFAULTS.isCustomSoil);
     setSandPct(DEFAULTS.sandPct);
@@ -410,7 +424,7 @@ export default function Home() {
   }
 
   async function run() {
-    if (timer.current) clearInterval(timer.current);
+    stopPolling();
     setValidationIssues(null);
     setResult(null);
     setReport("");
@@ -536,40 +550,71 @@ export default function Home() {
       const { job_id } = await postJob(body);
       setJobId(job_id);
       setJobState("running");
+      // Long-poll sequencial: próxima chamada (wait=25) logo após a anterior
+      // retornar — sem sobreposição (sem setInterval). Mantém 1 requisição
+      // aberta para o Cloud Run alocar CPU enquanto o job roda.
+      pollCancelled.current = false;
+      const ctrl = new AbortController();
+      pollAbort.current = ctrl;
+      const t0 = Date.now();
+      setElapsed(0);
+      if (elapsedTimer.current) clearInterval(elapsedTimer.current);
+      elapsedTimer.current = setInterval(() => {
+        if (pollCancelled.current) return;
+        setElapsed(Math.round(((Date.now() - t0) / 1000) * 10) / 10);
+      }, 500);
       let pollErrors = 0;
-      timer.current = setInterval(async () => {
-        try {
-          const st = await getJob(job_id);
+      try {
+        for (;;) {
+          if (pollCancelled.current) return;
+          let st;
+          try {
+            st = await getJob(job_id, 25, ctrl.signal);
+          } catch (e) {
+            if (pollCancelled.current) return;
+            if (e instanceof DOMException && e.name === "AbortError") return;
+            if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
+              stopPolling();
+              setJobState("expired");
+              openValidation(["A simulação expirou; rode novamente."]);
+              return;
+            }
+            pollErrors += 1;
+            if (pollErrors >= 5) {
+              stopPolling();
+              setJobState("failed");
+              openValidation([e instanceof Error ? e.message : String(e)]);
+              return;
+            }
+            continue;
+          }
+          if (pollCancelled.current) return;
           pollErrors = 0;
           setElapsed(st.elapsed_s);
           if (st.status === "done") {
-            if (timer.current) clearInterval(timer.current);
+            stopPolling();
+            setElapsed(st.elapsed_s);
             setJobState("done");
             setResult(st.result);
+            return;
           } else if (st.status === "failed") {
-            if (timer.current) clearInterval(timer.current);
+            stopPolling();
             setJobState("failed");
             openValidation([st.error || "Falha na simulação."]);
+            return;
           } else {
             setJobState(st.status);
           }
-        } catch (e) {
-          if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
-            if (timer.current) clearInterval(timer.current);
-            setJobState("expired");
-            openValidation(["A simulação expirou; rode novamente."]);
-            return;
-          }
-          pollErrors += 1;
-          if (pollErrors >= 5) {
-            if (timer.current) clearInterval(timer.current);
-            setJobState("failed");
-            openValidation([e instanceof Error ? e.message : String(e)]);
-          }
-          /* senão mantém polling */
         }
-      }, 1000);
+      } catch (e) {
+        if (!pollCancelled.current) {
+          stopPolling();
+          setJobState("failed");
+          showApiError(e);
+        }
+      }
     } catch (e) {
+      stopPolling();
       setJobState("failed");
       showApiError(e);
     }
@@ -793,6 +838,7 @@ export default function Home() {
               <Results
                 jobState={jobState}
                 elapsed={elapsed}
+                jobId={jobId}
                 result={result}
                 report={report}
                 steps={steps}

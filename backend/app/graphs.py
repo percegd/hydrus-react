@@ -6,6 +6,10 @@ evolução nos dias de leitura — usando hydrus_core.visualizer exatamente
 como o Gradio chama.
 """
 
+import matplotlib
+
+matplotlib.use("Agg")
+
 import base64
 import os
 import zipfile
@@ -193,6 +197,66 @@ def build_graph_files(
                     pass
 
     return files
+
+
+def expected_descriptors(
+    results,
+    nutrients_list: list | None = None,
+    water_only: bool = False,
+) -> list[dict]:
+    """Lista {key,title} esperada sem renderizar (para resposta imediata do job).
+
+    Espelha as chaves que build_graph_files geraria se todos os plots
+    tiverem sucesso; a validação do endpoint /plots/{key}.png usa esta lista.
+    """
+    nutrients_list = nutrients_list or []
+    if water_only:
+        solutes: list[str] = []
+    else:
+        solutes = [str(n.get("symbol")) for n in (nutrients_list or []) if str(n.get("symbol"))]
+        if not solutes:
+            try:
+                _nr_all = getattr(results, "nutrient_results", {}) or {}
+                solutes = list(_nr_all.keys())
+            except Exception:
+                solutes = []
+    names = {str(n.get("symbol")): str(n.get("name", n.get("symbol"))) for n in (nutrients_list or [])}
+
+    out: list[dict] = []
+    out.append({"key": "perfil_umidade", "title": TITLES["perfil_umidade"]})
+    if not water_only:
+        if len(solutes) > 1:
+            out.append({"key": "perfil_combinado", "title": TITLES["perfil_combinado"]})
+        for sym in solutes:
+            out.append({"key": f"perfil_{_safe_sym(sym)}", "title": _title_perfil(sym, names.get(sym, sym))})
+    out.append({"key": "avanco_tempo_umidade", "title": TITLES["avanco_tempo_umidade"]})
+    if not water_only:
+        for sym in solutes:
+            out.append({"key": f"avanco_tempo_{_safe_sym(sym)}", "title": _title_btc(sym, names.get(sym, sym))})
+    try:
+        has_print = bool(getattr(results, "print_profiles", None))
+    except Exception:
+        has_print = False
+    if has_print:
+        out.append({"key": "evolucao_dias_umidade", "title": TITLES["evolucao_dias_umidade"]})
+        if not water_only:
+            for sym in solutes:
+                out.append({"key": f"evolucao_dias_{_safe_sym(sym)}", "title": _title_evolucao(sym, names.get(sym, sym))})
+    return out
+
+
+def plot_filename(key: str) -> str | None:
+    """Nome do PNG no graphs_dir para uma chave de gráfico extra."""
+    k = str(key or "")
+    if k == "perfil_umidade":
+        return "01_perfil_profundidade_umidade.png"
+    if k == "perfil_combinado":
+        return "02_perfil_profundidade_combinado.png"
+    if k.startswith("perfil_"):
+        return f"perfil_profundidade_{k[len('perfil_'):]}.png"
+    if k.startswith("avanco_tempo_") or k.startswith("evolucao_dias_"):
+        return f"{k}.png"
+    return None
 
 
 def encode_files(files: list[dict]) -> list[dict]:

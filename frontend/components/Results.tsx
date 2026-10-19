@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ProfileChart from "./ProfileChart";
+import { plotUrl } from "../lib/api";
 import type { ExtraPlot, SimulateResponse } from "../lib/api";
 
 const ACCENTS: Record<string, [string, string]> = {
@@ -18,6 +19,7 @@ const ACCENTS: Record<string, [string, string]> = {
 type Props = {
   jobState: string;
   elapsed: number;
+  jobId: string;
   result: SimulateResponse | null;
   report: string;
   steps: string;
@@ -81,7 +83,14 @@ function soluteOf(key: string): string {
 }
 
 export default function Results(props: Props) {
-  const { jobState, elapsed, result, report, steps, cropName, rootDepth, appliedMm, onDownloadExcel, onDownloadGraphs, onLoadReport, onLoadSteps } = props;
+  const { jobState, elapsed, jobId, result, report, steps, cropName, rootDepth, appliedMm, onDownloadExcel, onDownloadGraphs, onLoadReport, onLoadSteps } = props;
+
+  function extraSrc(p: ExtraPlot): string | null {
+    if (p.url && jobId) return plotUrl(jobId, p.key);
+    if (p.url) return p.url.startsWith("/api") ? p.url : `/api${p.url.startsWith("/") ? p.url : `/${p.url}`}`;
+    if (p.png_base64) return `data:image/png;base64,${p.png_base64}`;
+    return null;
+  }
 
   const extra: ExtraPlot[] = useMemo(() => result?.extra_plots ?? [], [result]);
   const solutes = useMemo(() => {
@@ -263,21 +272,25 @@ export default function Results(props: Props) {
                     </div>
                   )}
                   <div className="plots-grid">
-                    {filtered.map((p) => (
-                      <div className="plot-card" key={p.key}>
-                        <p className="plot-card-title">{p.title}</p>
-                        <img src={`data:image/png;base64,${p.png_base64}`} alt={p.title} loading="lazy" />
-                        <div className="btn-row">
-                          <a
-                            className="btn"
-                            href={`data:image/png;base64,${p.png_base64}`}
-                            download={`${p.key}.png`}
-                          >
-                            Baixar PNG
-                          </a>
+                    {filtered.map((p) => {
+                      const src = extraSrc(p);
+                      if (!src) return null;
+                      return (
+                        <div className="plot-card" key={p.key}>
+                          <p className="plot-card-title">{p.title}</p>
+                          <img src={src} alt={p.title} loading="lazy" />
+                          <div className="btn-row">
+                            <a
+                              className="btn"
+                              href={src}
+                              download={`${p.key}.png`}
+                            >
+                              Baixar PNG
+                            </a>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   {filtered.length === 0 && (
                     <p className="muted">Nenhum gráfico para este filtro.</p>

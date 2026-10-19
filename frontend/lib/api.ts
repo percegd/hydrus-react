@@ -20,7 +20,7 @@ export type WaterBalance = {
   applied_label: string;
   drainage_label: string;
 };
-export type ExtraPlot = { key: string; title: string; png_base64: string };
+export type ExtraPlot = { key: string; title: string; png_base64?: string | null; url?: string | null };
 export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; plots_png_base64?: Record<string, string> | null; extra_plots?: ExtraPlot[] | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null; water_only?: boolean; water_balance?: WaterBalance | null };
 export type HelpEntry = { key: string; title: string; unit: string; what: string; simulation: string };
 
@@ -152,9 +152,14 @@ export const parseClimateFile = async (file: File): Promise<ClimateParseResult> 
 export const getCrops = () => req<Crop[]>("/crops");
 export const postSimulate = (body: unknown) => req<SimulateResponse>("/simulate", { method: "POST", body: JSON.stringify(body) });
 export type JobCreated = { job_id: string };
-export type JobStatus = { job_id: string; status: string; elapsed_s: number; result: SimulateResponse | null; error: string | null };
+export type JobStatus = { job_id: string; status: string; elapsed_s: number; result: SimulateResponse | null; error: string | null; has_excel?: boolean; has_report?: boolean; has_graphs?: boolean; has_steps?: boolean };
 export const postJob = (body: unknown) => req<JobCreated>("/jobs", { method: "POST", body: JSON.stringify(body) });
-export const getJob = (id: string) => req<JobStatus>(`/jobs/${id}`);
+export const getJob = (id: string, wait = 0, signal?: AbortSignal) => {
+  const w = Math.max(0, Math.min(25, Number(wait) || 0));
+  const qs = w > 0 ? `?wait=${w}` : "";
+  return req<JobStatus>(`/jobs/${id}${qs}`, signal ? { signal } : undefined);
+};
+export const plotUrl = (jobId: string, key: string) => `/api/jobs/${encodeURIComponent(jobId)}/plots/${encodeURIComponent(key)}.png`;
 export const getReport = async (id: string): Promise<string> => {
   const j = await req<{ report_markdown: string }>(`/jobs/${id}/report`);
   return j.report_markdown;

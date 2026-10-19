@@ -191,11 +191,16 @@ class WaterBalance(BaseModel):
 
 
 class ExtraPlot(BaseModel):
-    """Gráfico extra nomeado (galeria completa como no Gradio)."""
+    """Gráfico extra nomeado (galeria completa como no Gradio).
+
+    Jobs assíncronos retornam {key, title, url} (lazy, sem base64);
+    /simulate síncrono continua embutindo png_base64.
+    """
 
     key: str
     title: str
-    png_base64: str
+    png_base64: Optional[str] = None
+    url: Optional[str] = None
 
 
 class SimulateResponse(BaseModel):
