@@ -95,7 +95,7 @@ export default function StepNutrients(props: Props) {
     getFertilizers().then((c) => {
       setCatalog(c.commercial);
       setBlends(c.blend_presets);
-      if (c.commercial.length > 0) setFertKey(c.commercial[0].key);
+      if (c.commercial.length > 0 && !c.commercial.some((f) => f.key === "kcl")) setFertKey(c.commercial[0].key);
     }).catch(() => {});
   }, []);
 
@@ -135,6 +135,7 @@ export default function StepNutrients(props: Props) {
 
   function applyBlend(key: string) {
     setBlendKey(key);
+    if (key) setIsCustomFert(false);
     const b = blends.find((x) => x.key === key);
     if (b) {
       setCustomPcts(Object.fromEntries(NUTRIENT_SYMBOLS.map((s) => [s, String(b.nutrient_pcts[s] ?? 0)])));
@@ -195,7 +196,7 @@ export default function StepNutrients(props: Props) {
                 <label className="field" key={s}>Teor {s} [%]
                   <input
                     value={customPcts[s] ?? "0"}
-                    onChange={(e) => { setCustomPcts((p) => ({ ...p, [s]: e.target.value })); setBlendKey(""); }}
+                    onChange={(e) => { setCustomPcts((p) => ({ ...p, [s]: e.target.value })); setBlendKey(""); setIsCustomFert(true); }}
                     inputMode="decimal"
                   />
                 </label>

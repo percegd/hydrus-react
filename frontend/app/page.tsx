@@ -246,6 +246,7 @@ export default function Home() {
     setKs(DEFAULTS.ks);
     setBulk(DEFAULTS.bulk);
     setRosettaNote("");
+    setKdInfo({});
     setCropModeState(DEFAULTS.cropMode);
     setCrop(DEFAULTS.crop);
     setDepthCm(DEFAULTS.depthCm);

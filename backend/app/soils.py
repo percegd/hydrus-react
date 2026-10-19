@@ -43,7 +43,7 @@ PUB_NV_KD = {"K": 0.5189, "Ca": 0.2289, "Mg": 0.1460, "S": 0.0332, "N": 0.0200, 
 
 def rosetta_params(sand: float, clay: float, bulk_density: float | None = None) -> dict[str, float]:
     """Port de update_rosetta_parameters: Rosetta -> van Genuchten (arredondado)."""
-    bd = float(bulk_density) if bulk_density not in (None, "") else DEFAULT_BULK_DENSITY
+    bd = float(bulk_density) if bulk_density not in (None, "", "None") else DEFAULT_BULK_DENSITY
     p = estimate_ptf_rosetta(float(sand or 60), float(clay or 25), bulk_density=bd)
     return {
         "theta_r": round(p.theta_r, 4),
