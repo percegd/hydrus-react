@@ -20,6 +20,7 @@ from . import climate as _climate
 from .schemas import (
     FertilizerDoseRequest,
     FertilizerDoseResponse,
+    HelpEntry,
     JobCreated,
     JobStatus,
     KdEntry,
@@ -28,6 +29,7 @@ from .schemas import (
     RosettaResponse,
     SimulateRequest,
     SimulateResponse,
+    StepsResponse,
 )
 from .service import execute_job, run_simulation
 from .validation import validate_request
@@ -114,6 +116,16 @@ def _cleanup_jobs() -> None:
                 expired.append(job_id)
     for job_id in expired:
         shutil.rmtree(os.path.join(_jobs_root, job_id), ignore_errors=True)
+
+
+def _bad_job_id(job_id: str) -> bool:
+    """Rejeita job_id com separador de caminho (defesa em profundidade).
+
+    Os ids reais são hex de 12 chars; qualquer "/" ou ".." nunca é válido.
+    O lookup no dict _jobs já barraria traversal, mas o guard impede que o
+    job_id chegue a os.path.join antes da validação.
+    """
+    return not job_id or "/" in job_id or "\\" in job_id or ".." in job_id
 
 
 def _execute(job_id: str, req: SimulateRequest) -> None:
@@ -440,6 +452,8 @@ def create_job(req: SimulateRequest) -> JobCreated:
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
 def job_status(job_id: str) -> JobStatus:
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="job desconhecido ou expirado")
     _cleanup_jobs()
     now = time.time()
     with _jobs_lock:
@@ -449,14 +463,19 @@ def job_status(job_id: str) -> JobStatus:
         if job.get("status") == "done":
             job["t_end"] = now
         snapshot = dict(job)
+    _excel_ok = bool(snapshot.get("excel_path"))
+    _graphs_ok = os.path.exists(os.path.join(_jobs_root, job_id, "graphs.zip"))
+    _steps_ok = os.path.exists(os.path.join(_jobs_root, job_id, "passo_a_passo.md"))
     return JobStatus(
         job_id=job_id,
         status=snapshot["status"],
         elapsed_s=round(now - snapshot["t0"], 1),
         result=snapshot["result"],
         error=snapshot["error"],
-        has_excel=bool(snapshot.get("excel_path")),
+        has_excel=_excel_ok,
         has_report=snapshot["status"] == "done",
+        has_graphs=_graphs_ok,
+        has_steps=_steps_ok,
     )
 
 
@@ -464,6 +483,8 @@ def job_status(job_id: str) -> JobStatus:
 def job_excel(job_id: str):
     import os
 
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
     _cleanup_jobs()
     with _jobs_lock:
         job = _jobs.get(job_id)
@@ -493,6 +514,8 @@ def job_excel(job_id: str):
 def job_report(job_id: str) -> dict:
     import os
 
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
     _cleanup_jobs()
     with _jobs_lock:
         job = _jobs.get(job_id)
@@ -511,6 +534,82 @@ def job_report(job_id: str) -> dict:
             return {"report_markdown": f.read()}
     except FileNotFoundError:
         raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+
+
+@app.get("/help", response_model=list[HelpEntry])
+def field_help() -> list[HelpEntry]:
+    """Textos de ajuda por campo (botão "?" da UI), iguais aos do Gradio.
+
+    Mapeamento de campos igual ao Gradio (KEY_BY_HOST + data-helpkey):
+    theta_r, theta_s, alpha, n, ks, bulk_density, disp, domain_depth,
+    obs_depths, crop_name, root_depth, kc, fed_h1..h4, dose_tab, kd_tab,
+    disp_tab, res_tab, release_type, release_days, placement_mode, z_top,
+    z_bottom, fert_c0, fert_pulse, rain_mm, moisture, total_days, et0,
+    evap, transp, app_day, print_days, window_start, window_end,
+    water_source, water_series, water_upload.
+    """
+    from hydrus_core.field_help import FIELD_HELP
+
+    return [
+        HelpEntry(key=key, title=title, unit=unit, what=what, simulation=sim)
+        for key, (title, unit, what, sim) in FIELD_HELP.items()
+    ]
+
+
+@app.get("/jobs/{job_id}/steps", response_model=StepsResponse)
+def job_steps(job_id: str) -> StepsResponse:
+    """Passo a passo da simulação (memória de cálculo), como o Gradio monta."""
+    import os
+
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
+    _cleanup_jobs()
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is not None and job.get("status") == "done":
+            job["t_end"] = time.time()
+        snapshot = dict(job) if job is not None else None
+    if snapshot is None:
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    if snapshot.get("status") != "done":
+        raise HTTPException(status_code=404, detail="passo a passo indisponível")
+    md_path = os.path.join(_jobs_root, job_id, "passo_a_passo.md")
+    if not os.path.exists(md_path):
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    try:
+        with open(md_path, encoding="utf-8") as f:
+            return StepsResponse(steps_markdown=f.read())
+    except FileNotFoundError:
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+
+
+@app.get("/jobs/{job_id}/graphs.zip")
+def job_graphs_zip(job_id: str):
+    """ZIP com todos os gráficos (1 painel por PNG), como o Gradio."""
+    import os
+
+    from fastapi.responses import FileResponse
+
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
+    _cleanup_jobs()
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is not None and job.get("status") == "done":
+            job["t_end"] = time.time()
+        snapshot = dict(job) if job is not None else None
+    if snapshot is None:
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    if snapshot.get("status") != "done":
+        raise HTTPException(status_code=404, detail="gráficos indisponíveis")
+    zip_path = os.path.join(_jobs_root, job_id, "graphs.zip")
+    if not os.path.exists(zip_path):
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"graficos_{job_id}.zip",
+    )
 
 
 def _validate(req: SimulateRequest) -> None:

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApiError, getFertilizers, postFertilizerDose, type BlendPresetInfo, type FertilizerInfo } from "../lib/api";
+import HelpIcon from "./HelpIcon";
 
 export type NutrientRow = {
   symbol: string;
@@ -150,10 +151,15 @@ function CubeIcon() {
   );
 }
 
-function Field({ label, children, fixed }: { label: string; children: React.ReactNode; fixed?: boolean }) {
+function Field({ label, children, fixed, helpKey }: { label: string; children: React.ReactNode; fixed?: boolean; helpKey?: string }) {
   return (
     <label className={`field${fixed ? " fixed" : ""}`}>
-      <span className="field-label">{label}</span>
+      <span className="field-label">
+        <span className="field-label-row">
+          {label}
+          {helpKey && <HelpIcon helpKey={helpKey} />}
+        </span>
+      </span>
       {children}
     </label>
   );
@@ -300,10 +306,10 @@ export default function StepNutrients(props: Props) {
 
           <div className="nutrient-table-header">
             <span className="col-nutr">Nutriente</span>
-            <div className="col-dose"><span className="header-title">Dose elementar</span><span className="header-unit">[kg/ha]</span></div>
-            <div className="col-kd"><span className="header-title">Kd - Adsorção</span><span className="header-unit">[cm³/g]</span></div>
-            <div className="col-disp"><span className="header-title">Disp. (λ)</span><span className="header-unit">[cm]</span></div>
-            <div className="col-res"><span className="header-title">Teor Residual</span><span className="header-unit">[mg/dm³]</span></div>
+            <div className="col-dose"><span className="header-title">Dose elementar <HelpIcon helpKey="dose_tab" /></span><span className="header-unit">[kg/ha]</span></div>
+            <div className="col-kd"><span className="header-title">Kd - Adsorção <HelpIcon helpKey="kd_tab" /></span><span className="header-unit">[cm³/g]</span></div>
+            <div className="col-disp"><span className="header-title">Disp. (λ) <HelpIcon helpKey="disp_tab" /></span><span className="header-unit">[cm]</span></div>
+            <div className="col-res"><span className="header-title">Teor Residual <HelpIcon helpKey="res_tab" /></span><span className="header-unit">[mg/dm³]</span></div>
           </div>
           <div className="estimate-note">
             <b>Como estes valores são estimados:</b> o <b>Kd</b> vem de tabelas de literatura
@@ -378,7 +384,7 @@ export default function StepNutrients(props: Props) {
             <button type="button" className="btn-add-solute" onClick={addRow}>+ Adicionar outro soluto</button>
           </div>
 
-          <div className="step-section-title">Liberação do fertilizante</div>
+          <div className="step-section-title"><span className="help-section-title">Liberação do fertilizante <HelpIcon helpKey="release_type" /></span></div>
           <div className="seg-grid" role="radiogroup" aria-label="Liberação do fertilizante" style={{ marginTop: 10 }}>
             <label className={`seg-option${!isControlled ? " selected" : ""}`}>
               <input
@@ -403,13 +409,13 @@ export default function StepNutrients(props: Props) {
           </div>
           {isControlled && (
             <div className="form-row" style={{ marginTop: 8 }}>
-              <Field label="Duração da liberação [dias]">
+              <Field label="Duração da liberação [dias]" helpKey="release_days">
                 <input value={releaseDays} onChange={(e) => setReleaseDays(e.target.value)} inputMode="decimal" />
               </Field>
             </div>
           )}
 
-          <div className="step-section-title">Posicionamento do adubo no solo</div>
+          <div className="step-section-title"><span className="help-section-title">Posicionamento do adubo no solo <HelpIcon helpKey="placement_mode" /></span></div>
           <div className="seg-grid" role="radiogroup" aria-label="Posicionamento do adubo no solo" style={{ marginTop: 10 }}>
             {PLACEMENTS.map((p) => (
               <label key={p.value} className={`seg-option${placement === p.value ? " selected" : ""}`}>
@@ -426,25 +432,25 @@ export default function StepNutrients(props: Props) {
           </div>
 
           <div className="form-row" style={{ marginTop: 12 }}>
-            <Field label="Dia da aplicação">
+            <Field label="Dia da aplicação" helpKey="app_day">
               <input value={appDay} onChange={(e) => setAppDay(e.target.value)} inputMode="decimal" />
             </Field>
             {placement === "custom" && (
               <>
-                <Field label="De (profundidade inicial) [cm]">
+                <Field label="De (profundidade inicial) [cm]" helpKey="z_top">
                   <input value={zTop} onChange={(e) => setZTop(e.target.value)} inputMode="decimal" />
                 </Field>
-                <Field label="Até (profundidade final) [cm]">
+                <Field label="Até (profundidade final) [cm]" helpKey="z_bottom">
                   <input value={zBottom} onChange={(e) => setZBottom(e.target.value)} inputMode="decimal" />
                 </Field>
               </>
             )}
             {placement === "fertigation" && (
               <>
-                <Field label="Concentração da Solução Injetada C₀ [mg/L]">
+                <Field label="Concentração da Solução Injetada C₀ [mg/L]" helpKey="fert_c0">
                   <input value={c0} onChange={(e) => setC0(e.target.value)} inputMode="decimal" />
                 </Field>
-                <Field label="Duração da Injeção [dias]">
+                <Field label="Duração da Injeção [dias]" helpKey="fert_pulse">
                   <input value={pulse} onChange={(e) => setPulse(e.target.value)} inputMode="decimal" disabled={fertContinuous} />
                 </Field>
                 <div className="field fixed">
