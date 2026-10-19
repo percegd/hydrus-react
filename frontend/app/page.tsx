@@ -236,7 +236,9 @@ export default function Home() {
         analysis_start_day = Math.round(num(analysisStart, 1));
         analysis_end_day = Math.round(num(analysisEnd, 365));
         const raw = String(printDays).trim();
-        if (raw) {
+        if (!raw) {
+          print_days = [];
+        } else {
           print_days = raw.split(/[\s;,]+/).filter(Boolean).map((t) => Number(t.replace(",", ".")));
           if (print_days.some((v) => !Number.isFinite(v) || v < 0)) throw new Error("Dias de leitura inválidos (só números ≥ 0).");
         }

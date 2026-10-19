@@ -233,8 +233,8 @@ export default function StepWater(props: Props) {
       {rainMode === "upload" && (
         <>
           <div className="form-row" style={{ marginTop: 12 }}>
-            <label className="field">Carregar planilha (.xlsx, .csv)
-              <input type="file" accept=".xlsx,.csv" onChange={handleFile} disabled={uploading} />
+            <label className="field">Carregar planilha (.xlsx, .xls, .csv)
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} disabled={uploading} />
             </label>
             <span style={{ fontSize: 12, alignSelf: "end" }}>
               <button type="button" className="btn" onClick={downloadExample} disabled={!exampleCsv}>

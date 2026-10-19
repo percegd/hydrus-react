@@ -179,7 +179,7 @@ def climate_example() -> dict:
 
 @app.post("/climate/parse")
 async def climate_parse(file: UploadFile = File(...)) -> dict:
-    """Lê planilha climática (.xlsx/.csv, máx. 2 MB) -> 365 linhas.
+    """Lê planilha climática (.xlsx/.xls/.csv, máx. 2 MB) -> 365 linhas.
 
     Porta handle_climate_upload do Gradio; erros viram 422 com as mensagens
     do Gradio ("Erro ao ler arquivo: ...").
@@ -189,7 +189,7 @@ async def climate_parse(file: UploadFile = File(...)) -> dict:
     if not (lname.endswith(".xlsx") or lname.endswith(".xls") or lname.endswith(".csv")):
         raise HTTPException(
             status_code=422,
-            detail=[{"field": "file", "message": "Formato não suportado. Envie .xlsx ou .csv."}],
+            detail=[{"field": "file", "message": "Formato não suportado. Envie .xlsx, .xls ou .csv."}],
         )
     try:
         content = await file.read()
