@@ -12,6 +12,8 @@ class SoluteInput(BaseModel):
     kd: float = Field(ge=0, examples=[0.45])
     initial_residual_mg_dm3: float = Field(default=0.0, ge=0)
     dispersivity_cm: float = Field(default=20.0, gt=0)
+    release_type: str = Field(default="immediate", examples=["immediate"])
+    release_days: float = Field(default=60.0, gt=0)
 
 
 class SimulateRequest(BaseModel):
@@ -21,9 +23,16 @@ class SimulateRequest(BaseModel):
     root_depth_cm: Optional[float] = Field(default=None, gt=0)
     total_days: float = Field(default=30.0, gt=0, le=730)
     rain_mm: float = Field(default=100.0, ge=0)
+    rain_series: Optional[list[float]] = Field(
+        default=None, description="Chuva diária em mm; se informada, define total_days"
+    )
     initial_moisture_pct: float = Field(default=20.0, ge=0, le=100)
     et0_mm_day: float = Field(default=4.0, ge=0)
     solutes: list[SoluteInput] = Field(min_length=1)
+
+
+class JobCreated(BaseModel):
+    job_id: str
 
 
 class SoluteBalance(BaseModel):
@@ -41,3 +50,11 @@ class SimulateResponse(BaseModel):
     drainage_mm: float
     solutes: list[SoluteBalance]
     plot_png_base64: Optional[str] = None
+
+
+class JobStatus(BaseModel):
+    job_id: str
+    status: str  # queued | running | done | failed
+    elapsed_s: float
+    result: Optional[SimulateResponse] = None
+    error: Optional[str] = None

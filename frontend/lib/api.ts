@@ -21,3 +21,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const getSoils = () => req<Soil[]>("/soils");
 export const getCrops = () => req<Crop[]>("/crops");
 export const postSimulate = (body: unknown) => req<SimulateResponse>("/simulate", { method: "POST", body: JSON.stringify(body) });
+export type JobCreated = { job_id: string };
+export type JobStatus = { job_id: string; status: string; elapsed_s: number; result: SimulateResponse | null; error: string | null };
+export const postJob = (body: unknown) => req<JobCreated>("/jobs", { method: "POST", body: JSON.stringify(body) });
+export const getJob = (id: string) => req<JobStatus>(`/jobs/${id}`);

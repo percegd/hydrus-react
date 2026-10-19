@@ -44,7 +44,9 @@ casos curtos (séries anuais vão para fila + progresso na fase 2).
 ## Roadmap
 
 - [x] Fase 0 — scaffold: pacote, API mínima, página funcional
-- [ ] Fase 1 — jobs assíncronos (séries 365 d) + progresso via websocket
-- [ ] Fase 2 — wizard completo (solutos, série climática, fertirrigação) + Plotly
-- [ ] Fase 3 — paridade com Gradio (mesmos números) + Excel/PDF
+- [x] Fase 1 — jobs assíncronos (`POST /jobs` + polling) e wizard (solo/cultura,
+  tabela de solutos, lâmina uniforme ou série diária colável)
+- [ ] Fase 2 — Plotly interativo, fertirrigação/liberação controlada na API,
+  ET0 por série, Excel para download
+- [ ] Fase 3 — paridade numérica com Gradio (bateria de comparação) + PDF
 - [ ] Fase 4 — deploy Fly.io gru (SP) + auth
