@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: hydrus-core
+Version: 0.1.0
+Summary: Núcleo físico 1D: fluxo de água (Richards) e transporte de solutos
+Requires-Python: >=3.11
+Requires-Dist: numpy==1.26.4
+Requires-Dist: pandas==2.1.4
+Requires-Dist: matplotlib==3.8.2
+Requires-Dist: scipy==1.11.4
+Requires-Dist: openpyxl==3.1.5
+Requires-Dist: Pillow==10.2.0
+Requires-Dist: markdown==3.5.1
+Requires-Dist: rosetta-soil==0.3.2; python_version >= "3.11"

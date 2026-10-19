@@ -1,0 +1,19 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8001:8000"
+  web:
+    image: node:20-slim
+    working_dir: /web
+    volumes:
+      - ./frontend:/web
+    ports:
+      - "3000:3000"
+    environment:
+      HYDRUS_API_URL: http://api:8000
+    command: sh -c "npm install --no-audit --no-fund && npm run dev -- --hostname 0.0.0.0 --port 3000"
+    depends_on:
+      - api

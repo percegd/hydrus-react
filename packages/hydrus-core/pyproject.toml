@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hydrus-core"
+version = "0.1.0"
+description = "Núcleo físico 1D: fluxo de água (Richards) e transporte de solutos"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy==1.26.4",
+    "pandas==2.1.4",
+    "matplotlib==3.8.2",
+    "scipy==1.11.4",
+    "openpyxl==3.1.5",
+    "Pillow==10.2.0",
+    "markdown==3.5.1",
+    'rosetta-soil==0.3.2; python_version >= "3.11"',
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hydrus_core*"]
