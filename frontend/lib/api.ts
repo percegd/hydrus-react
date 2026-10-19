@@ -10,7 +10,7 @@ export type SoluteBalance = {
   uptaken_pct: number;
   peak_depth_cm: number | null;
 };
-export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null };
+export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, { headers: { "Content-Type": "application/json" }, ...init });

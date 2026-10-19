@@ -1,5 +1,6 @@
 """API Hydrus — FastAPI fina sobre o hydrus-core."""
 
+import tempfile
 import threading
 import time
 import uuid
@@ -7,12 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from hydrus_core.crop import CROP_DATABASE
 from hydrus_core.soil_physics import SOIL_DATABASE
 
 from .schemas import JobCreated, JobStatus, SimulateRequest, SimulateResponse
-from .service import run_simulation
+from .service import execute_job, run_simulation
 
 app = FastAPI(title="Hydrus API", version="0.1.0")
 
@@ -26,15 +28,18 @@ app.add_middleware(
 _pool = ThreadPoolExecutor(max_workers=2)
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
+_jobs_root = tempfile.mkdtemp(prefix="hydrus-jobs-")
 
 
 def _execute(job_id: str, req: SimulateRequest) -> None:
+    import os
+
     with _jobs_lock:
         _jobs[job_id]["status"] = "running"
     try:
-        result = run_simulation(req)
+        resp, excel_path, _report = execute_job(req, os.path.join(_jobs_root, job_id))
         with _jobs_lock:
-            _jobs[job_id].update(status="done", result=result)
+            _jobs[job_id].update(status="done", result=resp, excel_path=excel_path)
     except Exception as exc:  # noqa: BLE001 — erro vira status consultável
         with _jobs_lock:
             _jobs[job_id].update(status="failed", error=str(exc))
@@ -90,7 +95,34 @@ def job_status(job_id: str) -> JobStatus:
         elapsed_s=round(time.time() - job["t0"], 1),
         result=job["result"],
         error=job["error"],
+        has_excel=bool(job.get("excel_path")),
+        has_report=job["status"] == "done",
     )
+
+
+@app.get("/jobs/{job_id}/excel")
+def job_excel(job_id: str):
+    import os
+
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    path = (job or {}).get("excel_path")
+    if not job or job["status"] != "done" or not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="excel indisponível")
+    return FileResponse(path, filename=f"perfil_{job_id}.xlsx")
+
+
+@app.get("/jobs/{job_id}/report")
+def job_report(job_id: str) -> dict:
+    import os
+
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job or job["status"] != "done":
+        raise HTTPException(status_code=404, detail="laudo indisponível")
+    md_path = os.path.join(_jobs_root, job_id, "laudo.md")
+    with open(md_path, encoding="utf-8") as f:
+        return {"report_markdown": f.read()}
 
 
 def _validate(req: SimulateRequest) -> None:
@@ -100,3 +132,9 @@ def _validate(req: SimulateRequest) -> None:
         raise HTTPException(status_code=422, detail=f"crop_key desconhecido: {req.crop_key}")
     if req.rain_series and len(req.rain_series) > 730:
         raise HTTPException(status_code=422, detail="rain_series com mais de 730 dias")
+    _days_eff = len(req.rain_series) if req.rain_series else int(req.total_days)
+    if req.et0_series and len(req.et0_series) != _days_eff:
+        raise HTTPException(
+            status_code=422,
+            detail=f"et0_series com {len(req.et0_series)} dias, esperado {_days_eff} (igual aos dias simulados)",
+        )

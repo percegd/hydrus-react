@@ -16,6 +16,15 @@ class SoluteInput(BaseModel):
     release_days: float = Field(default=60.0, gt=0)
 
 
+class PlacementInput(BaseModel):
+    mode: str = Field(default="surface", examples=["surface"])
+    z_top_cm: float = Field(default=0.0, ge=0)
+    z_bottom_cm: float = Field(default=2.0, ge=0)
+    fertigation_c0_mg_l: float = Field(default=20.0, ge=0)
+    fertigation_pulse_days: float = Field(default=0.0, ge=0)
+    application_day: float = Field(default=0.0, ge=0)
+
+
 class SimulateRequest(BaseModel):
     soil_key: str = Field(examples=["latossolo_medio"])
     crop_key: Optional[str] = Field(default="soja", examples=["soja"])
@@ -28,6 +37,8 @@ class SimulateRequest(BaseModel):
     )
     initial_moisture_pct: float = Field(default=20.0, ge=0, le=100)
     et0_mm_day: float = Field(default=4.0, ge=0)
+    et0_series: Optional[list[float]] = Field(default=None, description="ET0 diária em mm")
+    placement: PlacementInput = Field(default_factory=PlacementInput)
     solutes: list[SoluteInput] = Field(min_length=1)
 
 
@@ -50,6 +61,7 @@ class SimulateResponse(BaseModel):
     drainage_mm: float
     solutes: list[SoluteBalance]
     plot_png_base64: Optional[str] = None
+    profiles: Optional[dict] = None
 
 
 class JobStatus(BaseModel):
@@ -58,3 +70,5 @@ class JobStatus(BaseModel):
     elapsed_s: float
     result: Optional[SimulateResponse] = None
     error: Optional[str] = None
+    has_excel: bool = False
+    has_report: bool = False

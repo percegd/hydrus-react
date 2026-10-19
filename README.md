@@ -46,7 +46,8 @@ casos curtos (séries anuais vão para fila + progresso na fase 2).
 - [x] Fase 0 — scaffold: pacote, API mínima, página funcional
 - [x] Fase 1 — jobs assíncronos (`POST /jobs` + polling) e wizard (solo/cultura,
   tabela de solutos, lâmina uniforme ou série diária colável)
-- [ ] Fase 2 — Plotly interativo, fertirrigação/liberação controlada na API,
-  ET0 por série, Excel para download
-- [ ] Fase 3 — paridade numérica com Gradio (bateria de comparação) + PDF
-- [ ] Fase 4 — deploy Fly.io gru (SP) + auth
+- [x] Fase 2 — Plotly interativo, fertirrigação/liberação/ET0 na API,
+  Excel + laudo por job, wizard de manejo (superfície/sulco/fertirrigação)
+- [x] Fase 3 — paridade numérica (`tests/test_parity.py` vs legado)
+- [ ] Fase 4 — deploy Fly.io gru (SP) + auth (pendentes: conta Fly, provedor de login)
+  (PDF detalhado ficou de fora: laudo markdown + Excel cobrem o uso)
