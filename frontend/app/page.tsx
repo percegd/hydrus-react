@@ -160,7 +160,7 @@ export default function Home() {
             setJobState(st.status);
           }
         } catch (e) {
-          if (e instanceof ApiError && e.status === 404) {
+          if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
             if (timer.current) clearInterval(timer.current);
             setJobState("expired");
             setFieldErrors([]);
@@ -176,10 +176,47 @@ export default function Home() {
   }
 
   async function loadReport() {
+    setError("");
     try {
       const r = await fetch(`/api/jobs/${jobId}/report`);
+      if (r.status === 410 || r.status === 404) {
+        setFieldErrors([]);
+        setError("Job expirou; rode a simulação novamente.");
+        return;
+      }
+      if (!r.ok) {
+        setFieldErrors([]);
+        setError(`Falha ao carregar laudo (HTTP ${r.status}).`);
+        return;
+      }
       const j = await r.json();
       setReport(j.report_markdown as string);
+    } catch (e) { showApiError(e); }
+  }
+
+  async function downloadExcel() {
+    setError("");
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/excel`);
+      if (r.status === 410 || r.status === 404) {
+        setFieldErrors([]);
+        setError("Job expirou; rode a simulação novamente.");
+        return;
+      }
+      if (!r.ok) {
+        setFieldErrors([]);
+        setError(`Falha ao baixar Excel (HTTP ${r.status}).`);
+        return;
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `perfil_${jobId}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     } catch (e) { showApiError(e); }
   }
 
@@ -327,7 +364,7 @@ export default function Home() {
               <button className="btn" onClick={() => { if (timer.current) clearInterval(timer.current); setStep(2); setResult(null); setReport(""); }}>← Editar</button>
               {jobState === "done" && (
                 <>
-                  <a href={`/api/jobs/${jobId}/excel`}><button className="btn">Baixar Excel</button></a>
+                  <button className="btn" onClick={downloadExcel}>Baixar Excel</button>
                   <button className="btn" onClick={loadReport}>Ver laudo</button>
                 </>
               )}
