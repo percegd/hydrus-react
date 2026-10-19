@@ -25,11 +25,13 @@ function loadHelp(): Promise<HelpEntry[]> {
 export default function HelpIcon({ helpKey }: { helpKey: string }) {
   const [open, setOpen] = useState(false);
   const [entry, setEntry] = useState<HelpEntry | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    if (!open || entry) return;
+    if (!open || loaded) return;
     loadHelp().then((entries) => {
       setEntry(entries.find((e) => e.key === helpKey) ?? null);
+      setLoaded(true);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -70,13 +72,15 @@ export default function HelpIcon({ helpKey }: { helpKey: string }) {
                     <>
                       {entry.title} <span className="help-modal-unit">{entry.unit}</span>
                     </>
+                  ) : loaded ? (
+                    "Ajuda indisponível no momento"
                   ) : (
                     "Carregando ajuda…"
                   )}
                 </h3>
               </div>
             </div>
-            {entry && (
+            {entry ? (
               <div className="help-modal-body">
                 <p>
                   <b>O que é:</b> {entry.what}
@@ -85,6 +89,12 @@ export default function HelpIcon({ helpKey }: { helpKey: string }) {
                   <b>Na simulação:</b> {entry.simulation}
                 </p>
               </div>
+            ) : (
+              loaded && (
+                <div className="help-modal-body">
+                  <p>Não foi possível carregar o texto de ajuda. Tente novamente mais tarde.</p>
+                </div>
+              )
             )}
             <div className="modal-actions">
               <button

@@ -99,6 +99,7 @@ export default function Results(props: Props) {
   const [solute, setSolute] = useState<string>("todos");
 
   useEffect(() => {
+    setTab("resultados");
     setGroup("todos");
     setSolute("todos");
   }, [result]);

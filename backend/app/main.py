@@ -118,6 +118,16 @@ def _cleanup_jobs() -> None:
         shutil.rmtree(os.path.join(_jobs_root, job_id), ignore_errors=True)
 
 
+def _bad_job_id(job_id: str) -> bool:
+    """Rejeita job_id com separador de caminho (defesa em profundidade).
+
+    Os ids reais são hex de 12 chars; qualquer "/" ou ".." nunca é válido.
+    O lookup no dict _jobs já barraria traversal, mas o guard impede que o
+    job_id chegue a os.path.join antes da validação.
+    """
+    return not job_id or "/" in job_id or "\\" in job_id or ".." in job_id
+
+
 def _execute(job_id: str, req: SimulateRequest) -> None:
     import os
 
@@ -442,6 +452,8 @@ def create_job(req: SimulateRequest) -> JobCreated:
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
 def job_status(job_id: str) -> JobStatus:
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="job desconhecido ou expirado")
     _cleanup_jobs()
     now = time.time()
     with _jobs_lock:
@@ -471,6 +483,8 @@ def job_status(job_id: str) -> JobStatus:
 def job_excel(job_id: str):
     import os
 
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
     _cleanup_jobs()
     with _jobs_lock:
         job = _jobs.get(job_id)
@@ -500,6 +514,8 @@ def job_excel(job_id: str):
 def job_report(job_id: str) -> dict:
     import os
 
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
     _cleanup_jobs()
     with _jobs_lock:
         job = _jobs.get(job_id)
@@ -545,6 +561,8 @@ def job_steps(job_id: str) -> StepsResponse:
     """Passo a passo da simulação (memória de cálculo), como o Gradio monta."""
     import os
 
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
     _cleanup_jobs()
     with _jobs_lock:
         job = _jobs.get(job_id)
@@ -572,6 +590,8 @@ def job_graphs_zip(job_id: str):
 
     from fastapi.responses import FileResponse
 
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
     _cleanup_jobs()
     with _jobs_lock:
         job = _jobs.get(job_id)
