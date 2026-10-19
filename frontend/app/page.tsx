@@ -71,6 +71,7 @@ export default function Home() {
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
   const [result, setResult] = useState<SimulateResponse | null>(null);
   const [report, setReport] = useState("");
+  const [appliedMm, setAppliedMm] = useState<number | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -163,6 +164,7 @@ export default function Home() {
     setFieldErrors([]);
     setResult(null);
     setReport("");
+    setAppliedMm(null);
     setStep(1);
   }
 
@@ -177,6 +179,7 @@ export default function Home() {
     setFieldErrors([]);
     setResult(null);
     setReport("");
+    setAppliedMm(null);
     let rain_series: number[] | undefined;
     let total_days = num(days, 7);
     let et0_series: number[] | undefined;
@@ -199,6 +202,8 @@ export default function Home() {
         release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
       }));
     if (!solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
+    const appliedTotal = rain_series ? rain_series.reduce((a, b) => a + b, 0) : num(rainMm, 0);
+    setAppliedMm(appliedTotal);
     setStep(4);
     setJobState("queued");
     // Posicionamento: faixas do Gradio (superfície 0–2, sulco 5–10, personalizada, fertirrigação).
@@ -259,7 +264,7 @@ export default function Home() {
             if (timer.current) clearInterval(timer.current);
             setJobState("expired");
             setFieldErrors([]);
-            setError("Job expirou ou foi perdido; rode a simulação novamente.");
+            setError("A simulação expirou; rode novamente.");
             return;
           }
           pollErrors += 1;
@@ -419,6 +424,7 @@ export default function Home() {
                 fieldErrors={fieldErrors}
                 cropName={cropName}
                 rootDepth={rootDepth}
+                appliedMm={appliedMm}
                 onEdit={() => { if (timer.current) clearInterval(timer.current); setStep(3); setResult(null); setReport(""); }}
                 onDownloadExcel={downloadExcel}
                 onLoadReport={loadReport}

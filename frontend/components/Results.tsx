@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import ProfileChart from "./ProfileChart";
 import type { SimulateResponse } from "../lib/api";
 
@@ -21,6 +24,7 @@ type Props = {
   fieldErrors: string[];
   cropName: string;
   rootDepth: number;
+  appliedMm: number | null;
   onEdit: () => void;
   onDownloadExcel: () => void;
   onLoadReport: () => void;
@@ -28,7 +32,28 @@ type Props = {
 };
 
 export default function Results(props: Props) {
-  const { jobState, elapsed, result, report, error, fieldErrors, cropName, rootDepth, onEdit, onDownloadExcel, onLoadReport, onNewSimulation } = props;
+  const { jobState, elapsed, result, report, error, fieldErrors, cropName, rootDepth, appliedMm, onEdit, onDownloadExcel, onLoadReport, onNewSimulation } = props;
+
+  const gallery: Record<string, string> = (() => {
+    if (result?.plots_png_base64 && Object.keys(result.plots_png_base64).length > 0) {
+      return result.plots_png_base64;
+    }
+    if (result?.plot_png_base64) {
+      const fallbackSym = result.solutes[0]?.symbol ?? "perfil";
+      return { [fallbackSym]: result.plot_png_base64 };
+    }
+    return {};
+  })();
+  const symbols = Object.keys(gallery);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelected(symbols.length > 0 ? symbols[0] : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
+
+  const selectedB64 = selected ? gallery[selected] : null;
+
   return (
     <>
       <div className="btn-row" style={{ marginTop: 0, marginBottom: 12 }}>
@@ -52,9 +77,14 @@ export default function Results(props: Props) {
         <>
           <div className="metrics-card-grid">
             <div className="metric-card">
+              <div className="metric-icon">💧</div>
+              <div className="metric-value">{appliedMm != null ? `${appliedMm.toFixed(0)} mm` : "—"}</div>
+              <div className="metric-label">Lâmina Aplicada</div>
+            </div>
+            <div className="metric-card">
               <div className="metric-icon">↓</div>
               <div className="metric-value">{result.drainage_mm.toFixed(1)} mm</div>
-              <div className="metric-label">Drenagem no período</div>
+              <div className="metric-label">Drenagem no Fundo</div>
               <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
             </div>
             {result.solutes.map((s) => {
@@ -84,21 +114,47 @@ export default function Results(props: Props) {
               <ProfileChart profiles={result.profiles as never} rootDepth={rootDepth} />
             </div>
           )}
-          {result.plots_png_base64 && Object.keys(result.plots_png_base64).length > 0 ? (
-            Object.entries(result.plots_png_base64).map(([sym, b64]) => (
-              <div key={sym} className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
-                <div className="muted" style={{ marginBottom: 8 }}>Perfil — {sym}</div>
-                <img src={`data:image/png;base64,${b64}`} alt={`Perfil ${sym}`} style={{ width: "100%" }} />
+          {symbols.length > 0 && (
+            <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
+              <div className="section-title">Por Soluto</div>
+              <div className="btn-row" style={{ marginTop: 0, marginBottom: 12 }} role="tablist" aria-label="Gráficos por soluto">
+                {symbols.map((sym) => (
+                  <button
+                    key={sym}
+                    role="tab"
+                    aria-selected={selected === sym}
+                    className={selected === sym ? "btn btn-primary" : "btn"}
+                    onClick={() => setSelected(sym)}
+                  >
+                    {sym}
+                  </button>
+                ))}
               </div>
-            ))
-          ) : (
-            result.plot_png_base64 && (
-              <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
-                <img src={`data:image/png;base64,${result.plot_png_base64}`} alt="Perfil" style={{ width: "100%" }} />
-              </div>
-            )
+              {selected && selectedB64 && (
+                <div>
+                  <div className="muted" style={{ marginBottom: 8 }}>Perfil — {selected}</div>
+                  <img src={`data:image/png;base64,${selectedB64}`} alt={`Perfil ${selected}`} style={{ width: "100%" }} />
+                  <div className="btn-row">
+                    <a
+                      className="btn"
+                      href={`data:image/png;base64,${selectedB64}`}
+                      download={`perfil_${selected}.png`}
+                    >
+                      Baixar PNG
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
-          {report && <div className="wizard-step-box" style={{ padding: 16 }}><pre className="laudo-pre">{report}</pre></div>}
+          {report && (
+            <div className="wizard-step-box" style={{ padding: 16 }}>
+              <div className="section-title">Laudo</div>
+              <div className="laudo-md">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
+              </div>
+            </div>
+          )}
         </>
       )}
     </>
