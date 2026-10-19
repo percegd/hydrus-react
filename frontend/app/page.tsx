@@ -2,10 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import ProfileChart from "../components/ProfileChart";
+import WizardProgress from "../components/WizardProgress";
 import { getCrops, getJob, getSoils, postJob, type Crop, type SimulateResponse, type Soil } from "../lib/api";
 
-const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 16 };
-const input: React.CSSProperties = { padding: 6, border: "1px solid #cbd5e1", borderRadius: 6, width: 90 };
+const ACCENTS: Record<string, [string, string]> = {
+  N: ["#fff7ed", "#c2410c"],
+  K: ["#f5f3ff", "#6d28d9"],
+  P: ["#f7fee7", "#4d7c0f"],
+  S: ["#fefce8", "#a16207"],
+  Ca: ["#ecfdf5", "#047857"],
+  Mg: ["#fdf2f8", "#be185d"],
+};
 
 const SPECIES = [
   { symbol: "N", name: "Nitrato", kd: 0 },
@@ -17,6 +24,12 @@ const SPECIES = [
 ];
 
 type Row = { symbol: string; name: string; dose: string; kd: string; rel: string; relDays: string };
+
+const STEP_TITLES = [
+  { title: "Passo 1 de 3: Solo, cultura e água", sub: "Defina o cenário físico da simulação." },
+  { title: "Passo 2 de 3: Nutrientes e manejo", sub: "Solutos, doses, liberação e aplicação." },
+  { title: "Passo 3 de 3: Resultados", sub: "Balanço de massa, perfil e laudo." },
+];
 
 export default function Home() {
   const [step, setStep] = useState(1);
@@ -70,13 +83,14 @@ export default function Home() {
     setReport("");
     let rain_series: number[] | undefined;
     let total_days = parseFloat(days) || 30;
+    let et0_series: number[] | undefined;
     try {
       if (rainMode === "series") {
         rain_series = parseSeries(series);
         if (!rain_series?.length) { setError("Cole a série diária de chuva."); return; }
         total_days = rain_series.length;
       }
-      var et0_series = parseSeries(et0Series);
+      et0_series = parseSeries(et0Series);
     } catch (e) { setError(String((e as Error).message || e)); return; }
     const solutes = rows
       .filter((r) => parseFloat(r.dose) > 0)
@@ -133,133 +147,195 @@ export default function Home() {
   }
 
   const rootDepth = crops.find((c) => c.key === crop)?.root_depth_cm ?? 35;
+  const cropName = crops.find((c) => c.key === crop)?.name ?? crop;
 
   return (
-    <main style={{ maxWidth: 960, margin: "0 auto", padding: 24 }}>
-      <h1>Hydrus 1D <span style={{ fontWeight: 400, fontSize: 16 }}>(fase 2 — manejo + Plotly)</span></h1>
-      <p>Passo {step} de 3</p>
+    <div className="hydrus-container">
+      <header className="app-header">
+        <h1 className="app-title"><span className="leaf">🌱</span> Simulação e Física de Solos</h1>
+        <div className="app-subtitle">Simulação de transporte de água e nutrientes no perfil do solo</div>
+      </header>
 
-      {step === 1 && (
-        <section style={{ ...card, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
-          <label>Solo<br />
-            <select value={soil} onChange={(e) => setSoil(e.target.value)}>
-              {soils.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
-            </select>
-          </label>
-          <label>Cultura<br />
-            <select value={crop} onChange={(e) => setCrop(e.target.value)}>
-              {crops.map((c) => <option key={c.key} value={c.key}>{c.name} (raiz {c.root_depth_cm} cm)</option>)}
-            </select>
-          </label>
-          <label>Dias<br /><input style={input} value={days} onChange={(e) => setDays(e.target.value)} /></label>
-          <label>Chuva<br />
-            <select value={rainMode} onChange={(e) => setRainMode(e.target.value as "uniform" | "series")}>
-              <option value="uniform">Lâmina uniforme</option>
-              <option value="series">Série diária</option>
-            </select>
-          </label>
-          {rainMode === "uniform" ? (
-            <label>Total (mm)<br /><input style={input} value={rainMm} onChange={(e) => setRainMm(e.target.value)} /></label>
-          ) : (
-            <label style={{ flexBasis: "100%" }}>Série diária de chuva (mm)<br />
-              <textarea rows={3} style={{ width: "100%" }} value={series} onChange={(e) => setSeries(e.target.value)} placeholder="0 0 12.5 0 3 ..." />
-            </label>
-          )}
-          <label style={{ flexBasis: "100%" }}>Série diária de ET0, opcional (mm/dia)<br />
-            <textarea rows={2} style={{ width: "100%" }} value={et0Series} onChange={(e) => setEt0Series(e.target.value)} placeholder="4 4.1 3.8 ..." />
-          </label>
-          <button onClick={() => setStep(2)} style={{ padding: "8px 20px" }}>Avançar</button>
-        </section>
-      )}
+      <WizardProgress current={step} />
 
-      {step === 2 && (
-        <section style={{ display: "grid", gap: 16 }}>
-          <div style={card}>
-            {rows.map((r, i) => (
-              <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <select value={r.symbol} onChange={(e) => {
-                  const sp = SPECIES.find((s) => s.symbol === e.target.value)!;
-                  setRow(i, { symbol: sp.symbol, name: sp.name, kd: String(sp.kd) });
-                }}>
-                  {SPECIES.map((s) => <option key={s.symbol} value={s.symbol}>{s.symbol} · {s.name}</option>)}
+      <div className="wizard-step-box">
+        <div className="wizard-question-header">
+          <h2 className="wizard-question-title">{STEP_TITLES[step - 1].title}</h2>
+          <p className="wizard-question-subtitle">{STEP_TITLES[step - 1].sub}</p>
+        </div>
+
+        {step === 1 && (
+          <>
+            <div className="form-row">
+              <label className="field">Solo
+                <select value={soil} onChange={(e) => setSoil(e.target.value)}>
+                  {soils.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
                 </select>
-                <label>Dose <input style={input} value={r.dose} onChange={(e) => setRow(i, { dose: e.target.value })} /></label>
-                <label>Kd <input style={input} value={r.kd} onChange={(e) => setRow(i, { kd: e.target.value })} /></label>
-                <label>Liberação
+              </label>
+              <label className="field">Cultura
+                <select value={crop} onChange={(e) => setCrop(e.target.value)}>
+                  {crops.map((c) => <option key={c.key} value={c.key}>{c.name} (raiz {c.root_depth_cm} cm)</option>)}
+                </select>
+              </label>
+              <label className="field">Dias
+                <input value={days} onChange={(e) => setDays(e.target.value)} />
+              </label>
+              <label className="field">Chuva
+                <select value={rainMode} onChange={(e) => setRainMode(e.target.value as "uniform" | "series")}>
+                  <option value="uniform">Lâmina uniforme</option>
+                  <option value="series">Série diária</option>
+                </select>
+              </label>
+              {rainMode === "uniform" && (
+                <label className="field">Total (mm)
+                  <input value={rainMm} onChange={(e) => setRainMm(e.target.value)} />
+                </label>
+              )}
+            </div>
+            {rainMode === "series" && (
+              <div className="form-row" style={{ marginTop: 12 }}>
+                <label className="field" style={{ flex: "1 1 100%" }}>Série diária de chuva (mm, separados por espaço/vírgula/linha)
+                  <textarea rows={3} value={series} onChange={(e) => setSeries(e.target.value)} placeholder="0 0 12.5 0 3 ..." />
+                </label>
+              </div>
+            )}
+            <div className="form-row" style={{ marginTop: 12 }}>
+              <label className="field" style={{ flex: "1 1 100%" }}>Série diária de ET0, opcional (mm/dia)
+                <textarea rows={2} value={et0Series} onChange={(e) => setEt0Series(e.target.value)} placeholder="4 4.1 3.8 ..." />
+              </label>
+            </div>
+            {error && <p className="error-text">{error}</p>}
+            <div className="btn-row">
+              <button className="btn btn-primary" onClick={() => setStep(2)}>Avançar</button>
+            </div>
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            {rows.map((r, i) => (
+              <div className="nutrient-row" key={i}>
+                <label className="field">Soluto
+                  <select value={r.symbol} onChange={(e) => {
+                    const sp = SPECIES.find((s) => s.symbol === e.target.value)!;
+                    setRow(i, { symbol: sp.symbol, name: sp.name, kd: String(sp.kd) });
+                  }}>
+                    {SPECIES.map((s) => <option key={s.symbol} value={s.symbol}>{s.symbol} · {s.name}</option>)}
+                  </select>
+                </label>
+                <label className="field">Dose (kg/ha)
+                  <input value={r.dose} onChange={(e) => setRow(i, { dose: e.target.value })} />
+                </label>
+                <label className="field">Kd (cm³/g)
+                  <input value={r.kd} onChange={(e) => setRow(i, { kd: e.target.value })} />
+                </label>
+                <label className="field">Liberação
                   <select value={r.rel} onChange={(e) => setRow(i, { rel: e.target.value })}>
                     <option value="immediate">Imediata</option>
                     <option value="controlled">Controlada</option>
                   </select>
                 </label>
                 {r.rel === "controlled" && (
-                  <label>Dias <input style={input} value={r.relDays} onChange={(e) => setRow(i, { relDays: e.target.value })} /></label>
+                  <label className="field">Dias
+                    <input value={r.relDays} onChange={(e) => setRow(i, { relDays: e.target.value })} />
+                  </label>
                 )}
-                <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>✕</button>
+                <button className="icon-btn" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} title="Remover">✕</button>
               </div>
             ))}
-            <button onClick={addRow}>+ soluto</button>
-          </div>
-          <div style={card}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
-              <label>Aplicação<br />
+            <button className="btn" onClick={addRow}>+ soluto</button>
+
+            <h3 className="section-title" style={{ marginTop: 20 }}>Aplicação</h3>
+            <div className="form-row">
+              <label className="field">Modo
                 <select value={placement} onChange={(e) => setPlacement(e.target.value)}>
                   <option value="surface">Superfície (0–2 cm)</option>
                   <option value="furrow">Sulco (5–10 cm)</option>
                   <option value="fertigation">Fertirrigação</option>
                 </select>
               </label>
-              <label>Dia da aplicação<br /><input style={input} value={appDay} onChange={(e) => setAppDay(e.target.value)} /></label>
+              <label className="field">Dia da aplicação
+                <input value={appDay} onChange={(e) => setAppDay(e.target.value)} />
+              </label>
               {placement === "fertigation" && (
                 <>
-                  <label>C₀ (mg/L)<br /><input style={input} value={c0} onChange={(e) => setC0(e.target.value)} /></label>
-                  <label>Pulso (dias, 0=contínuo)<br /><input style={input} value={pulse} onChange={(e) => setPulse(e.target.value)} /></label>
+                  <label className="field">C₀ (mg/L)
+                    <input value={c0} onChange={(e) => setC0(e.target.value)} />
+                  </label>
+                  <label className="field">Pulso (dias, 0=contínuo)
+                    <input value={pulse} onChange={(e) => setPulse(e.target.value)} />
+                  </label>
                 </>
               )}
             </div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setStep(1)}>Voltar</button>
-            <button onClick={run} style={{ padding: "8px 20px" }}>Calcular</button>
-          </div>
-        </section>
-      )}
+            {error && <p className="error-text">{error}</p>}
+            <div className="btn-row">
+              <button className="btn" onClick={() => setStep(1)}>Voltar</button>
+              <button className="btn btn-primary" onClick={run}>Calcular Resultados</button>
+            </div>
+          </>
+        )}
 
-      {step === 3 && (
-        <section style={{ display: "grid", gap: 16 }}>
-          <div style={card}>
-            <button onClick={() => { if (timer.current) clearInterval(timer.current); setStep(2); setResult(null); setReport(""); }}>← Editar</button>
-            <p>Status: <strong>{jobState || "—"}</strong> {jobState === "running" && <span>({elapsed}s)</span>}</p>
-            {error && <p style={{ color: "#b91c1c" }}>{error}</p>}
-            {jobState === "done" && (
-              <div style={{ display: "flex", gap: 8 }}>
-                <a href={`/api/jobs/${jobId}/excel`}><button>Baixar Excel</button></a>
-                <button onClick={loadReport}>Ver laudo</button>
-              </div>
-            )}
-          </div>
-          {result && (
-            <>
-              <div style={card}>
-                <strong>Drenagem: {result.drainage_mm.toFixed(1)} mm</strong>
-                {result.solutes.map((s) => (
-                  <div key={s.symbol} style={{ marginTop: 8 }}>
-                    <strong>{s.name} ({s.symbol})</strong> — retido {s.retained_root_pct.toFixed(1)}% ·
-                    abaixo {s.below_profile_pct.toFixed(1)}% · fundo {s.bottom_pct.toFixed(1)}% ·
-                    absorvido {s.uptaken_pct.toFixed(1)}% · pico {s.peak_depth_cm ?? "—"} cm
-                  </div>
-                ))}
-              </div>
-              {result.profiles && <div style={card}><ProfileChart profiles={result.profiles as never} rootDepth={rootDepth} /></div>}
-              {result.plot_png_base64 && (
-                <div style={card}>
-                  <img src={`data:image/png;base64,${result.plot_png_base64}`} alt="Perfil" style={{ width: "100%" }} />
-                </div>
+        {step === 3 && (
+          <>
+            <div className="btn-row" style={{ marginTop: 0, marginBottom: 12 }}>
+              <button className="btn" onClick={() => { if (timer.current) clearInterval(timer.current); setStep(2); setResult(null); setReport(""); }}>← Editar</button>
+              {jobState === "done" && (
+                <>
+                  <a href={`/api/jobs/${jobId}/excel`}><button className="btn">Baixar Excel</button></a>
+                  <button className="btn" onClick={loadReport}>Ver laudo</button>
+                </>
               )}
-              {report && <div style={{ ...card, whiteSpace: "pre-wrap", fontSize: 13 }}><pre style={{ margin: 0 }}>{report}</pre></div>}
-            </>
-          )}
-        </section>
-      )}
-    </main>
+            </div>
+            <p className="muted">Status: <strong>{jobState || "—"}</strong> {jobState === "running" && <span>({elapsed}s)</span>}</p>
+            {error && <p className="error-text">{error}</p>}
+            {result && (
+              <>
+                <div className="metrics-card-grid">
+                  <div className="metric-card">
+                    <div className="metric-icon">↓</div>
+                    <div className="metric-value">{result.drainage_mm.toFixed(1)} mm</div>
+                    <div className="metric-label">Drenagem no período</div>
+                    <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
+                  </div>
+                  {result.solutes.map((s) => {
+                    const [bg, fg] = ACCENTS[s.symbol] ?? ["#f1f5f9", "#334155"];
+                    const dose = s.dose_kg_ha;
+                    return (
+                      <div className="metric-card" key={s.symbol}>
+                        <div className="metric-nutr-head">
+                          <span className="metric-nutr-sym" style={{ background: bg, color: fg }}>{s.symbol}</span>
+                          <span className="metric-nutr-name">{s.name}</span>
+                        </div>
+                        <div className="metric-value">{s.retained_root_pct.toFixed(1)}%</div>
+                        <div className="metric-label">Retido na camada avaliada (0–{rootDepth} cm)</div>
+                        <div className="metric-sub">{(dose * s.retained_root_pct / 100).toFixed(1)} kg/ha de {dose.toFixed(0)} kg/ha aplicados</div>
+                        <div className="metric-nutr-rows">
+                          <div className="metric-nutr-row"><span>Abaixo da camada (no perfil)</span><b>{s.below_profile_pct.toFixed(1)}% · {(dose * s.below_profile_pct / 100).toFixed(1)} kg/ha</b></div>
+                          <div className="metric-nutr-row"><span>Atravessou o fundo</span><b>{s.bottom_pct.toFixed(1)}% · {(dose * s.bottom_pct / 100).toFixed(1)} kg/ha</b></div>
+                          <div className="metric-nutr-row"><span>Absorvido (passivo, sem teto nutricional)</span><b>{s.uptaken_pct.toFixed(1)}% · {(dose * s.uptaken_pct / 100).toFixed(1)} kg/ha</b></div>
+                          <div className="metric-nutr-row"><span>Pico no perfil</span><b>{s.peak_depth_cm ?? "indefinido"} cm</b></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {result.profiles && (
+                  <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
+                    <ProfileChart profiles={result.profiles as never} rootDepth={rootDepth} />
+                  </div>
+                )}
+                {result.plot_png_base64 && (
+                  <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
+                    <img src={`data:image/png;base64,${result.plot_png_base64}`} alt="Perfil" style={{ width: "100%" }} />
+                  </div>
+                )}
+                {report && <div className="wizard-step-box" style={{ padding: 16 }}><pre className="laudo-pre">{report}</pre></div>}
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
