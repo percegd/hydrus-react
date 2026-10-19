@@ -144,6 +144,7 @@ body::before {
 .water-only-note ul { margin: 8px 0 0 0; padding-left: 20px; }
 .section-title { font-size: 17px; font-weight: 700; color: var(--text); margin: 0 0 12px 0; }
 .error-text { color: #b91c1c; font-size: 14px; }
+.hint-text { color: var(--text-2); font-size: 12.5px; }
 .muted { color: var(--text-2); font-size: 14px; }
 .results-grid { display: grid; gap: 16px; }
 .laudo-pre { margin: 0; white-space: pre-wrap; font-size: 13px; font-family: inherit; color: var(--text); }

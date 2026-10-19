@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import Results from "../components/Results";
 import StepIntro from "../components/StepIntro";
-import StepNutrients, { DEFAULT_ROWS, SPECIES, defaultDispForDepth, type NutrientRow } from "../components/StepNutrients";
+import StepNutrients, { DEFAULT_ROWS, NUTRIENT_SYMBOLS, SPECIES, defaultDispForDepth, type NutrientRow } from "../components/StepNutrients";
 import StepSoil from "../components/StepSoil";
 import StepWater, { emptyRows, type RainMode } from "../components/StepWater";
 import WizardProgress from "../components/WizardProgress";
-import { ApiError, getCrops, getExcelBlob, getJob, getReport, getSoils, postJob, type ClimateRow, type Crop, type SimulateResponse, type Soil } from "../lib/api";
+import { ApiError, getCrops, getExcelBlob, getJob, getKd, getReport, getSoils, postJob, postRosetta, type ClimateRow, type Crop, type SimulateResponse, type Soil } from "../lib/api";
 
 const STEP_TITLES = [
   { title: "Apresentação", sub: "Visão geral da plataforma de simulação." },
@@ -19,6 +19,15 @@ const STEP_TITLES = [
 
 const DEFAULTS = {
   soil: "latossolo_medio",
+  isCustomSoil: false,
+  sandPct: "60",
+  clayPct: "25",
+  thetaR: "0.1",
+  thetaS: "0.43",
+  vgAlpha: "0.03",
+  vgN: "1.65",
+  ks: "80",
+  bulk: "1.3",
   cropMode: "sem",
   crop: "soja",
   depthCm: "200",
@@ -51,6 +60,17 @@ export default function Home() {
   const [soils, setSoils] = useState<Soil[]>([]);
   const [crops, setCrops] = useState<Crop[]>([]);
   const [soil, setSoil] = useState(DEFAULTS.soil);
+  const [isCustomSoil, setIsCustomSoil] = useState(DEFAULTS.isCustomSoil);
+  const [sandPct, setSandPct] = useState(DEFAULTS.sandPct);
+  const [clayPct, setClayPct] = useState(DEFAULTS.clayPct);
+  const [thetaR, setThetaR] = useState(DEFAULTS.thetaR);
+  const [thetaS, setThetaS] = useState(DEFAULTS.thetaS);
+  const [vgAlpha, setVgAlpha] = useState(DEFAULTS.vgAlpha);
+  const [vgN, setVgN] = useState(DEFAULTS.vgN);
+  const [ks, setKs] = useState(DEFAULTS.ks);
+  const [bulk, setBulk] = useState(DEFAULTS.bulk);
+  const [rosettaNote, setRosettaNote] = useState("");
+  const [kdInfo, setKdInfo] = useState<Record<string, { kd: string; citation: string }>>({});
   const [cropMode, setCropModeState] = useState(DEFAULTS.cropMode);
   const [crop, setCrop] = useState(DEFAULTS.crop);
   const [depthCm, setDepthCm] = useState(DEFAULTS.depthCm);
@@ -109,6 +129,77 @@ export default function Home() {
     }
   }
 
+  // Solo personalizado: areia/argila -> Rosetta preenche θr θs α n Ks ρb (Gradio).
+  useEffect(() => {
+    if (!isCustomSoil) {
+      setRosettaNote("");
+      return;
+    }
+    const sand = parseFloat(sandPct.replace(",", "."));
+    const clay = parseFloat(clayPct.replace(",", "."));
+    if (!Number.isFinite(sand) || !Number.isFinite(clay) || sand + clay > 100) return;
+    const t = setTimeout(() => {
+      const bulkNum = parseFloat(bulk.replace(",", "."));
+      postRosetta({ sand_pct: sand, clay_pct: clay, bulk_density: Number.isFinite(bulkNum) ? bulkNum : undefined })
+        .then((r) => {
+          setThetaR(String(r.theta_r));
+          setThetaS(String(r.theta_s));
+          setVgAlpha(String(r.alpha));
+          setVgN(String(r.n));
+          setKs(String(r.ks));
+          setBulk(String(r.bulk_density));
+          setRosettaNote(`Silte: ${r.silt_pct}% • Classe: ${r.texture} • Areia (${sand}%) + Argila (${clay}%) + Silte (${r.silt_pct}%) = 100%`);
+        })
+        .catch(() => setRosettaNote("Rosetta indisponível para esta granulometria."));
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCustomSoil, sandPct, clayPct]);
+
+  // Kd de literatura por textura: preenche as linhas ao trocar o solo (Gradio),
+  // preservando valores editados manualmente (badge "Editado").
+  useEffect(() => {
+    const params = isCustomSoil
+      ? { sand: parseFloat(sandPct.replace(",", ".")), clay: parseFloat(clayPct.replace(",", ".")), }
+      : { soil_key: soil };
+    if (params.sand !== undefined && (!Number.isFinite(params.sand) || !Number.isFinite(params.clay as number))) return;
+    getKd(params).then((r) => {
+      const info: Record<string, { kd: string; citation: string }> = {};
+      for (const e of r.entries) info[e.symbol] = { kd: String(e.kd), citation: e.citation };
+      setKdInfo(info);
+      setRows((rs) => rs.map((row) => {
+        // Igual ao Gradio: ao trocar o solo, o Kd sempre volta ao valor de literatura.
+        const lit = info[row.symbol];
+        if (!lit) return row;
+        return { ...row, kd: lit.kd, kdSource: lit.citation, kdEdited: false };
+      }));
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soil, isCustomSoil, sandPct, clayPct]);
+
+  function applyFertilizer(doses: Record<string, number>) {
+    setRows((rs) => {
+      const next = rs.map((r) => ({ ...r }));
+      for (const sym of NUTRIENT_SYMBOLS) {
+        const dose = doses[sym] ?? 0;
+        if (dose <= 0) continue;
+        const lit = kdInfo[sym];
+        const sp = SPECIES.find((s) => s.symbol === sym);
+        const idx = next.findIndex((r) => r.symbol === sym);
+        if (idx >= 0) {
+          next[idx] = { ...next[idx], dose: String(Math.round(dose * 10) / 10), kd: lit?.kd ?? next[idx].kd, kdEdited: false, kdSource: lit?.citation ?? "" };
+        } else {
+          next.push({
+            symbol: sym, name: sp?.name ?? sym, dose: String(Math.round(dose * 10) / 10),
+            kd: lit?.kd ?? String(sp?.kd ?? 0), disp: defaultDispForDepth(depthCm), res: "0",
+            rel: "immediate", relDays: "60", kdEdited: false, kdSource: lit?.citation ?? "",
+          });
+        }
+      }
+      return next;
+    });
+  }
+
   function handleCropSelect(key: string) {
     setCrop(key);
     const found = crops.find((c) => c.key === key);
@@ -130,7 +221,8 @@ export default function Home() {
   function addRow() {
     const used = new Set(rows.map((r) => r.symbol));
     const next = SPECIES.find((s) => !used.has(s.symbol)) ?? SPECIES[0];
-    setRows((rs) => [...rs, { symbol: next.symbol, name: next.name, dose: "30", kd: String(next.kd), disp: defaultDispForDepth(depthCm), res: "0", rel: "immediate", relDays: "60" }]);
+    const lit = kdInfo[next.symbol];
+    setRows((rs) => [...rs, { symbol: next.symbol, name: next.name, dose: "30", kd: lit?.kd ?? String(next.kd), disp: defaultDispForDepth(depthCm), res: "0", rel: "immediate", relDays: "60", kdEdited: false, kdSource: lit?.citation ?? "" }]);
   }
   function removeRow(i: number) {
     setRows((rs) => rs.filter((_, j) => j !== i));
@@ -144,6 +236,17 @@ export default function Home() {
   function resetToDefaults() {
     if (timer.current) clearInterval(timer.current);
     setSoil(DEFAULTS.soil);
+    setIsCustomSoil(DEFAULTS.isCustomSoil);
+    setSandPct(DEFAULTS.sandPct);
+    setClayPct(DEFAULTS.clayPct);
+    setThetaR(DEFAULTS.thetaR);
+    setThetaS(DEFAULTS.thetaS);
+    setVgAlpha(DEFAULTS.vgAlpha);
+    setVgN(DEFAULTS.vgN);
+    setKs(DEFAULTS.ks);
+    setBulk(DEFAULTS.bulk);
+    setRosettaNote("");
+    setKdInfo({});
     setCropModeState(DEFAULTS.cropMode);
     setCrop(DEFAULTS.crop);
     setDepthCm(DEFAULTS.depthCm);
@@ -267,6 +370,16 @@ export default function Home() {
     try {
       const body = {
         soil_key: soil,
+        custom_soil: isCustomSoil ? {
+          sand_pct: num(sandPct, 60),
+          clay_pct: num(clayPct, 25),
+          bulk_density: num(bulk, 1.3),
+          theta_r: num(thetaR, 0.1),
+          theta_s: num(thetaS, 0.43),
+          alpha: num(vgAlpha, 0.03),
+          n: num(vgN, 1.65),
+          ks: num(ks, 80),
+        } : null,
         crop_key: isCom ? crop : null,
         depth_cm: depthVal,
         root_depth_cm: isCom ? num(rootDepthCm, rootFallback) : null,
@@ -404,6 +517,25 @@ export default function Home() {
                 setDepthCm={setDepthCm}
                 rootDepthCm={rootDepthCm}
                 setRootDepthCm={setRootDepthCm}
+                isCustomSoil={isCustomSoil}
+                setIsCustomSoil={setIsCustomSoil}
+                sandPct={sandPct}
+                setSandPct={setSandPct}
+                clayPct={clayPct}
+                setClayPct={setClayPct}
+                thetaR={thetaR}
+                setThetaR={setThetaR}
+                thetaS={thetaS}
+                setThetaS={setThetaS}
+                vgAlpha={vgAlpha}
+                setVgAlpha={setVgAlpha}
+                vgN={vgN}
+                setVgN={setVgN}
+                ks={ks}
+                setKs={setKs}
+                bulk={bulk}
+                setBulk={setBulk}
+                rosettaNote={rosettaNote}
                 error={error}
                 fieldErrors={fieldErrors}
                 onNext={() => setStep(2)}
@@ -418,6 +550,8 @@ export default function Home() {
                 setRow={setRow}
                 addRow={addRow}
                 removeRow={removeRow}
+                kdInfo={kdInfo}
+                onApplyFertilizer={applyFertilizer}
                 placement={placement}
                 setPlacement={setPlacement}
                 appDay={appDay}

@@ -25,8 +25,101 @@ class PlacementInput(BaseModel):
     application_day: float = Field(default=0.0, ge=0)
 
 
+class CustomSoilInput(BaseModel):
+    """Solo personalizado (Gradio is_custom_soil + Rosetta).
+
+    sand_pct/clay_pct definem a granulometria (soma ≤ 100); os demais campos
+    são overrides editáveis dos parâmetros de van Genuchten (ausente = valor
+    estimado pela Rosetta via POST /soils/rosetta).
+    """
+
+    sand_pct: float = Field(examples=[60.0])
+    clay_pct: float = Field(examples=[25.0])
+    bulk_density: Optional[float] = Field(default=None, examples=[1.3])
+    theta_r: Optional[float] = Field(default=None, examples=[0.1])
+    theta_s: Optional[float] = Field(default=None, examples=[0.43])
+    alpha: Optional[float] = Field(default=None, examples=[0.03])
+    n: Optional[float] = Field(default=None, examples=[1.65])
+    ks: Optional[float] = Field(default=None, examples=[80.0])
+
+
+class RosettaRequest(BaseModel):
+    sand_pct: float = Field(examples=[60.0])
+    clay_pct: float = Field(examples=[25.0])
+    bulk_density: Optional[float] = Field(default=None, examples=[1.3])
+
+
+class RosettaResponse(BaseModel):
+    theta_r: float
+    theta_s: float
+    alpha: float
+    n: float
+    ks: float
+    bulk_density: float
+    silt_pct: float
+    texture: str
+
+
+class FertilizerInfo(BaseModel):
+    key: str
+    label: str
+    name: str
+    nutrient_pcts: dict[str, float]
+    descr: str = ""
+
+
+class BlendPresetInfo(BaseModel):
+    key: str
+    label: str
+    nutrient_pcts: dict[str, float]
+
+
+class FertilizerDoseRequest(BaseModel):
+    """Conversão dose bruta -> elementar (port de calculate_effective_dose).
+
+    Uso comercial: fert_key + gross_dose (+ nutrient_symbol opcional p/ modo
+    1-soluto com erro quando o adubo não contém o nutriente).
+    Uso personalizado: custom_pcts (% N-P-K-S-Ca-Mg) ou blend_preset.
+    """
+
+    fert_key: Optional[str] = Field(default=None, examples=["kcl"])
+    gross_dose: float = Field(ge=0, examples=[200.0])
+    nutrient_symbol: Optional[str] = Field(default=None, examples=["K"])
+    custom_pcts: Optional[dict[str, float]] = Field(
+        default=None, description="% elementar por nutriente (N,P,K,S,Ca,Mg)"
+    )
+    blend_preset: Optional[str] = Field(default=None, examples=["NPK (blend)"])
+
+
+class FertilizerDoseResponse(BaseModel):
+    fert_key: str
+    fert_name: str
+    gross_dose: float
+    nutrient_pcts: dict[str, float]
+    elemental_doses: dict[str, float]
+    message: str
+
+
+class KdEntry(BaseModel):
+    symbol: str
+    kd: float
+    citation: str
+    description: str = ""
+    texture: Optional[str] = None
+    langmuir: Optional[dict] = None
+
+
+class KdResponse(BaseModel):
+    soil_key: Optional[str] = None
+    sand_pct: Optional[float] = None
+    clay_pct: Optional[float] = None
+    texture: str
+    entries: list[KdEntry]
+
+
 class SimulateRequest(BaseModel):
-    soil_key: str = Field(examples=["latossolo_medio"])
+    soil_key: Optional[str] = Field(default="latossolo_medio", examples=["latossolo_medio"])
+    custom_soil: Optional[CustomSoilInput] = Field(default=None)
     crop_key: Optional[str] = Field(default="soja", examples=["soja"])
     depth_cm: float = Field(default=200.0, gt=0, le=300)
     root_depth_cm: Optional[float] = Field(default=None, gt=0)
