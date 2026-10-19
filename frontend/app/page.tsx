@@ -150,7 +150,17 @@ export default function Home() {
           } else {
             setJobState(st.status);
           }
-        } catch { /* mantém polling */ }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const status = (e as unknown as { status?: number }).status;
+          if (status === 404 || /404|expirado|desconhecido/i.test(msg)) {
+            if (timer.current) clearInterval(timer.current);
+            setJobState("expired");
+            setFieldErrors([]);
+            setError("Job expirou ou foi perdido; rode a simulação novamente.");
+          }
+          /* senão mantém polling */
+        }
       }, 1000);
     } catch (e) {
       setJobState("failed");

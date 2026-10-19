@@ -1,5 +1,7 @@
 """API Hydrus — FastAPI fina sobre o hydrus-core."""
 
+import os
+import shutil
 import tempfile
 import threading
 import time
@@ -32,6 +34,60 @@ _jobs_lock = threading.Lock()
 _jobs_root = tempfile.mkdtemp(prefix="hydrus-jobs-")
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+# Variáveis de módulo (sobrescrevíveis em testes).
+JOB_TTL_S: float = _env_float("HYDRUS_JOB_TTL_S", 3600)
+MAX_JOBS: int = _env_int("HYDRUS_MAX_JOBS", 100)
+
+
+def _cleanup_jobs() -> None:
+    """Remove jobs terminados expirados (TTL) ou excedentes (MAX), apagando o diretório."""
+    ttl = JOB_TTL_S
+    max_jobs = MAX_JOBS
+    now = time.time()
+    expired: list[str] = []
+    with _jobs_lock:
+        for job_id, job in list(_jobs.items()):
+            if job.get("status") not in ("done", "failed"):
+                continue
+            t_end = job.get("t_end", job.get("t0", now))
+            try:
+                ref = float(t_end)
+            except (TypeError, ValueError):
+                ref = now
+            if now - ref > ttl:
+                expired.append(job_id)
+        for job_id in expired:
+            _jobs.pop(job_id, None)
+        # Limite de tamanho: remover terminados mais antigos primeiro.
+        if len(_jobs) > max_jobs:
+            finished = [
+                (job.get("t_end", job.get("t0", 0)), job_id)
+                for job_id, job in _jobs.items()
+                if job.get("status") in ("done", "failed")
+            ]
+            finished.sort(key=lambda kv: kv[0] or 0)
+            overflow = len(_jobs) - max_jobs
+            for _, job_id in finished[:overflow]:
+                _jobs.pop(job_id, None)
+                expired.append(job_id)
+    for job_id in expired:
+        shutil.rmtree(os.path.join(_jobs_root, job_id), ignore_errors=True)
+
+
 def _execute(job_id: str, req: SimulateRequest) -> None:
     import os
 
@@ -40,10 +96,10 @@ def _execute(job_id: str, req: SimulateRequest) -> None:
     try:
         resp, excel_path, _report = execute_job(req, os.path.join(_jobs_root, job_id))
         with _jobs_lock:
-            _jobs[job_id].update(status="done", result=resp, excel_path=excel_path)
+            _jobs[job_id].update(status="done", result=resp, excel_path=excel_path, t_end=time.time())
     except Exception as exc:  # noqa: BLE001 — erro vira status consultável
         with _jobs_lock:
-            _jobs[job_id].update(status="failed", error=str(exc))
+            _jobs[job_id].update(status="failed", error=str(exc), t_end=time.time())
 
 
 @app.get("/health")
@@ -77,19 +133,21 @@ def simulate(req: SimulateRequest) -> SimulateResponse:
 @app.post("/jobs", response_model=JobCreated)
 def create_job(req: SimulateRequest) -> JobCreated:
     _validate(req)
+    _cleanup_jobs()
     job_id = uuid.uuid4().hex[:12]
     with _jobs_lock:
-        _jobs[job_id] = {"status": "queued", "t0": time.time(), "result": None, "error": None}
+        _jobs[job_id] = {"status": "queued", "t0": time.time(), "t_end": None, "result": None, "error": None}
     _pool.submit(_execute, job_id, req)
     return JobCreated(job_id=job_id)
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
 def job_status(job_id: str) -> JobStatus:
+    _cleanup_jobs()
     with _jobs_lock:
         job = _jobs.get(job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="job desconhecido")
+        raise HTTPException(status_code=404, detail="job desconhecido ou expirado")
     return JobStatus(
         job_id=job_id,
         status=job["status"],
