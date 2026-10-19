@@ -7,7 +7,7 @@ import StepNutrients, { DEFAULT_ROWS, NUTRIENT_SYMBOLS, blankCustomRow, defaultD
 import StepSoil from "../components/StepSoil";
 import StepWater, { emptyRows, type RainMode } from "../components/StepWater";
 import WizardProgress from "../components/WizardProgress";
-import { ApiError, getCrops, getExcelBlob, getJob, getKd, getReport, getSoils, postJob, postRosetta, type ClimateRow, type Crop, type SimulateResponse, type Soil } from "../lib/api";
+import { ApiError, getCrops, getExcelBlob, getGraphsBlob, getJob, getKd, getReport, getSoils, getSteps, postJob, postRosetta, type ClimateRow, type Crop, type SimulateResponse, type Soil } from "../lib/api";
 
 const STEP_TITLES = [
   { title: "Apresentação", sub: "Visão geral da plataforma de simulação." },
@@ -198,6 +198,7 @@ export default function Home() {
   const [restartOpen, setRestartOpen] = useState(false);
   const [result, setResult] = useState<SimulateResponse | null>(null);
   const [report, setReport] = useState("");
+  const [steps, setSteps] = useState("");
   const [appliedMm, setAppliedMm] = useState<number | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -403,6 +404,7 @@ export default function Home() {
     setRestartOpen(false);
     setResult(null);
     setReport("");
+    setSteps("");
     setAppliedMm(null);
     setStep(1);
   }
@@ -412,6 +414,7 @@ export default function Home() {
     setValidationIssues(null);
     setResult(null);
     setReport("");
+    setSteps("");
     setAppliedMm(null);
     let rain_series: number[] | undefined;
     let total_days = num(days, 7);
@@ -585,6 +588,19 @@ export default function Home() {
     }
   }
 
+  async function loadSteps() {
+    try {
+      const markdown = await getSteps(jobId);
+      setSteps(markdown);
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
+        openValidation(["Job expirado; rode a simulação novamente."]);
+        return;
+      }
+      showApiError(e);
+    }
+  }
+
   async function downloadExcel() {
     try {
       const blob = await getExcelBlob(jobId);
@@ -605,27 +621,24 @@ export default function Home() {
     }
   }
 
-  function downloadGraphs() {
-    const gallery = result?.plots_png_base64 && Object.keys(result.plots_png_base64).length > 0
-      ? result.plots_png_base64
-      : result?.plot_png_base64
-        ? { [result.solutes[0]?.symbol ?? "perfil"]: result.plot_png_base64 }
-        : {};
-    const syms = Object.keys(gallery);
-    if (syms.length === 0) {
-      openValidation(["Gráficos ainda não gerados."]);
-      return;
+  async function downloadGraphs() {
+    try {
+      const blob = await getGraphsBlob(jobId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `graficos_${jobId}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
+        openValidation(["Job expirado; rode a simulação novamente."]);
+        return;
+      }
+      showApiError(e);
     }
-    syms.forEach((sym, i) => {
-      setTimeout(() => {
-        const a = document.createElement("a");
-        a.href = `data:image/png;base64,${gallery[sym]}`;
-        a.download = `perfil_${sym}.png`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }, i * 300);
-    });
   }
 
   const isCom = cropMode === "com";
@@ -782,12 +795,14 @@ export default function Home() {
                 elapsed={elapsed}
                 result={result}
                 report={report}
+                steps={steps}
                 cropName={cropLabel}
                 rootDepth={rootDepth}
                 appliedMm={appliedMm}
                 onDownloadExcel={downloadExcel}
                 onDownloadGraphs={downloadGraphs}
                 onLoadReport={loadReport}
+                onLoadSteps={loadSteps}
               />
             )}
           </>

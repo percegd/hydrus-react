@@ -440,11 +440,52 @@ def _water_plot_b64(results, soil, crop, root_depth: float, out_path: str) -> st
         return base64.b64encode(f.read()).decode()
 
 
+def _nutrients_list(req: SimulateRequest) -> list[dict]:
+    return [{"symbol": s.symbol, "name": s.name} for s in (req.solutes or [])]
+
+
+def _release_info(req: SimulateRequest) -> tuple[str, float]:
+    first = (req.solutes or [None])[0]
+    rel_type = ((first.release_type if first is not None else None) or "immediate")
+    try:
+        rel_days = float((first.release_days if first is not None else None) or 60.0)
+    except (TypeError, ValueError):
+        rel_days = 60.0
+    return rel_type, rel_days
+
+
+def build_extra_plots(req: SimulateRequest, results, soil, crop, root_depth: float,
+                       total_rain: float, out_dir: str) -> tuple[list[dict], list[dict]]:
+    """Gráficos extras (1 PNG por painel) como o Gradio; retorna (encoded, files)."""
+    from .graphs import build_graph_files, encode_files
+
+    dose_total = sum(float(s.dose_kg_ha) for s in (req.solutes or []))
+    rel_type, rel_days = _release_info(req)
+    graphs_dir = os.path.join(out_dir, "graphs")
+    files = build_graph_files(
+        results, soil, crop, float(total_rain), float(dose_total),
+        rel_type, float(rel_days), float(root_depth), graphs_dir,
+        _nutrients_list(req), water_only=bool(req.water_only),
+    )
+    return encode_files(files), files
+
+
+def build_steps_markdown(req: SimulateRequest, results, soil, crop, root_depth: float,
+                          total_rain: float, total_days: float) -> str:
+    """Passo a passo via hydrus_core.explanatory_pipeline, como o Gradio monta."""
+    from hydrus_core.explanatory_pipeline import generate_simulation_step_by_step
+
+    params = _sim_params(req, results, soil, crop, root_depth, total_rain, total_days)
+    step_md, _step_html = generate_simulation_step_by_step(params)
+    return step_md
+
+
 def run_simulation(req: SimulateRequest, with_plot: bool = True) -> SimulateResponse:
     results, soil, crop, root_depth, total_rain, total_days = _run_core(req)
     water_only = bool(req.water_only)
     plot_b64: str | None = None
     plots_b64: dict[str, str] | None = None
+    extra: list[dict] = []
     if with_plot:
         with tempfile.TemporaryDirectory() as tmp:
             if water_only:
@@ -456,11 +497,16 @@ def run_simulation(req: SimulateRequest, with_plot: bool = True) -> SimulateResp
             else:
                 plots_b64 = _plots_b64(req, results, soil, crop, root_depth, total_rain, tmp)
                 plot_b64 = plots_b64.get(req.solutes[0].symbol)
+            try:
+                extra, _files = build_extra_plots(req, results, soil, crop, root_depth, total_rain, tmp)
+            except Exception:
+                extra = []
     return SimulateResponse(
         drainage_mm=float(results.q_bottom_cum_cm) * 10.0,
         solutes=_balances(req, results),
         plot_png_base64=plot_b64,
         plots_png_base64=plots_b64,
+        extra_plots=extra,
         profiles=_profiles_payload(results),
         water_only=water_only,
         water_balance=_water_balance(req, results, total_rain, total_days),
@@ -469,6 +515,8 @@ def run_simulation(req: SimulateRequest, with_plot: bool = True) -> SimulateResp
 
 def execute_job(req: SimulateRequest, job_dir: str) -> tuple[SimulateResponse, str, str]:
     """Roda uma vez e gera response + Excel + laudo no diretório do job."""
+    from .graphs import write_zip
+
     os.makedirs(job_dir, exist_ok=True)
     results, soil, crop, root_depth, total_rain, total_days = _run_core(req)
     water_only = bool(req.water_only)
@@ -492,11 +540,21 @@ def execute_job(req: SimulateRequest, job_dir: str) -> tuple[SimulateResponse, s
             shutil.copyfile(src_png, os.path.join(job_dir, "perfil.png"))
     except Exception:
         pass
+    try:
+        extra, files = build_extra_plots(req, results, soil, crop, root_depth, total_rain, job_dir)
+    except Exception:
+        extra, files = [], []
+    try:
+        if files:
+            write_zip(files, os.path.join(job_dir, "graphs.zip"))
+    except Exception:
+        pass
     resp = SimulateResponse(
         drainage_mm=float(results.q_bottom_cum_cm) * 10.0,
         solutes=_balances(req, results),
         plot_png_base64=plot_b64,
         plots_png_base64=plots_b64,
+        extra_plots=extra,
         profiles=_profiles_payload(results),
         water_only=water_only,
         water_balance=_water_balance(req, results, total_rain, total_days),
@@ -505,6 +563,15 @@ def execute_job(req: SimulateRequest, job_dir: str) -> tuple[SimulateResponse, s
     report_md = build_report(req, results, soil, crop, root_depth, total_rain, total_days)
     with open(os.path.join(job_dir, "laudo.md"), "w", encoding="utf-8") as f:
         f.write(report_md)
+    try:
+        steps_md = build_steps_markdown(req, results, soil, crop, root_depth, total_rain, total_days)
+    except Exception:
+        steps_md = ""
+    try:
+        with open(os.path.join(job_dir, "passo_a_passo.md"), "w", encoding="utf-8") as f:
+            f.write(steps_md)
+    except OSError:
+        pass
     return resp, excel_path, report_md
 
 

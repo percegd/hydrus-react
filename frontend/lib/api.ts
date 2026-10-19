@@ -20,7 +20,9 @@ export type WaterBalance = {
   applied_label: string;
   drainage_label: string;
 };
-export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; plots_png_base64?: Record<string, string> | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null; water_only?: boolean; water_balance?: WaterBalance | null };
+export type ExtraPlot = { key: string; title: string; png_base64: string };
+export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; plots_png_base64?: Record<string, string> | null; extra_plots?: ExtraPlot[] | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null; water_only?: boolean; water_balance?: WaterBalance | null };
+export type HelpEntry = { key: string; title: string; unit: string; what: string; simulation: string };
 
 export class ApiError extends Error {
   details: string[];
@@ -156,6 +158,18 @@ export const getJob = (id: string) => req<JobStatus>(`/jobs/${id}`);
 export const getReport = async (id: string): Promise<string> => {
   const j = await req<{ report_markdown: string }>(`/jobs/${id}/report`);
   return j.report_markdown;
+};
+export const getSteps = async (id: string): Promise<string> => {
+  const j = await req<{ steps_markdown: string }>(`/jobs/${id}/steps`);
+  return j.steps_markdown;
+};
+export const getHelp = () => req<HelpEntry[]>("/help");
+export const getGraphsBlob = async (id: string): Promise<Blob> => {
+  const r = await fetch(`/api/jobs/${id}/graphs.zip`);
+  if (!r.ok) {
+    throw await toApiError(r);
+  }
+  return r.blob();
 };
 export const getExcelBlob = async (id: string): Promise<Blob> => {
   const r = await fetch(`/api/jobs/${id}/excel`);

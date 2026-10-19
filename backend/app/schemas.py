@@ -190,21 +190,44 @@ class WaterBalance(BaseModel):
     drainage_label: str = "Drenagem no Fundo"
 
 
+class ExtraPlot(BaseModel):
+    """Gráfico extra nomeado (galeria completa como no Gradio)."""
+
+    key: str
+    title: str
+    png_base64: str
+
+
 class SimulateResponse(BaseModel):
     drainage_mm: float
     solutes: list[SoluteBalance]
     plot_png_base64: Optional[str] = None
     plots_png_base64: Optional[dict[str, str]] = None
+    extra_plots: list[ExtraPlot] = Field(default_factory=list)
     profiles: Optional[dict] = None
     water_only: bool = False
     water_balance: Optional[WaterBalance] = None
 
 
+class StepsResponse(BaseModel):
+    steps_markdown: str
+
+
+class HelpEntry(BaseModel):
+    key: str
+    title: str
+    unit: str
+    what: str
+    simulation: str
+
+
 class JobStatus(BaseModel):
     job_id: str
-    status: str  # queued | running | done | failed
+    status: str  # queued | running | failed
     elapsed_s: float
     result: Optional[SimulateResponse] = None
     error: Optional[str] = None
     has_excel: bool = False
     has_report: bool = False
+    has_graphs: bool = False
+    has_steps: bool = False

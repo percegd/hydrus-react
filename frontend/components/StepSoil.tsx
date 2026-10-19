@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import HelpIcon from "./HelpIcon";
 import type { Crop, Soil } from "../lib/api";
 
 type Props = {
@@ -70,10 +71,15 @@ function SeedlingIcon() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, helpKey }: { label: string; children: React.ReactNode; helpKey?: string }) {
   return (
     <label className="field">
-      <span className="field-label">{label}</span>
+      <span className="field-label">
+        <span className="field-label-row">
+          {label}
+          {helpKey && <HelpIcon helpKey={helpKey} />}
+        </span>
+      </span>
       {children}
     </label>
   );
@@ -198,24 +204,24 @@ export default function StepSoil({
         <span className="step-section-title-inline">Propriedades Físico-Hídricas do Solo (van Genuchten - Mualem)</span>
       </div>
       <div className="form-row">
-        <Field label="θr - Umidade residual [cm³/cm³]">
+        <Field label="θr - Umidade residual [cm³/cm³]" helpKey="theta_r">
           <input value={thetaR} onChange={(e) => setThetaR(e.target.value)} inputMode="decimal" type="number" step="any" min={0} max={1} />
         </Field>
-        <Field label="θs - Umidade de saturação [cm³/cm³]">
+        <Field label="θs - Umidade de saturação [cm³/cm³]" helpKey="theta_s">
           <input value={thetaS} onChange={(e) => setThetaS(e.target.value)} inputMode="decimal" type="number" step="any" min={0} max={1} />
         </Field>
-        <Field label="α - Parâmetro de escala (entrada de ar) [1/cm]">
+        <Field label="α - Parâmetro de escala (entrada de ar) [1/cm]" helpKey="alpha">
           <input value={vgAlpha} onChange={(e) => setVgAlpha(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="n - Índice de poros [-]">
+        <Field label="n - Índice de poros [-]" helpKey="n">
           <input value={vgN} onChange={(e) => setVgN(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
         </Field>
-        <Field label="Ks - Condutividade saturada [cm/dia]">
+        <Field label="Ks - Condutividade saturada [cm/dia]" helpKey="ks">
           <input value={ks} onChange={(e) => setKs(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
         </Field>
-        <Field label="ρb - Densidade aparente [g/cm³]">
+        <Field label="ρb - Densidade aparente [g/cm³]" helpKey="bulk_density">
           <input value={bulk} onChange={(e) => setBulk(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
         </Field>
       </div>
@@ -224,7 +230,7 @@ export default function StepSoil({
         <span className="step-section-title-inline">Domínio do Perfil de Solo Simulado</span>
       </div>
       <div className="form-row">
-        <Field label="Profundidade do Perfil Simulado [cm]">
+        <Field label="Profundidade do Perfil Simulado [cm]" helpKey="domain_depth">
           <input
             value={depthCm}
             onChange={(e) => setDepthCm(e.target.value)}
@@ -265,7 +271,7 @@ export default function StepSoil({
       {comCultura && (
         <div style={{ marginTop: 20 }}>
           <div className="form-row">
-            <Field label="Cultura agrícola">
+            <Field label="Cultura agrícola" helpKey="crop_name">
               <input
                 value={cropName}
                 onChange={(e) => setCropName(e.target.value)}
@@ -279,7 +285,7 @@ export default function StepSoil({
             </div>
           </div>
           <div className="form-row">
-            <Field label="Profundidade radicular [cm]">
+            <Field label="Profundidade radicular [cm]" helpKey="root_depth">
               <input
                 value={rootDepthCm}
                 onChange={(e) => setRootDepthCm(e.target.value)}
@@ -288,7 +294,7 @@ export default function StepSoil({
                 min={1}
               />
             </Field>
-            <Field label="Coeficiente de cultura (Kc)">
+            <Field label="Coeficiente de cultura (Kc)" helpKey="kc">
               <input
                 value={cropKc}
                 onChange={(e) => setCropKc(e.target.value)}
@@ -300,7 +306,7 @@ export default function StepSoil({
             </Field>
           </div>
           <div className="form-row">
-            <Field label="Anaerobiose (encharcado) [cm c.a.]">
+            <Field label="Anaerobiose (encharcado) [cm c.a.]" helpKey="fed_h1">
               <input
                 value={cropH1}
                 onChange={(e) => setCropH1(e.target.value)}
@@ -309,7 +315,7 @@ export default function StepSoil({
                 step="any"
               />
             </Field>
-            <Field label="Aeração ótima [cm c.a.]">
+            <Field label="Aeração ótima [cm c.a.]" helpKey="fed_h2">
               <input
                 value={cropH2}
                 onChange={(e) => setCropH2(e.target.value)}
@@ -320,7 +326,7 @@ export default function StepSoil({
             </Field>
           </div>
           <div className="form-row">
-            <Field label="Início do estresse hídrico [cm c.a.]">
+            <Field label="Início do estresse hídrico [cm c.a.]" helpKey="fed_h3">
               <input
                 value={cropH3}
                 onChange={(e) => setCropH3(e.target.value)}
@@ -329,7 +335,7 @@ export default function StepSoil({
                 step="any"
               />
             </Field>
-            <Field label="Murcha permanente [cm c.a.]">
+            <Field label="Murcha permanente [cm c.a.]" helpKey="fed_h4">
               <input
                 value={cropH4}
                 onChange={(e) => setCropH4(e.target.value)}

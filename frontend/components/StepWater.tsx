@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import ClimateTable, { APP_DAY_DEFAULT } from "./ClimateTable";
+import HelpIcon from "./HelpIcon";
 import {
   ApiError,
   getClimateExample,
@@ -80,10 +81,15 @@ type Props = {
   setPrintDays: (v: string) => void;
 };
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, helpKey }: { label: string; children: React.ReactNode; helpKey?: string }) {
   return (
     <label className="field">
-      <span className="field-label">{label}</span>
+      <span className="field-label">
+        <span className="field-label-row">
+          {label}
+          {helpKey && <HelpIcon helpKey={helpKey} />}
+        </span>
+      </span>
       {children}
     </label>
   );
@@ -284,22 +290,25 @@ export default function StepWater(props: Props) {
         ))}
       </div>
 
+      <p className="step-section-sub">
+        Fonte de água <HelpIcon helpKey="water_source" />
+      </p>
       {isUniform && (
         <>
           <div className="form-row" style={{ marginTop: 16 }}>
-            <Field label="Lâmina de Chuva / Irrigação [mm]">
+            <Field label="Lâmina de Chuva / Irrigação [mm]" helpKey="rain_mm">
               <input value={rainMm} onChange={(e) => setRainMm(e.target.value)} inputMode="decimal" />
             </Field>
-            <Field label="Umidade Prévia do Solo [% do intervalo residual→CC]">
+            <Field label="Umidade Prévia do Solo [% do intervalo residual→CC]" helpKey="moisture">
               <input value={moisture} onChange={(e) => setMoisture(e.target.value)} inputMode="decimal" />
             </Field>
-            <Field label="Duração do Ensaio [dias]">
+            <Field label="Duração do Ensaio [dias]" helpKey="total_days">
               <input value={days} onChange={(e) => setDays(e.target.value)} inputMode="decimal" />
             </Field>
           </div>
           <div className="step-section-title">Evapotranspiração</div>
           <div className="form-row">
-            <Field label="ET0 - Evapotranspiração de referência [mm/dia]">
+            <Field label="ET0 - Evapotranspiração de referência [mm/dia]" helpKey="et0">
               <input value={et0} onChange={(e) => setEt0(e.target.value)} inputMode="decimal" />
             </Field>
           </div>
@@ -325,11 +334,11 @@ export default function StepWater(props: Props) {
           </div>
           {advEt && (
             <div className="form-row">
-              <Field label="Evaporação do solo [mm/dia] (0 = derivar de ET0)">
+              <Field label="Evaporação do solo [mm/dia] (0 = derivar de ET0)" helpKey="evap">
                 <input value={evap} onChange={(e) => setEvap(e.target.value)} inputMode="decimal" />
               </Field>
               {hasCrop && (
-                <Field label="Transpiração [mm/dia] (0 = ET0·Kc)">
+                <Field label="Transpiração [mm/dia] (0 = ET0·Kc)" helpKey="transp">
                   <input value={transp} onChange={(e) => setTransp(e.target.value)} inputMode="decimal" />
                 </Field>
               )}
@@ -376,7 +385,7 @@ export default function StepWater(props: Props) {
                 ))}
               </div>
               <div className="app-day-chip">
-                <Field label="Dia da aplicação do fertilizante [1 - 365]">
+                <Field label="Dia da aplicação do fertilizante [1 - 365]" helpKey="app_day">
                   <input value={hubAppDay} onChange={(e) => setHubAppDay(e.target.value)} placeholder={APP_DAY_DEFAULT} inputMode="decimal" />
                 </Field>
               </div>
@@ -385,7 +394,7 @@ export default function StepWater(props: Props) {
           {hubError && <p className="error-text">{hubError}</p>}
           {seriesInfo && <p className="hint-text">{seriesInfo}</p>}
           <div className="upload-note">
-            <div><b>Tabela editável (365 dias):</b> edite células diretamente ou cole dados do Excel (Ctrl+V).</div>
+            <div><b>Tabela editável (365 dias):</b> edite células diretamente ou cole dados do Excel (Ctrl+V). <span className="help-link">ⓘ o que é isto? <HelpIcon helpKey="water_series" /></span></div>
           </div>
           <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={hubAppDay} setAppDay={setHubAppDay} hideAppDay />
         </div>
@@ -404,12 +413,12 @@ export default function StepWater(props: Props) {
             </span>
           </div>
           <div className="upload-note">
-            <div><b>Série diária (365 dias):</b> a planilha importada preenche a tabela abaixo. São esperadas uma coluna de chuva (mm) e, opcionalmente, de ET0 (mm/dia).</div>
+            <div><b>Série diária (365 dias):</b> a planilha importada preenche a tabela abaixo. São esperadas uma coluna de chuva (mm) e, opcionalmente, de ET0 (mm/dia). <span className="help-link">ⓘ o que é isto? <HelpIcon helpKey="water_upload" /></span></div>
           </div>
           {uploadError && <p className="error-text">{uploadError}</p>}
           {uploadStatus && <p className="hint-text">{uploadStatus}</p>}
           <div className="app-day-chip" style={{ marginBottom: 8 }}>
-            <Field label="Dia da aplicação do fertilizante [1 - 365]">
+            <Field label="Dia da aplicação do fertilizante [1 - 365]" helpKey="app_day">
               <input value={uploadAppDay} onChange={(e) => setUploadAppDay(e.target.value)} placeholder={APP_DAY_DEFAULT} inputMode="decimal" />
             </Field>
           </div>
@@ -420,15 +429,15 @@ export default function StepWater(props: Props) {
       {!isUniform && (
         <>
           <div className="form-row" style={{ marginTop: 12 }}>
-            <Field label="Início da janela de análise [dia do ano]">
+            <Field label="Início da janela de análise [dia do ano]" helpKey="window_start">
               <input value={analysisStart} onChange={(e) => setAnalysisStart(e.target.value)} inputMode="decimal" />
             </Field>
-            <Field label="Fim da janela de análise [dia do ano]">
+            <Field label="Fim da janela de análise [dia do ano]" helpKey="window_end">
               <input value={analysisEnd} onChange={(e) => setAnalysisEnd(e.target.value)} inputMode="decimal" />
             </Field>
           </div>
           <div className="form-row">
-            <Field label="Dias de leitura [dia do ensaio] (ex: 55,128,237,365)">
+            <Field label="Dias de leitura [dia do ensaio] (ex: 55,128,237,365)" helpKey="print_days">
               <input value={printDays} onChange={(e) => setPrintDays(e.target.value)} placeholder="obrigatório — ex: 55, 128, 237, 365" />
             </Field>
           </div>
