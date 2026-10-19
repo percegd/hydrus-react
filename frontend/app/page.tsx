@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ProfileChart from "../components/ProfileChart";
 import WizardProgress from "../components/WizardProgress";
-import { getCrops, getJob, getSoils, postJob, type Crop, type SimulateResponse, type Soil } from "../lib/api";
+import { ApiError, getCrops, getJob, getSoils, postJob, type Crop, type SimulateResponse, type Soil } from "../lib/api";
 
 const ACCENTS: Record<string, [string, string]> = {
   N: ["#fff7ed", "#c2410c"],
@@ -51,6 +51,7 @@ export default function Home() {
   const [jobState, setJobState] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<string[]>([]);
   const [result, setResult] = useState<SimulateResponse | null>(null);
   const [report, setReport] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -61,6 +62,24 @@ export default function Home() {
     return () => { if (timer.current) clearInterval(timer.current); };
   }, []);
 
+  function fieldErrorList() {
+    if (fieldErrors.length === 0) return null;
+    return (
+      <ul className="error-text">
+        {fieldErrors.map((m, i) => <li key={i}>{m}</li>)}
+      </ul>
+    );
+  }
+
+  function showApiError(e: unknown) {
+    if (e instanceof ApiError && e.details.length > 0) {
+      setFieldErrors(e.details);
+      setError("");
+    } else {
+      setFieldErrors([]);
+      setError(String(e instanceof Error ? e.message : e));
+    }
+  }
   function setRow(i: number, patch: Partial<Row>) {
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
@@ -79,6 +98,7 @@ export default function Home() {
 
   async function run() {
     setError("");
+    setFieldErrors([]);
     setResult(null);
     setReport("");
     let rain_series: number[] | undefined;
@@ -87,18 +107,18 @@ export default function Home() {
     try {
       if (rainMode === "series") {
         rain_series = parseSeries(series);
-        if (!rain_series?.length) { setError("Cole a série diária de chuva."); return; }
+        if (!rain_series?.length) { setFieldErrors([]); setError("Cole a série diária de chuva."); return; }
         total_days = rain_series.length;
       }
       et0_series = parseSeries(et0Series);
-    } catch (e) { setError(String((e as Error).message || e)); return; }
+    } catch (e) { setFieldErrors([]); setError(String((e as Error).message || e)); return; }
     const solutes = rows
       .filter((r) => parseFloat(r.dose) > 0)
       .map((r) => ({
         symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(r.dose), kd: parseFloat(r.kd) || 0,
         release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: parseFloat(r.relDays) || 60,
       }));
-    if (!solutes.length) { setError("Informe ao menos 1 soluto com dose > 0."); return; }
+    if (!solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
     setStep(3);
     setJobState("queued");
     try {
@@ -134,7 +154,7 @@ export default function Home() {
       }, 1000);
     } catch (e) {
       setJobState("failed");
-      setError(String(e));
+      showApiError(e);
     }
   }
 
@@ -143,7 +163,7 @@ export default function Home() {
       const r = await fetch(`/api/jobs/${jobId}/report`);
       const j = await r.json();
       setReport(j.report_markdown as string);
-    } catch (e) { setError(String(e)); }
+    } catch (e) { showApiError(e); }
   }
 
   const rootDepth = crops.find((c) => c.key === crop)?.root_depth_cm ?? 35;
@@ -204,6 +224,7 @@ export default function Home() {
                 <textarea rows={2} value={et0Series} onChange={(e) => setEt0Series(e.target.value)} placeholder="4 4.1 3.8 ..." />
               </label>
             </div>
+            {fieldErrorList()}
             {error && <p className="error-text">{error}</p>}
             <div className="btn-row">
               <button className="btn btn-primary" onClick={() => setStep(2)}>Avançar</button>
@@ -268,6 +289,7 @@ export default function Home() {
                 </>
               )}
             </div>
+            {fieldErrorList()}
             {error && <p className="error-text">{error}</p>}
             <div className="btn-row">
               <button className="btn" onClick={() => setStep(1)}>Voltar</button>
@@ -288,6 +310,7 @@ export default function Home() {
               )}
             </div>
             <p className="muted">Status: <strong>{jobState || "—"}</strong> {jobState === "running" && <span>({elapsed}s)</span>}</p>
+            {fieldErrorList()}
             {error && <p className="error-text">{error}</p>}
             {result && (
               <>

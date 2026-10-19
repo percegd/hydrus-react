@@ -15,6 +15,7 @@ from hydrus_core.soil_physics import SOIL_DATABASE
 
 from .schemas import JobCreated, JobStatus, SimulateRequest, SimulateResponse
 from .service import execute_job, run_simulation
+from .validation import validate_request
 
 app = FastAPI(title="Hydrus API", version="0.1.0")
 
@@ -126,15 +127,21 @@ def job_report(job_id: str) -> dict:
 
 
 def _validate(req: SimulateRequest) -> None:
+    errors: list[dict] = []
     if req.soil_key not in SOIL_DATABASE:
-        raise HTTPException(status_code=422, detail=f"soil_key desconhecido: {req.soil_key}")
+        errors.append({"field": "soil_key", "message": f"soil_key desconhecido: {req.soil_key}"})
     if req.crop_key and req.crop_key not in CROP_DATABASE:
-        raise HTTPException(status_code=422, detail=f"crop_key desconhecido: {req.crop_key}")
+        errors.append({"field": "crop_key", "message": f"crop_key desconhecido: {req.crop_key}"})
     if req.rain_series and len(req.rain_series) > 730:
-        raise HTTPException(status_code=422, detail="rain_series com mais de 730 dias")
+        errors.append({"field": "rain_series", "message": "rain_series com mais de 730 dias"})
     _days_eff = len(req.rain_series) if req.rain_series else int(req.total_days)
     if req.et0_series and len(req.et0_series) != _days_eff:
-        raise HTTPException(
-            status_code=422,
-            detail=f"et0_series com {len(req.et0_series)} dias, esperado {_days_eff} (igual aos dias simulados)",
+        errors.append(
+            {
+                "field": "et0_series",
+                "message": f"et0_series com {len(req.et0_series)} dias, esperado {_days_eff} (igual aos dias simulados)",
+            }
         )
+    errors.extend(validate_request(req))
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
