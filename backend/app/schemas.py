@@ -39,7 +39,17 @@ class SimulateRequest(BaseModel):
     et0_mm_day: float = Field(default=4.0, ge=0)
     et0_series: Optional[list[float]] = Field(default=None, description="ET0 diária em mm")
     placement: PlacementInput = Field(default_factory=PlacementInput)
-    solutes: list[SoluteInput] = Field(min_length=1)
+    # T5: modo "Somente água" (Gradio simulation_mode): sem transporte de solutos.
+    water_only: bool = Field(default=False)
+    solutes: list[SoluteInput] = Field(default_factory=list)
+    # T9: janela de análise + dias de leitura (Gradio defaults: 1, 365, "55, 128, 237, 365").
+    # print_days=None = marcos automáticos do Gradio (proporcional à duração;
+    # em 365 dias equivale a 55, 128, 237, 365).
+    analysis_start_day: int = Field(default=1)
+    analysis_end_day: int = Field(default=365)
+    print_days: Optional[list[float]] = Field(
+        default=None, description="Dias de leitura (ex: 55, 128, 237, 365)"
+    )
 
 
 class JobCreated(BaseModel):
@@ -57,12 +67,31 @@ class SoluteBalance(BaseModel):
     peak_depth_cm: Optional[float]
 
 
+class WaterBalance(BaseModel):
+    """Balanço hídrico do período (presente em todas as corridas).
+
+    Rótulos dinâmicos iguais aos do Gradio (Lâmina Aplicada / Chuva Anual Total
+    / Chuva no Período; Drenagem no Fundo / Drenagem Anual / Drenagem no Período).
+    """
+
+    applied_mm: float
+    drainage_mm: float
+    storage_mm: float
+    runoff_mm: float
+    evap_mm: Optional[float] = None
+    transp_mm: Optional[float] = None
+    applied_label: str = "Lâmina Aplicada"
+    drainage_label: str = "Drenagem no Fundo"
+
+
 class SimulateResponse(BaseModel):
     drainage_mm: float
     solutes: list[SoluteBalance]
     plot_png_base64: Optional[str] = None
     plots_png_base64: Optional[dict[str, str]] = None
     profiles: Optional[dict] = None
+    water_only: bool = False
+    water_balance: Optional[WaterBalance] = None
 
 
 class JobStatus(BaseModel):

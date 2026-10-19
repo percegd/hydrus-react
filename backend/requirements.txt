@@ -1,4 +1,8 @@
 fastapi==0.108.0
 uvicorn[standard]==0.24.0
+python-multipart==0.0.20
+pandas==2.1.4
+openpyxl==3.1.5
+xlrd==2.0.1
 # hydrus-core (pacote local ../packages/hydrus-core) instalado à parte:
 #   pip install -e ../packages/hydrus-core

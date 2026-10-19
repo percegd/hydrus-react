@@ -123,8 +123,26 @@ def build_payload(req: SimulateRequest) -> dict:
     except (TypeError, ValueError):
         p["app_day"] = 0.0
 
+    # Janela de análise + dias de leitura (Gradio: validate_analysis_window).
+    # print_days=None = ausente (API legada: marcos automáticos, sem erro);
+    # lista vazia = texto vazio (Gradio bloqueia: "não pode ficar vazio").
+    try:
+        p["analysis_start_day"] = int(req.analysis_start_day)
+    except (TypeError, ValueError):
+        p["analysis_start_day"] = req.analysis_start_day
+    try:
+        p["analysis_end_day"] = int(req.analysis_end_day)
+    except (TypeError, ValueError):
+        p["analysis_end_day"] = req.analysis_end_day
+    if req.print_days is not None:
+        p["print_days_text"] = ", ".join(
+            str(int(v) if float(v).is_integer() else str(float(v))) for v in req.print_days
+        )
+
     # Solutos: linhas NPK + 3 "Outro soluto" (mesmas chaves do Gradio).
-    p["simulation_mode"] = "Água + nutrientes"
+    # T5: modo "Somente água" não exige soluto (validate_nutrients só cobra
+    # soluto com dose > 0 no modo "Água + nutrientes").
+    p["simulation_mode"] = "Somente água" if req.water_only else "Água + nutrientes"
     custom_slots = ("x", "x2", "x3")
     custom_idx = 0
     overflow: list[dict] = []
