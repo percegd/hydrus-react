@@ -55,10 +55,15 @@ function splitLine(line: string, sep: ";" | "," | "ws"): string[] {
 }
 
 export function parseDailyCsv(text: string): { rain: number[]; et0?: number[] } {
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith("#"));
+  const rawLines = text.split(/\r?\n/);
+  const lines: string[] = [];
+  const lineNos: number[] = [];
+  rawLines.forEach((l, idx) => {
+    const t = l.trim();
+    if (t.length === 0 || t.startsWith("#")) return;
+    lines.push(t);
+    lineNos.push(idx + 1);
+  });
   if (lines.length === 0) {
     throw new Error("Arquivo vazio ou sem dados válidos.");
   }
@@ -71,7 +76,11 @@ export function parseDailyCsv(text: string): { rain: number[]; et0?: number[] } 
   let colKinds: ("day" | "rain" | "et0")[] | null = null;
 
   const firstTokens = splitLine(lines[0], sep).map((s) => s.trim());
-  const firstHasLetter = firstTokens.some((t) => /[a-zA-Z]/.test(t));
+  const isNumericToken = (t: string) => {
+    const n = Number(t.trim().replace(",", "."));
+    return t.trim() !== "" && Number.isFinite(n);
+  };
+  const firstHasLetter = firstTokens.some((t) => /[a-zA-Z]/.test(t) && !isNumericToken(t));
   if (firstHasLetter) {
     // Cabeçalho opcional: day/dia, chuva/rain, et0.
     const kinds = firstTokens.map((t) => {
@@ -98,6 +107,9 @@ export function parseDailyCsv(text: string): { rain: number[]; et0?: number[] } 
       }
     }
     colKinds = mapped;
+    if (mapped.filter((k) => k === "rain").length > 1 || mapped.filter((k) => k === "et0").length > 1) {
+      throw new Error("Cabeçalho ambíguo: mais de uma coluna chuva/rain ou ET0. Renomeie as colunas (dia, chuva, ET0).");
+    }
     startIdx = 1;
     if (lines.length <= 1) {
       throw new Error("Arquivo contém apenas cabeçalho, sem dados diários.");
@@ -117,7 +129,7 @@ export function parseDailyCsv(text: string): { rain: number[]; et0?: number[] } 
       // Permite 1..3 colunas; mais que isso é erro.
       if (dataColCount > 3) {
         throw new Error(
-          `Linha 1: esperadas 1 a 3 colunas (dia opcional, chuva, ET0 opcional), encontradas ${dataColCount}. Use separador "," ou ";" e vírgula decimal se necessário.`
+          `Linha ${lineNos[0]}: esperadas 1 a 3 colunas (dia opcional, chuva, ET0 opcional), encontradas ${dataColCount}. Use separador "," ou ";" e vírgula decimal se necessário.`
         );
       }
     }
@@ -155,7 +167,7 @@ export function parseDailyCsv(text: string): { rain: number[]; et0?: number[] } 
   }
 
   for (let li = startIdx; li < lines.length; li++) {
-    const lineNo = li + 1;
+    const lineNo = lineNos[li];
     const toks = splitLine(lines[li], sep).map((s) => s.trim());
     if (colKinds && toks.length !== colKinds.length) {
       throw new Error(

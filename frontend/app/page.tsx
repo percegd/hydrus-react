@@ -123,12 +123,23 @@ export default function Home() {
     setRows((rs) => rs.filter((_, j) => j !== i));
   }
 
-  function parseSeries(text: string): number[] | undefined {
-    if (!text.trim()) return undefined;
-    const vals = text.split(/[\s,;]+/).filter(Boolean).map((t) => Number(t.replace(",", ".")));
-    if (vals.some((v) => Number.isNaN(v) || v < 0)) throw new Error("Série inválida (só números ≥ 0).");
-    return vals;
-  }
+    function parseSeries(text: string): number[] | undefined {
+      if (!text.trim()) return undefined;
+      // Separa por espaço/;/linha; vírgula só é separador quando não é decimal.
+      // "12,5" (decimal) => 12.5 ; "0, 12.5, 3" (separador) => [0,12.5,3].
+      const chunks = text.split(/[\s;]+/).filter(Boolean);
+      const vals: number[] = [];
+      for (const chunk of chunks) {
+        const singleDecimal = /^-?\d+,\d+$/.test(chunk.trim());
+        const parts = singleDecimal ? [chunk] : chunk.split(",").filter((p) => p.length > 0);
+        for (const p of parts) {
+          const v = Number(p.trim().replace(",", "."));
+          if (Number.isNaN(v) || v < 0) throw new Error("Série inválida (só números ≥ 0).");
+          vals.push(v);
+        }
+      }
+      return vals;
+    }
 
   function num(x: string, def: number): number {
     const v = parseFloat(String(x).replace(",", "."));
@@ -175,6 +186,7 @@ export default function Home() {
   }
 
   async function run() {
+    if (timer.current) clearInterval(timer.current);
     setError("");
     setFieldErrors([]);
     setResult(null);
@@ -195,12 +207,15 @@ export default function Home() {
     const dispDefault = depthVal / 10;
     const solutes = rows
       .filter((r) => parseFloat(String(r.dose).replace(",", ".")) > 0)
-      .map((r) => ({
-        symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(String(r.dose).replace(",", ".")), kd: num(r.kd, 0),
-        dispersivity_cm: r.disp === "" ? dispDefault : num(r.disp, dispDefault),
-        initial_residual_mg_dm3: r.res === "" ? 0 : num(r.res, 0),
-        release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
-      }));
+      .map((r) => {
+        const dispNum = num(r.disp, dispDefault);
+        return {
+          symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(String(r.dose).replace(",", ".")), kd: num(r.kd, 0),
+          dispersivity_cm: dispNum > 0 ? dispNum : dispDefault,
+          initial_residual_mg_dm3: r.res === "" ? 0 : num(r.res, 0),
+          release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
+        };
+      });
     if (!solutes.length) { setFieldErrors([]); setError("Informe ao menos 1 soluto com dose > 0."); return; }
     const appliedTotal = rain_series ? rain_series.reduce((a, b) => a + b, 0) : num(rainMm, 0);
     setAppliedMm(appliedTotal);
