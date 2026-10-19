@@ -133,6 +133,41 @@ export default function StepSoil({
   const comCultura = cropMode === "com";
   const [cropModalOpen, setCropModalOpen] = useState(false);
 
+  function parsePct(v: string): number {
+    return parseFloat(String(v).replace(",", "."));
+  }
+
+  const sandNum = parsePct(sandPct);
+  const clayNum = parsePct(clayPct);
+  const sandOk = Number.isFinite(sandNum) && sandNum >= 0 && sandNum <= 100;
+  const clayOk = Number.isFinite(clayNum) && clayNum >= 0 && clayNum <= 100;
+  const siltVal = sandOk && clayOk ? 100 - sandNum - clayNum : NaN;
+  const granulometryInvalid = !sandOk || !clayOk || !Number.isFinite(siltVal) || siltVal < 0;
+
+  function onSandInput(v: string) {
+    const s = parsePct(v);
+    if (!Number.isFinite(s)) { setSandPct(v); return; }
+    const sClamped = Math.min(100, Math.max(0, s));
+    const c = clayOk ? clayNum : 0;
+    if (sClamped + c > 100) {
+      // Areia subiu: reduz a argila para manter silte >= 0.
+      setClayPct(String(Math.round((100 - sClamped) * 100) / 100));
+    }
+    setSandPct(String(sClamped));
+  }
+
+  function onClayInput(v: string) {
+    const c = parsePct(v);
+    if (!Number.isFinite(c)) { setClayPct(v); return; }
+    const cClamped = Math.min(100, Math.max(0, c));
+    const s = sandOk ? sandNum : 0;
+    if (s + cClamped > 100) {
+      // Argila subiu: reduz a areia para manter silte >= 0.
+      setSandPct(String(Math.round((100 - cClamped) * 100) / 100));
+    }
+    setClayPct(String(cClamped));
+  }
+
   function pickCrop(key: string) {
     setCrop(key);
     const found = crops.find((c) => c.key === key);
@@ -178,10 +213,17 @@ export default function StepSoil({
                 type="range"
                 min={0}
                 max={100}
-                step={5}
-                value={sandPct}
-                onChange={(e) => setSandPct(e.target.value)}
+                step={1}
+                value={sandOk ? String(sandNum) : "0"}
+                onChange={(e) => onSandInput(e.target.value)}
                 aria-label="% de Areia"
+              />
+              <input
+                value={sandPct}
+                onChange={(e) => onSandInput(e.target.value)}
+                inputMode="decimal"
+                aria-label="% de Areia (valor)"
+                style={{ marginTop: 6 }}
               />
             </Field>
             <Field label={`% de Argila`}>
@@ -189,13 +231,32 @@ export default function StepSoil({
                 type="range"
                 min={0}
                 max={100}
-                step={5}
-                value={clayPct}
-                onChange={(e) => setClayPct(e.target.value)}
+                step={1}
+                value={clayOk ? String(clayNum) : "0"}
+                onChange={(e) => onClayInput(e.target.value)}
                 aria-label="% de Argila"
+              />
+              <input
+                value={clayPct}
+                onChange={(e) => onClayInput(e.target.value)}
+                inputMode="decimal"
+                aria-label="% de Argila (valor)"
+                style={{ marginTop: 6 }}
+              />
+            </Field>
+            <Field label={`% de Silte (100 − areia − argila)`}>
+              <input
+                value={Number.isFinite(siltVal) ? String(Math.round(siltVal * 100) / 100) : ""}
+                readOnly
+                disabled
+                aria-label="% de Silte (calculado)"
+                title="Silte = 100 − areia − argila"
               />
             </Field>
           </div>
+          {granulometryInvalid && (
+            <p className="error-text">Areia + argila deve ser ≤ 100 (silte ≥ 0).</p>
+          )}
           {rosettaNote && <div className="soil-texture-badge" dangerouslySetInnerHTML={{ __html: rosettaNote.replace(/(\S+):/g, "<b>$1:</b>") }} />}
         </div>
       )}

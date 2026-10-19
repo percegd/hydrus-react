@@ -52,12 +52,15 @@ def test_extra_plots_keys_and_zip_contents() -> None:
         assert "avanco_tempo_umidade" in keys
         for p in extra:
             assert p["title"].strip()
-            assert p["png_base64"].strip()
-            # PNG válido (magic bytes).
-            import base64
-
-            raw = base64.b64decode(p["png_base64"])
-            assert raw[:8] == b"\x89PNG\r\n\x1a\n"
+            # Lazy: sem base64 embutido; galeria via URL.
+            assert not (p.get("png_base64") or "").strip(), p["key"]
+            assert (p.get("url") or "").strip(), p["key"]
+            assert p["url"].endswith(f"/plots/{p['key']}.png"), p
+        # Amostra de PNGs servidos por URL (lazy, gera sob demanda).
+        for key in keys[:3]:
+            pr = client.get(f"/jobs/{job_id}/plots/{key}.png")
+            assert pr.status_code == 200, (key, pr.text[:200] if hasattr(pr, "text") else pr.status_code)
+            assert pr.content[:8] == b"\x89PNG\r\n\x1a\n", key
 
         zr = client.get(f"/jobs/{job_id}/graphs.zip")
         assert zr.status_code == 200, zr.text
@@ -86,6 +89,9 @@ def test_water_only_extra_plots_moisture_only() -> None:
         keys = [p["key"] for p in extra]
         assert "perfil_umidade" in keys
         assert "avanco_tempo_umidade" in keys
+        for p in extra:
+            assert not (p.get("png_base64") or "").strip(), p["key"]
+            assert (p.get("url") or "").strip(), p["key"]
 
 
 def test_steps_non_empty() -> None:

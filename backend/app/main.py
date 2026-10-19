@@ -1,5 +1,9 @@
 """API Hydrus — FastAPI fina sobre o hydrus-core."""
 
+import matplotlib
+
+matplotlib.use("Agg")
+
 import os
 import shutil
 import tempfile
@@ -31,7 +35,7 @@ from .schemas import (
     SimulateResponse,
     StepsResponse,
 )
-from .service import execute_job, run_simulation
+from .service import execute_job, execute_job_fast, run_simulation
 from .validation import validate_request
 
 app = FastAPI(title="Hydrus API", version="0.1.0")
@@ -48,6 +52,10 @@ _pool = ThreadPoolExecutor(max_workers=2)
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 _jobs_root = tempfile.mkdtemp(prefix="hydrus-jobs-")
+# Matplotlib (pyplot global) não é thread-safe: serializa as renderizações
+# lazy entre jobs. O lock por job evita rebuild duplicado do mesmo job;
+# este evita cross-talk entre jobs diferentes.
+_plots_lock = threading.Lock()
 
 
 def _env_float(name: str, default: float) -> float:
@@ -77,6 +85,7 @@ def _cleanup_jobs() -> None:
     max_runtime = JOB_MAX_RUNTIME_S
     now = time.time()
     expired: list[str] = []
+    to_signal: list[threading.Event] = []
     with _jobs_lock:
         # Jobs presos: queued/running além do tempo máximo viram failed (depois segue o TTL normal).
         for job in _jobs.values():
@@ -90,6 +99,9 @@ def _cleanup_jobs() -> None:
                 job["status"] = "failed"
                 job["error"] = "Tempo máximo de execução excedido"
                 job["t_end"] = now
+                ev = job.get("event")
+                if isinstance(ev, threading.Event):
+                    to_signal.append(ev)
         for job_id, job in list(_jobs.items()):
             if job.get("status") not in ("done", "failed"):
                 continue
@@ -99,6 +111,9 @@ def _cleanup_jobs() -> None:
             except (TypeError, ValueError):
                 ref = now
             if now - ref > ttl:
+                ev = job.get("event")
+                if isinstance(ev, threading.Event):
+                    to_signal.append(ev)
                 expired.append(job_id)
         for job_id in expired:
             _jobs.pop(job_id, None)
@@ -112,10 +127,99 @@ def _cleanup_jobs() -> None:
             finished.sort(key=lambda kv: kv[0] or 0)
             overflow = len(_jobs) - max_jobs
             for _, job_id in finished[:overflow]:
-                _jobs.pop(job_id, None)
+                job = _jobs.pop(job_id, None)
+                if job is not None:
+                    ev = job.get("event")
+                    if isinstance(ev, threading.Event):
+                        to_signal.append(ev)
                 expired.append(job_id)
     for job_id in expired:
         shutil.rmtree(os.path.join(_jobs_root, job_id), ignore_errors=True)
+    for ev in to_signal:
+        try:
+            ev.set()
+        except Exception:
+            pass
+
+
+def _get_job_for_read(job_id: str) -> tuple[dict | None, threading.Event | None]:
+    """Snapshot mínimo sob lock: cópia rasa do job + evento (sem bloquear o worker)."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return None, None
+        return dict(job), job.get("event")
+
+
+def _is_lock(obj: object) -> bool:
+    return obj is not None and hasattr(obj, "acquire") and hasattr(obj, "release")
+
+
+def _job_still_done(job_id: str) -> bool:
+    """Revalida sob _jobs_lock que o job existe e está done (evita ressuscitar expirado)."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        return job is not None and job.get("status") == "done"
+
+
+def _ensure_extra_locked(job_id: str, job_snapshot: dict) -> None:
+    """Garante PNGs extras + graphs.zip (lazy). Chamar SEM _jobs_lock; usa lock do job."""
+    lock = job_snapshot.get("lock")
+    lazy = job_snapshot.get("lazy")
+    if lazy is None or not _is_lock(lock):
+        return
+    job_dir = os.path.join(_jobs_root, job_id)
+    zip_path = os.path.join(job_dir, "graphs.zip")
+    if os.path.exists(zip_path):
+        return
+    from .service import ensure_extra_files
+
+    # Lock por job: só uma thread gera; as demais esperam e reaproveitam.
+    with lock:
+        if os.path.exists(zip_path):
+            return
+        if not _job_still_done(job_id):
+            return
+        # Pyplot global: serializa renderização entre jobs.
+        with _plots_lock:
+            if os.path.exists(zip_path) or not _job_still_done(job_id):
+                return
+            try:
+                ensure_extra_files(job_dir, lazy)
+            except Exception:
+                pass
+
+
+def _ensure_steps_locked(job_id: str, job_snapshot: dict) -> str | None:
+    """Garante passo_a_passo.md (lazy). Retorna o markdown ou None."""
+    lock = job_snapshot.get("lock")
+    lazy = job_snapshot.get("lazy")
+    job_dir = os.path.join(_jobs_root, job_id)
+    md_path = os.path.join(job_dir, "passo_a_passo.md")
+    if lazy is None or not _is_lock(lock):
+        try:
+            with open(md_path, encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return None
+    with lock:
+        try:
+            if os.path.exists(md_path):
+                with open(md_path, encoding="utf-8") as f:
+                    content = f.read()
+                if content.strip():
+                    return content
+        except OSError:
+            pass
+        if not _job_still_done(job_id):
+            return None
+        from .service import ensure_steps_file
+
+        try:
+            return ensure_steps_file(job_dir, lazy)
+        except Exception:
+            return None
+    return None
 
 
 def _bad_job_id(job_id: str) -> bool:
@@ -137,13 +241,31 @@ def _execute(job_id: str, req: SimulateRequest) -> None:
             return
         job["status"] = "running"
     try:
-        resp, excel_path, _report = execute_job(req, os.path.join(_jobs_root, job_id))
+        # Caminho rápido: solve uma única vez + perfis principais + excel + laudo.
+        # Extras (PNGs/zip/steps) ficam lazy, sem re-solver.
+        resp, excel_path, _report, lazy = execute_job_fast(
+            req, os.path.join(_jobs_root, job_id), job_id=job_id
+        )
+        try:
+            extra_keys = [str(p.key) for p in (resp.extra_plots or []) if str(getattr(p, "key", ""))]
+        except Exception:
+            extra_keys = []
         with _jobs_lock:
             job = _jobs.get(job_id)
             if job is None or job.get("status") == "failed":
                 shutil.rmtree(os.path.join(_jobs_root, job_id), ignore_errors=True)
                 return
-            job.update(status="done", result=resp, excel_path=excel_path, t_end=time.time())
+            job.update(
+                status="done",
+                result=resp,
+                excel_path=excel_path,
+                lazy=lazy,
+                extra_keys=extra_keys,
+                t_end=time.time(),
+            )
+            ev = job.get("event")
+        if isinstance(ev, threading.Event):
+            ev.set()
     except Exception as exc:  # noqa: BLE001 — erro vira status consultável
         with _jobs_lock:
             job = _jobs.get(job_id)
@@ -151,6 +273,9 @@ def _execute(job_id: str, req: SimulateRequest) -> None:
                 shutil.rmtree(os.path.join(_jobs_root, job_id), ignore_errors=True)
                 return
             job.update(status="failed", error=str(exc), t_end=time.time())
+            ev = job.get("event")
+        if isinstance(ev, threading.Event):
+            ev.set()
 
 
 @app.get("/health")
@@ -445,16 +570,42 @@ def create_job(req: SimulateRequest) -> JobCreated:
         raise HTTPException(status_code=429, detail="Fila de jobs cheia; tente novamente em instantes")
     job_id = uuid.uuid4().hex[:12]
     with _jobs_lock:
-        _jobs[job_id] = {"status": "queued", "t0": time.time(), "t_end": None, "result": None, "error": None}
+        _jobs[job_id] = {
+            "status": "queued",
+            "t0": time.time(),
+            "t_end": None,
+            "result": None,
+            "error": None,
+            "event": threading.Event(),
+            "lock": threading.Lock(),
+            "lazy": None,
+            "extra_keys": [],
+        }
     _pool.submit(_execute, job_id, req)
     return JobCreated(job_id=job_id)
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
-def job_status(job_id: str) -> JobStatus:
+def job_status(job_id: str, wait: float = Query(default=0)) -> JobStatus:
+    """Status do job; ?wait=<s> (máx 25) faz long-poll até concluir ou expirar.
+
+    Manter a requisição aberta garante CPU alocada no Cloud Run ( Cobrança por
+    requisição: CPU throttled sem requisição em voo, mesmo com thread ativa).
+    """
     if _bad_job_id(job_id):
         raise HTTPException(status_code=404, detail="job desconhecido ou expirado")
     _cleanup_jobs()
+    try:
+        w = float(wait)
+    except (TypeError, ValueError):
+        w = 0.0
+    w = max(0.0, min(w, 25.0))
+    _snap, _ev = _get_job_for_read(job_id)
+    if _snap is None:
+        raise HTTPException(status_code=404, detail="job desconhecido ou expirado")
+    if w > 0 and _snap.get("status") in ("queued", "running") and isinstance(_ev, threading.Event):
+        # Espera fora do _jobs_lock para não bloquear o worker.
+        _ev.wait(timeout=w)
     now = time.time()
     with _jobs_lock:
         job = _jobs.get(job_id)
@@ -463,9 +614,10 @@ def job_status(job_id: str) -> JobStatus:
         if job.get("status") == "done":
             job["t_end"] = now
         snapshot = dict(job)
-    _excel_ok = bool(snapshot.get("excel_path"))
-    _graphs_ok = os.path.exists(os.path.join(_jobs_root, job_id, "graphs.zip"))
-    _steps_ok = os.path.exists(os.path.join(_jobs_root, job_id, "passo_a_passo.md"))
+    _excel_ok = bool(snapshot.get("excel_path")) and os.path.exists(
+        str(snapshot.get("excel_path") or "")
+    )
+    _done = snapshot.get("status") == "done"
     return JobStatus(
         job_id=job_id,
         status=snapshot["status"],
@@ -473,9 +625,9 @@ def job_status(job_id: str) -> JobStatus:
         result=snapshot["result"],
         error=snapshot["error"],
         has_excel=_excel_ok,
-        has_report=snapshot["status"] == "done",
-        has_graphs=_graphs_ok,
-        has_steps=_steps_ok,
+        has_report=_done,
+        has_graphs=_done,
+        has_steps=_done,
     )
 
 
@@ -556,36 +708,9 @@ def field_help() -> list[HelpEntry]:
     ]
 
 
-@app.get("/jobs/{job_id}/steps", response_model=StepsResponse)
-def job_steps(job_id: str) -> StepsResponse:
-    """Passo a passo da simulação (memória de cálculo), como o Gradio monta."""
-    import os
-
-    if _bad_job_id(job_id):
-        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
-    _cleanup_jobs()
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is not None and job.get("status") == "done":
-            job["t_end"] = time.time()
-        snapshot = dict(job) if job is not None else None
-    if snapshot is None:
-        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
-    if snapshot.get("status") != "done":
-        raise HTTPException(status_code=404, detail="passo a passo indisponível")
-    md_path = os.path.join(_jobs_root, job_id, "passo_a_passo.md")
-    if not os.path.exists(md_path):
-        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
-    try:
-        with open(md_path, encoding="utf-8") as f:
-            return StepsResponse(steps_markdown=f.read())
-    except FileNotFoundError:
-        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
-
-
-@app.get("/jobs/{job_id}/graphs.zip")
-def job_graphs_zip(job_id: str):
-    """ZIP com todos os gráficos (1 painel por PNG), como o Gradio."""
+@app.get("/jobs/{job_id}/plots/{key}.png")
+def job_plot(job_id: str, key: str):
+    """PNG individual do gráfico extra (lazy, 1 painel por PNG)."""
     import os
 
     from fastapi.responses import FileResponse
@@ -593,15 +718,108 @@ def job_graphs_zip(job_id: str):
     if _bad_job_id(job_id):
         raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
     _cleanup_jobs()
+    snapshot, _ev = _get_job_for_read(job_id)
+    if snapshot is None:
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    if snapshot.get("status") != "done":
+        raise HTTPException(status_code=404, detail="gráfico indisponível")
+    # Valida a chave contra a lista do job (sem traversal: só [A-Za-z0-9_-]).
+    import re as _re
+
+    if not _re.fullmatch(r"[A-Za-z0-9_\-]+", key or ""):
+        raise HTTPException(status_code=404, detail="gráfico desconhecido")
+    allowed: set[str] = set(snapshot.get("extra_keys") or [])
+    if not allowed:
+        try:
+            allowed = {str(p.key) for p in (snapshot.get("result").extra_plots or [])}
+        except Exception:
+            allowed = set()
+    if key not in allowed:
+        raise HTTPException(status_code=404, detail="gráfico desconhecido")
     with _jobs_lock:
         job = _jobs.get(job_id)
         if job is not None and job.get("status") == "done":
             job["t_end"] = time.time()
-        snapshot = dict(job) if job is not None else None
+    _ensure_extra_locked(job_id, snapshot)
+    if not _job_still_done(job_id):
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    from .graphs import plot_filename
+
+    fname = plot_filename(key)
+    if fname is None:
+        raise HTTPException(status_code=404, detail="gráfico desconhecido")
+    for base in (os.path.join(_jobs_root, job_id, "graphs"), os.path.join(_jobs_root, job_id)):
+        cand = os.path.join(base, fname)
+        if os.path.isfile(cand):
+            return FileResponse(cand, media_type="image/png", filename=f"{key}.png")
+    # Fallback: varre o graphs_dir por chave (compat com nomes legados).
+    graphs_dir = os.path.join(_jobs_root, job_id, "graphs")
+    try:
+        if os.path.isdir(graphs_dir):
+            for fn in os.listdir(graphs_dir):
+                if fn.lower().endswith(".png") and key in fn:
+                    return FileResponse(
+                        os.path.join(graphs_dir, fn), media_type="image/png", filename=f"{key}.png"
+                    )
+    except OSError:
+        pass
+    raise HTTPException(status_code=404, detail="gráfico indisponível")
+
+
+@app.get("/jobs/{job_id}/steps", response_model=StepsResponse)
+def job_steps(job_id: str) -> StepsResponse:
+    """Passo a passo da simulação (memória de cálculo), como o Gradio monta (lazy)."""
+    import os
+
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
+    _cleanup_jobs()
+    snapshot, _ev = _get_job_for_read(job_id)
+    if snapshot is None:
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    if snapshot.get("status") != "done":
+        raise HTTPException(status_code=404, detail="passo a passo indisponível")
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is not None and job.get("status") == "done":
+            job["t_end"] = time.time()
+    md = _ensure_steps_locked(job_id, snapshot)
+    if not _job_still_done(job_id):
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    if md is None or not str(md).strip():
+        md_path = os.path.join(_jobs_root, job_id, "passo_a_passo.md")
+        try:
+            with open(md_path, encoding="utf-8") as f:
+                md = f.read()
+        except (FileNotFoundError, OSError):
+            raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+        if not str(md or "").strip():
+            raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    return StepsResponse(steps_markdown=str(md))
+
+
+@app.get("/jobs/{job_id}/graphs.zip")
+def job_graphs_zip(job_id: str):
+    """ZIP com todos os gráficos (1 painel por PNG), como o Gradio (lazy)."""
+    import os
+
+    from fastapi.responses import FileResponse
+
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
+    _cleanup_jobs()
+    snapshot, _ev = _get_job_for_read(job_id)
     if snapshot is None:
         raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
     if snapshot.get("status") != "done":
         raise HTTPException(status_code=404, detail="gráficos indisponíveis")
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is not None and job.get("status") == "done":
+            job["t_end"] = time.time()
+    _ensure_extra_locked(job_id, snapshot)
+    if not _job_still_done(job_id):
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
     zip_path = os.path.join(_jobs_root, job_id, "graphs.zip")
     if not os.path.exists(zip_path):
         raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
