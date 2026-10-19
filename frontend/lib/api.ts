@@ -68,25 +68,29 @@ function formatDetail(detail: unknown): { message: string; details: string[] } {
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, { headers: { "Content-Type": "application/json" }, ...init });
   if (!r.ok) {
-    let message = `API ${r.status}`;
-    let details: string[] = [];
-    try {
-      const data = (await r.json()) as { detail?: unknown; message?: unknown };
-      const detail = data?.detail ?? data;
-      if (detail !== undefined) {
-        const f = formatDetail(detail);
-        if (f.message) message = f.message;
-        details = f.details;
-      } else if (typeof (data as { message?: unknown })?.message === "string") {
-        message = (data as { message: string }).message;
-        details = [message];
-      }
-    } catch {
-      /* mantém mensagem genérica */
-    }
-    throw new ApiError(message, details, r.status);
+    throw await toApiError(r);
   }
   return r.json() as Promise<T>;
+}
+
+async function toApiError(r: Response): Promise<ApiError> {
+  let message = `API ${r.status}`;
+  let details: string[] = [];
+  try {
+    const data = (await r.json()) as { detail?: unknown; message?: unknown };
+    const detail = data?.detail ?? data;
+    if (detail !== undefined) {
+      const f = formatDetail(detail);
+      if (f.message) message = f.message;
+      details = f.details;
+    } else if (typeof (data as { message?: unknown })?.message === "string") {
+      message = (data as { message: string }).message;
+      details = [message];
+    }
+  } catch {
+    /* mantém mensagem genérica */
+  }
+  return new ApiError(message, details, r.status);
 }
 
 export const getSoils = () => req<Soil[]>("/soils");
@@ -96,3 +100,14 @@ export type JobCreated = { job_id: string };
 export type JobStatus = { job_id: string; status: string; elapsed_s: number; result: SimulateResponse | null; error: string | null };
 export const postJob = (body: unknown) => req<JobCreated>("/jobs", { method: "POST", body: JSON.stringify(body) });
 export const getJob = (id: string) => req<JobStatus>(`/jobs/${id}`);
+export const getReport = async (id: string): Promise<string> => {
+  const j = await req<{ report_markdown: string }>(`/jobs/${id}/report`);
+  return j.report_markdown;
+};
+export const getExcelBlob = async (id: string): Promise<Blob> => {
+  const r = await fetch(`/api/jobs/${id}/excel`);
+  if (!r.ok) {
+    throw await toApiError(r);
+  }
+  return r.blob();
+};

@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from hydrus_core.crop import CROP_DATABASE
 from hydrus_core.soil_physics import SOIL_DATABASE
@@ -115,12 +115,14 @@ def _execute(job_id: str, req: SimulateRequest) -> None:
         with _jobs_lock:
             job = _jobs.get(job_id)
             if job is None or job.get("status") == "failed":
+                shutil.rmtree(os.path.join(_jobs_root, job_id), ignore_errors=True)
                 return
             job.update(status="done", result=resp, excel_path=excel_path, t_end=time.time())
     except Exception as exc:  # noqa: BLE001 — erro vira status consultável
         with _jobs_lock:
             job = _jobs.get(job_id)
             if job is None or job.get("status") == "failed":
+                shutil.rmtree(os.path.join(_jobs_root, job_id), ignore_errors=True)
                 return
             job.update(status="failed", error=str(exc), t_end=time.time())
 
@@ -205,7 +207,16 @@ def job_excel(job_id: str):
         raise HTTPException(status_code=404, detail="excel indisponível")
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
-    return FileResponse(path, filename=f"perfil_{job_id}.xlsx")
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="perfil_{job_id}.xlsx"'},
+    )
 
 
 @app.get("/jobs/{job_id}/report")
@@ -260,6 +271,7 @@ def _validate(req: SimulateRequest) -> None:
             break
         _seen.add(_sym)
     errors.extend(validate_request(req))
+    errors = [e if isinstance(e, dict) else {"field": "request", "message": str(e)} for e in errors]
     seen: set[tuple[str, str]] = set()
     unique: list[dict] = []
     for e in errors:
