@@ -20,19 +20,43 @@ type Props = {
   elapsed: number;
   result: SimulateResponse | null;
   report: string;
-  error: string;
-  fieldErrors: string[];
   cropName: string;
   rootDepth: number;
   appliedMm: number | null;
-  onEdit: () => void;
   onDownloadExcel: () => void;
+  onDownloadGraphs: () => void;
   onLoadReport: () => void;
-  onNewSimulation: () => void;
 };
 
+function RainIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
+    </svg>
+  );
+}
+
+function DrainIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="4" x2="12" y2="20" />
+      <polyline points="18 14 12 20 6 14" />
+    </svg>
+  );
+}
+
+function LayersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12h18" />
+      <path d="M3 6h18" />
+      <path d="M3 18h18" />
+    </svg>
+  );
+}
+
 export default function Results(props: Props) {
-  const { jobState, elapsed, result, report, error, fieldErrors, cropName, rootDepth, appliedMm, onEdit, onDownloadExcel, onLoadReport, onNewSimulation } = props;
+  const { jobState, elapsed, result, report, cropName, rootDepth, appliedMm, onDownloadExcel, onDownloadGraphs, onLoadReport } = props;
 
   const gallery: Record<string, string> = (() => {
     if (result?.plots_png_base64 && Object.keys(result.plots_png_base64).length > 0) {
@@ -53,49 +77,42 @@ export default function Results(props: Props) {
   }, [result]);
 
   const selectedB64 = selected ? gallery[selected] : null;
+  const done = jobState === "done";
 
   return (
     <>
-      <div className="btn-row" style={{ marginTop: 0, marginBottom: 12 }}>
-        <button className="btn" onClick={onEdit}>← Editar</button>
-        {jobState === "done" && (
-          <>
-            <button className="btn" onClick={onDownloadExcel}>Baixar Excel</button>
-            <button className="btn" onClick={onLoadReport}>Ver laudo</button>
-          </>
-        )}
-        <button className="btn" onClick={onNewSimulation}>Nova simulação</button>
-      </div>
-      <p className="muted">Status: <strong>{jobState || "—"}</strong> {jobState === "running" && <span>({elapsed}s)</span>}</p>
-      {fieldErrors.length > 0 && (
-        <ul className="error-text">
-          {fieldErrors.map((m, i) => <li key={i}>{m}</li>)}
-        </ul>
+      {(jobState === "running" || jobState === "queued") && (
+        <p className="results-status">
+          <strong>{jobState === "queued" ? "Na fila" : "Calculando"}</strong> ({elapsed}s) — a página atualiza
+          automaticamente ao concluir.
+        </p>
       )}
-      {error && <p className="error-text">{error}</p>}
+      {jobState === "failed" && (
+        <p className="error-text">Falha na simulação. Os detalhes foram exibidos no aviso.</p>
+      )}
       {result && (
         <>
           <div className="metrics-card-grid">
             {result.water_balance ? (
               <>
                 <div className="metric-card">
-                  <div className="metric-icon">💧</div>
+                  <div className="metric-icon"><RainIcon /></div>
                   <div className="metric-value">{result.water_balance.applied_mm.toFixed(1)} mm</div>
                   <div className="metric-label">{result.water_balance.applied_label}</div>
                 </div>
                 <div className="metric-card">
-                  <div className="metric-icon">↓</div>
+                  <div className="metric-icon"><DrainIcon /></div>
                   <div className="metric-value">{result.water_balance.drainage_mm.toFixed(1)} mm</div>
                   <div className="metric-label">{result.water_balance.drainage_label}</div>
                   <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
                 </div>
                 <div className="metric-card">
-                  <div className="metric-icon">🌊</div>
+                  <div className="metric-icon"><LayersIcon /></div>
                   <div className="metric-value">{result.water_balance.storage_mm >= 0 ? "+" : ""}{result.water_balance.storage_mm.toFixed(1)} mm</div>
                   <div className="metric-label">{result.water_balance.storage_mm >= 0 ? "Ganho de Água no Perfil (θf − θi)" : "Perda de Água no Perfil (θf − θi)"}</div>
                 </div>
                 <div className="metric-card">
-                  <div className="metric-icon">≈</div>
+                  <div className="metric-icon"><RainIcon /></div>
                   <div className="metric-value">{result.water_balance.runoff_mm.toFixed(1)} mm</div>
                   <div className="metric-label">Escoamento Superficial</div>
                 </div>
@@ -103,12 +120,12 @@ export default function Results(props: Props) {
             ) : (
               <>
                 <div className="metric-card">
-                  <div className="metric-icon">💧</div>
+                  <div className="metric-icon"><RainIcon /></div>
                   <div className="metric-value">{appliedMm != null ? `${appliedMm.toFixed(0)} mm` : "—"}</div>
                   <div className="metric-label">Lâmina Aplicada</div>
                 </div>
                 <div className="metric-card">
-                  <div className="metric-icon">↓</div>
+                  <div className="metric-icon"><DrainIcon /></div>
                   <div className="metric-value">{result.drainage_mm.toFixed(1)} mm</div>
                   <div className="metric-label">Drenagem no Fundo</div>
                   <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
@@ -144,12 +161,12 @@ export default function Results(props: Props) {
             </p>
           )}
           {result.profiles && Object.keys(result.profiles.solutes ?? {}).length > 0 && (
-            <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
+            <div style={{ marginBottom: 16 }}>
               <ProfileChart profiles={result.profiles as never} rootDepth={rootDepth} />
             </div>
           )}
           {symbols.length > 0 && (
-            <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
+            <div style={{ marginBottom: 16 }}>
               <div className="section-title">Por Soluto</div>
               <div className="btn-row" style={{ marginTop: 0, marginBottom: 12 }} role="tablist" aria-label="Gráficos por soluto">
                 {symbols.map((sym) => (
@@ -181,8 +198,17 @@ export default function Results(props: Props) {
               )}
             </div>
           )}
+          {done && (
+            <div className="graph-download-actions-row">
+              <button className="btn" onClick={onDownloadGraphs}>Baixar Gráficos (PNG) ⤓</button>
+              <button className="btn" onClick={onDownloadExcel}>Baixar Dados do Perfil (.XLSX) ⤓</button>
+              {!report && (
+                <button className="btn" onClick={onLoadReport}>Ver laudo</button>
+              )}
+            </div>
+          )}
           {report && (
-            <div className="wizard-step-box" style={{ padding: 16 }}>
+            <div>
               <div className="section-title">Laudo</div>
               <div className="laudo-md">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>

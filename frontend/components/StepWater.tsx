@@ -70,10 +70,96 @@ type Props = {
   setAnalysisEnd: (v: string) => void;
   printDays: string;
   setPrintDays: (v: string) => void;
-  error: string;
-  fieldErrors: string[];
-  onBack: () => void;
-  onRun: () => void;
+};
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="field">
+      <span className="field-label">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function GlobeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+      <path d="M2 12h20" />
+    </svg>
+  );
+}
+
+function UploadSheetIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M12 12v6" />
+      <path d="m15 15-3-3-3 3" />
+    </svg>
+  );
+}
+
+function DropIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
+    </svg>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2" />
+      <path d="M12 20v2" />
+      <path d="m4.93 4.93 1.41 1.41" />
+      <path d="m17.66 17.66 1.41 1.41" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+      <path d="m6.34 17.66-1.41 1.41" />
+      <path d="m19.07 4.93-1.41 1.41" />
+    </svg>
+  );
+}
+
+function SunCloudIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2v2" />
+      <path d="m4.93 4.93 1.41 1.41" />
+      <path d="M20 12h2" />
+      <path d="m19.07 4.93-1.41 1.41" />
+      <path d="M15.947 12.65a4 4 0 0 0-5.925-4.128" />
+      <path d="M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z" />
+    </svg>
+  );
+}
+
+function CloudRainIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
+      <path d="M16 14v6" />
+      <path d="M8 14v6" />
+      <path d="M12 16v6" />
+    </svg>
+  );
+}
+
+const WATER_SOURCES: { value: RainMode; label: string; icon: React.ReactNode }[] = [
+  { value: "hub", label: "Série climática", icon: <GlobeIcon /> },
+  { value: "upload", label: "Upload de série diária", icon: <UploadSheetIcon /> },
+  { value: "uniform", label: "Lâmina de chuva/irrigação", icon: <DropIcon /> },
+];
+
+const SCENARIO_ICONS: Record<string, React.ReactNode> = {
+  seco: <SunIcon />,
+  medio: <SunCloudIcon />,
+  chuvoso: <CloudRainIcon />,
 };
 
 export default function StepWater(props: Props) {
@@ -82,7 +168,6 @@ export default function StepWater(props: Props) {
     climateRows, setClimateRows, hubKey, setHubKey, hubScenario, setHubScenario,
     hubAppDay, setHubAppDay, uploadAppDay, setUploadAppDay,
     analysisStart, setAnalysisStart, analysisEnd, setAnalysisEnd, printDays, setPrintDays,
-    error, fieldErrors, onBack, onRun,
   } = props;
   const [hubs, setHubs] = useState<HubInfo[]>([]);
   const [hubError, setHubError] = useState("");
@@ -91,6 +176,7 @@ export default function StepWater(props: Props) {
   const [uploadError, setUploadError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [exampleCsv, setExampleCsv] = useState("");
+  const [mapOk, setMapOk] = useState(true);
 
   useEffect(() => {
     getHubs().then(setHubs).catch((e) => setHubError(e instanceof Error ? e.message : String(e)));
@@ -128,6 +214,10 @@ export default function StepWater(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rainMode, hubKey, hubScenario]);
 
+  useEffect(() => {
+    setMapOk(true);
+  }, [hubKey]);
+
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     setUploadError("");
     setUploadStatus("");
@@ -163,123 +253,141 @@ export default function StepWater(props: Props) {
 
   return (
     <>
-      <div className="form-row">
-        <label className="field">Regime hídrico
-          <select value={rainModeToWaterSource(rainMode)} onChange={(e) => setRainMode(waterSourceToRainMode(e.target.value))}>
-            {WATER_SOURCE_OPTIONS.map((o) => (
-              <option key={o} value={o}>{o}</option>
-            ))}
-          </select>
-        </label>
-        {isUniform && (
-          <>
-            <label className="field">Duração do Ensaio [dias]
-              <input value={days} onChange={(e) => setDays(e.target.value)} />
-            </label>
-            <label className="field">Lâmina de Chuva / Irrigação [mm]
-              <input value={rainMm} onChange={(e) => setRainMm(e.target.value)} />
-            </label>
-          </>
-        )}
-        <label className="field">Umidade Prévia do Solo [% do intervalo residual→CC]
-          <input value={moisture} onChange={(e) => setMoisture(e.target.value)} />
-        </label>
-        {isUniform && (
-          <label className="field">ET0 - Evapotranspiração de referência [mm/dia]
-            <input value={et0} onChange={(e) => setEt0(e.target.value)} />
+      <div className="choice-cards-3" role="radiogroup" aria-label="Fonte de água">
+        {WATER_SOURCES.map((o) => (
+          <label key={o.value} className={`choice-card${rainMode === o.value ? " selected" : ""}`}>
+            <input
+              type="radio"
+              name="water-source"
+              value={o.value}
+              checked={rainMode === o.value}
+              onChange={() => setRainMode(o.value)}
+            />
+            <span className="choice-icon">{o.icon}</span>
+            {o.label}
           </label>
-        )}
+        ))}
       </div>
 
-      {isHub && (
+      {isUniform && (
         <>
-          <div className="form-row" style={{ marginTop: 12 }}>
-            <label className="field">Polo agrícola
-              <select value={hubKey} onChange={(e) => setHubKey(e.target.value)}>
-                {hubs.map((h) => (
-                  <option key={h.key} value={h.key}>{h.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field">Regime de chuva
-              <select value={hubScenario} onChange={(e) => setHubScenario(e.target.value)}>
-                {SCENARIO_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </label>
+          <div className="form-row" style={{ marginTop: 16 }}>
+            <Field label="Lâmina de Chuva / Irrigação [mm]">
+              <input value={rainMm} onChange={(e) => setRainMm(e.target.value)} inputMode="decimal" />
+            </Field>
+            <Field label="Umidade Prévia do Solo [% do intervalo residual→CC]">
+              <input value={moisture} onChange={(e) => setMoisture(e.target.value)} inputMode="decimal" />
+            </Field>
+            <Field label="Duração do Ensaio [dias]">
+              <input value={days} onChange={(e) => setDays(e.target.value)} inputMode="decimal" />
+            </Field>
           </div>
-          <div style={{ marginTop: 8 }} role="radiogroup" aria-label="Regime de chuva">
-            {SCENARIO_OPTIONS.map((o) => (
-              <label key={o.value} style={{ marginRight: 16 }}>
-                <input
-                  type="radio"
-                  name="scenario"
-                  checked={hubScenario === o.value}
-                  onChange={() => setHubScenario(o.value)}
-                />{" "}
-                {o.label}
-              </label>
-            ))}
-          </div>
-          {hubError && <p className="error-text">{hubError}</p>}
-          {seriesInfo && <p style={{ fontSize: 12 }}>{seriesInfo}</p>}
-          <div style={{ marginTop: 8 }}>
-            <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={hubAppDay} setAppDay={setHubAppDay} />
+          <div className="step-section-title">Evapotranspiração</div>
+          <div className="form-row">
+            <Field label="ET0 - Evapotranspiração de referência [mm/dia]">
+              <input value={et0} onChange={(e) => setEt0(e.target.value)} inputMode="decimal" />
+            </Field>
           </div>
         </>
       )}
 
+      {isHub && (
+        <div style={{ marginTop: 16 }}>
+          <div className="polo-layout-row">
+            <div className="polo-map-col">
+              {mapOk && hubKey ? (
+                <div className="polo-map">
+                  <img
+                    src={`/maps/${hubKey}.png`}
+                    alt={`Mapa do polo ${hubKey}`}
+                    onError={() => setMapOk(false)}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <div className="polo-controls-col">
+              <Field label="Polo agrícola">
+                <select value={hubKey} onChange={(e) => setHubKey(e.target.value)}>
+                  {hubs.map((h) => (
+                    <option key={h.key} value={h.key}>{h.label}</option>
+                  ))}
+                </select>
+              </Field>
+              <div className="choice-cards-3" role="radiogroup" aria-label="Regime de chuva" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+                {SCENARIO_OPTIONS.map((o) => (
+                  <label key={o.value} className={`choice-card${hubScenario === o.value ? " selected" : ""}`} style={{ padding: "16px 10px 14px 10px" }}>
+                    <input
+                      type="radio"
+                      name="scenario"
+                      value={o.value}
+                      checked={hubScenario === o.value}
+                      onChange={() => setHubScenario(o.value)}
+                    />
+                    <span className="choice-icon sm">{SCENARIO_ICONS[o.value]}</span>
+                    <span style={{ fontSize: 13.5 }}>{o.label}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="app-day-chip">
+                <Field label="Dia da aplicação do fertilizante [1 - 365]">
+                  <input value={hubAppDay} onChange={(e) => setHubAppDay(e.target.value)} placeholder={APP_DAY_DEFAULT} inputMode="decimal" />
+                </Field>
+              </div>
+            </div>
+          </div>
+          {hubError && <p className="error-text">{hubError}</p>}
+          {seriesInfo && <p className="hint-text">{seriesInfo}</p>}
+          <div className="upload-note">
+            <div><b>Tabela editável (365 dias):</b> edite células diretamente ou cole dados do Excel (Ctrl+V).</div>
+          </div>
+          <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={hubAppDay} setAppDay={setHubAppDay} hideAppDay />
+        </div>
+      )}
+
       {rainMode === "upload" && (
-        <>
-          <div className="form-row" style={{ marginTop: 12 }}>
-            <label className="field">Carregar planilha (.xlsx, .xls, .csv)
-              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} disabled={uploading} />
-            </label>
-            <span style={{ fontSize: 12, alignSelf: "end" }}>
+        <div style={{ marginTop: 16 }}>
+          <div className="form-row">
+            <Field label="Carregar planilha (.xlsx, .xls, .csv)">
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} disabled={uploading} style={{ height: "auto", paddingTop: 10 }} />
+            </Field>
+            <span style={{ alignSelf: "end" }}>
               <button type="button" className="btn" onClick={downloadExample} disabled={!exampleCsv}>
                 Baixar tabela-exemplo (.csv)
               </button>
             </span>
           </div>
-          <p style={{ fontSize: 12, opacity: 0.8 }}>
-            São esperadas uma coluna de chuva (mm) e, opcionalmente, de ET0 (mm/dia).
-          </p>
-          {uploadError && <p className="error-text">{uploadError}</p>}
-          {uploadStatus && <p style={{ fontSize: 12 }}>{uploadStatus}</p>}
-          <div style={{ marginTop: 8 }}>
-            <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={uploadAppDay} setAppDay={setUploadAppDay} />
+          <div className="upload-note">
+            <div><b>Série diária (365 dias):</b> a planilha importada preenche a tabela abaixo. São esperadas uma coluna de chuva (mm) e, opcionalmente, de ET0 (mm/dia).</div>
           </div>
-        </>
+          {uploadError && <p className="error-text">{uploadError}</p>}
+          {uploadStatus && <p className="hint-text">{uploadStatus}</p>}
+          <div className="app-day-chip" style={{ marginBottom: 8 }}>
+            <Field label="Dia da aplicação do fertilizante [1 - 365]">
+              <input value={uploadAppDay} onChange={(e) => setUploadAppDay(e.target.value)} placeholder={APP_DAY_DEFAULT} inputMode="decimal" />
+            </Field>
+          </div>
+          <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={uploadAppDay} setAppDay={setUploadAppDay} hideAppDay />
+        </div>
       )}
 
       {!isUniform && (
         <>
           <div className="form-row" style={{ marginTop: 12 }}>
-            <label className="field">Início da janela de análise [dia do ano]
-              <input value={analysisStart} onChange={(e) => setAnalysisStart(e.target.value)} />
-            </label>
-            <label className="field">Fim da janela de análise [dia do ano]
-              <input value={analysisEnd} onChange={(e) => setAnalysisEnd(e.target.value)} />
-            </label>
+            <Field label="Início da janela de análise [dia do ano]">
+              <input value={analysisStart} onChange={(e) => setAnalysisStart(e.target.value)} inputMode="decimal" />
+            </Field>
+            <Field label="Fim da janela de análise [dia do ano]">
+              <input value={analysisEnd} onChange={(e) => setAnalysisEnd(e.target.value)} inputMode="decimal" />
+            </Field>
           </div>
-          <div className="form-row" style={{ marginTop: 8 }}>
-            <label className="field" style={{ flex: "1 1 100%" }}>Dias de leitura [dia do ensaio] (ex: 55,128,237,365)
+          <div className="form-row">
+            <Field label="Dias de leitura [dia do ensaio] (ex: 55,128,237,365)">
               <input value={printDays} onChange={(e) => setPrintDays(e.target.value)} placeholder="obrigatório — ex: 55, 128, 237, 365" />
-            </label>
+            </Field>
           </div>
         </>
       )}
-      {fieldErrors.length > 0 && (
-        <ul className="error-text">
-          {fieldErrors.map((m, i) => <li key={i}>{m}</li>)}
-        </ul>
-      )}
-      {error && <p className="error-text">{error}</p>}
-      <div className="btn-row">
-        <button className="btn" onClick={onBack}>Voltar</button>
-        <button className="btn btn-primary" onClick={onRun}>Calcular Resultados</button>
-      </div>
+
     </>
   );
 }

@@ -34,10 +34,37 @@ type Props = {
   bulk: string;
   setBulk: (v: string) => void;
   rosettaNote: string;
-  error: string;
-  fieldErrors: string[];
-  onNext: () => void;
 };
+
+function SoilLayersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 9.5h18" />
+      <path d="M3 14.5h18" />
+    </svg>
+  );
+}
+
+function SeedlingIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 20h10" />
+      <path d="M12 20v-9" />
+      <path d="M12 11c0-3.3 2.2-5.5 5.5-5.5C17.5 8.8 15.3 11 12 11z" />
+      <path d="M12 11C12 7.7 9.8 5.5 6.5 5.5 6.5 8.8 8.7 11 12 11z" />
+    </svg>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="field">
+      <span className="field-label">{label}</span>
+      {children}
+    </label>
+  );
+}
 
 export default function StepSoil({
   soils,
@@ -71,25 +98,23 @@ export default function StepSoil({
   bulk,
   setBulk,
   rosettaNote,
-  error,
-  fieldErrors,
-  onNext,
 }: Props) {
   const comCultura = cropMode === "com";
   return (
     <>
       <div className="form-row">
-        <label className="field">Tipo de Solo
+        <Field label="Tipo de Solo">
           <select value={soil} onChange={(e) => setSoil(e.target.value)} disabled={isCustomSoil}>
             {soils.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
           </select>
-        </label>
+        </Field>
       </div>
 
-      <div className="form-row" style={{ marginTop: 8 }}>
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+      <div className="custom-toggle-chk">
+        <label>
           <input
             type="checkbox"
+            className="switch"
             checked={isCustomSoil}
             onChange={(e) => setIsCustomSoil(e.target.checked)}
           />
@@ -98,9 +123,10 @@ export default function StepSoil({
       </div>
 
       {isCustomSoil && (
-        <div style={{ marginTop: 12 }}>
-          <div className="form-row">
-            <label className="field">% de Areia ({sandPct}%)
+        <div className="custom-param-box">
+          <span className="param-subheading">Granulometria do Solo Personalizado (Cálculo Automático Rosetta)</span>
+          <div className="form-row" style={{ marginTop: 12 }}>
+            <Field label={`% de Areia`}>
               <input
                 type="range"
                 min={0}
@@ -108,9 +134,10 @@ export default function StepSoil({
                 step={5}
                 value={sandPct}
                 onChange={(e) => setSandPct(e.target.value)}
+                aria-label="% de Areia"
               />
-            </label>
-            <label className="field">% de Argila ({clayPct}%)
+            </Field>
+            <Field label={`% de Argila`}>
               <input
                 type="range"
                 min={0}
@@ -118,56 +145,59 @@ export default function StepSoil({
                 step={5}
                 value={clayPct}
                 onChange={(e) => setClayPct(e.target.value)}
+                aria-label="% de Argila"
               />
-            </label>
+            </Field>
           </div>
-          {rosettaNote && <p className="hint-text">{rosettaNote}</p>}
+          {rosettaNote && <div className="soil-texture-badge" dangerouslySetInnerHTML={{ __html: rosettaNote.replace(/(\S+):/g, "<b>$1:</b>") }} />}
         </div>
       )}
 
-      <h3 className="section-title" style={{ marginTop: 20 }}>Propriedades Físico-Hídricas do Solo (van Genuchten - Mualem)</h3>
+      <div style={{ margin: "18px 0 10px 0" }}>
+        <span className="step-section-title-inline">Propriedades Físico-Hídricas do Solo (van Genuchten - Mualem)</span>
+      </div>
       <div className="form-row">
-        <label className="field">θr - Umidade residual [cm³/cm³]
+        <Field label="θr - Umidade residual [cm³/cm³]">
           <input value={thetaR} onChange={(e) => setThetaR(e.target.value)} inputMode="decimal" type="number" step="any" min={0} max={1} />
-        </label>
-        <label className="field">θs - Umidade de saturação [cm³/cm³]
+        </Field>
+        <Field label="θs - Umidade de saturação [cm³/cm³]">
           <input value={thetaS} onChange={(e) => setThetaS(e.target.value)} inputMode="decimal" type="number" step="any" min={0} max={1} />
-        </label>
-        <label className="field">α - Parâmetro de escala (entrada de ar) [1/cm]
+        </Field>
+        <Field label="α - Parâmetro de escala (entrada de ar) [1/cm]">
           <input value={vgAlpha} onChange={(e) => setVgAlpha(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
-        </label>
+        </Field>
       </div>
-      <div className="form-row" style={{ marginTop: 8 }}>
-        <label className="field">n - Índice de poros [-]
+      <div className="form-row">
+        <Field label="n - Índice de poros [-]">
           <input value={vgN} onChange={(e) => setVgN(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
-        </label>
-        <label className="field">Ks - Condutividade saturada [cm/dia]
+        </Field>
+        <Field label="Ks - Condutividade saturada [cm/dia]">
           <input value={ks} onChange={(e) => setKs(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
-        </label>
-        <label className="field">ρb - Densidade aparente [g/cm³]
+        </Field>
+        <Field label="ρb - Densidade aparente [g/cm³]">
           <input value={bulk} onChange={(e) => setBulk(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
-        </label>
+        </Field>
       </div>
 
-      <details style={{ marginTop: 16 }}>
-        <summary>Avançado</summary>
-        <div className="form-row" style={{ marginTop: 12 }}>
-          <label className="field">Profundidade do perfil [cm] (máx 300)
-            <input
-              value={depthCm}
-              onChange={(e) => setDepthCm(e.target.value)}
-              inputMode="decimal"
-              type="number"
-              min={1}
-              max={300}
-            />
-          </label>
-        </div>
-      </details>
+      <div style={{ margin: "26px 0 10px 0" }}>
+        <span className="step-section-title-inline">Domínio do Perfil de Solo Simulado</span>
+      </div>
+      <div className="form-row">
+        <Field label="Profundidade do Perfil Simulado [cm]">
+          <input
+            value={depthCm}
+            onChange={(e) => setDepthCm(e.target.value)}
+            inputMode="decimal"
+            type="number"
+            min={1}
+            max={300}
+          />
+        </Field>
+      </div>
 
-      <h3 className="section-title" style={{ marginTop: 20 }}>Cultura (Transpiração e Absorção Radicular)</h3>
-      <div className="form-row" role="radiogroup" aria-label="Modo de cultura">
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+      <div className="step-section-title" style={{ marginTop: 28 }}>Cultura (Transpiração e Absorção Radicular)</div>
+      <div className="choice-cards" role="radiogroup" aria-label="Modo de cultura">
+        <label className={`choice-card${!comCultura ? " selected" : ""}`}>
           <input
             type="radio"
             name="crop-mode"
@@ -175,9 +205,10 @@ export default function StepSoil({
             checked={!comCultura}
             onChange={() => setCropMode("sem")}
           />
-          Sem cultura
+          <span className="choice-icon"><SoilLayersIcon /></span>
+          Sem cultura (perfil nu)
         </label>
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <label className={`choice-card${comCultura ? " selected" : ""}`}>
           <input
             type="radio"
             name="crop-mode"
@@ -185,38 +216,31 @@ export default function StepSoil({
             checked={comCultura}
             onChange={() => setCropMode("com")}
           />
-          Com cultura
+          <span className="choice-icon"><SeedlingIcon /></span>
+          Com cultura agrícola
         </label>
       </div>
 
       {comCultura && (
-        <div className="form-row" style={{ marginTop: 12 }}>
-          <label className="field">Cultura agrícola
-            <select value={crop} onChange={(e) => setCrop(e.target.value)}>
-              {crops.map((c) => <option key={c.key} value={c.key}>{c.name} (raiz {c.root_depth_cm} cm)</option>)}
-            </select>
-          </label>
-          <label className="field">Profundidade radicular [cm]
-            <input
-              value={rootDepthCm}
-              onChange={(e) => setRootDepthCm(e.target.value)}
-              inputMode="decimal"
-              type="number"
-              min={1}
-            />
-          </label>
+        <div style={{ marginTop: 20 }}>
+          <div className="form-row">
+            <Field label="Cultura agrícola">
+              <select value={crop} onChange={(e) => setCrop(e.target.value)}>
+                {crops.map((c) => <option key={c.key} value={c.key}>{c.name} (raiz {c.root_depth_cm} cm)</option>)}
+              </select>
+            </Field>
+            <Field label="Profundidade radicular [cm]">
+              <input
+                value={rootDepthCm}
+                onChange={(e) => setRootDepthCm(e.target.value)}
+                inputMode="decimal"
+                type="number"
+                min={1}
+              />
+            </Field>
+          </div>
         </div>
       )}
-
-      {fieldErrors.length > 0 && (
-        <ul className="error-text">
-          {fieldErrors.map((m, i) => <li key={i}>{m}</li>)}
-        </ul>
-      )}
-      {error && <p className="error-text">{error}</p>}
-      <div className="btn-row">
-        <button className="btn btn-primary" onClick={onNext}>Avançar</button>
-      </div>
     </>
   );
 }

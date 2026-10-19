@@ -7,6 +7,7 @@ type Props = {
   setRows: (rows: ClimateRow[]) => void;
   appDay: string;
   setAppDay: (v: string) => void;
+  hideAppDay?: boolean;
 };
 
 export const APP_DAY_LABEL = "Dia da aplicação do fertilizante [1 - 365]";
@@ -20,7 +21,7 @@ function toNum(raw: string): number | null {
   return v;
 }
 
-export default function ClimateTable({ rows, setRows, appDay, setAppDay }: Props) {
+export default function ClimateTable({ rows, setRows, appDay, setAppDay, hideAppDay }: Props) {
   function setCell(i: number, field: "rain_mm" | "et0_mm", raw: string) {
     const v = toNum(raw);
     // Mantém o texto digitado válido; inválido (< 0 ou texto) zera o erro no envio.
@@ -31,43 +32,48 @@ export default function ClimateTable({ rows, setRows, appDay, setAppDay }: Props
 
   return (
     <>
-      <div className="form-row">
-        <label className="field">
-          {APP_DAY_LABEL}
-          <input value={appDay} onChange={(e) => setAppDay(e.target.value)} placeholder={APP_DAY_DEFAULT} />
-        </label>
-        <span style={{ fontSize: 12, opacity: 0.8, alignSelf: "end" }}>
+      {!hideAppDay && (
+        <div className="form-row">
+          <label className="field">
+            <span className="field-label">{APP_DAY_LABEL}</span>
+            <input value={appDay} onChange={(e) => setAppDay(e.target.value)} placeholder={APP_DAY_DEFAULT} inputMode="decimal" />
+          </label>
+          <span className="hint-text" style={{ alignSelf: "end" }}>
+            Chuva total na tabela: {totalRain.toFixed(1)} mm ({rows.length} dias)
+          </span>
+        </div>
+      )}
+      {hideAppDay && (
+        <p className="hint-text">
           Chuva total na tabela: {totalRain.toFixed(1)} mm ({rows.length} dias)
-        </span>
-      </div>
-      <div style={{ marginTop: 8, maxHeight: 360, overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: 8 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead style={{ position: "sticky", top: 0, background: "#f8fafc" }}>
+        </p>
+      )}
+      <div className="climate-table-wrap">
+        <table className="climate-table">
+          <thead>
             <tr>
-              <th style={{ padding: "6px 8px", textAlign: "right" }}>Dia</th>
-              <th style={{ padding: "6px 8px", textAlign: "right" }}>Chuva (mm)</th>
-              <th style={{ padding: "6px 8px", textAlign: "right" }}>ET0 (mm/dia)</th>
+              <th>Dia</th>
+              <th>Chuva (mm)</th>
+              <th>ET0 (mm/dia)</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={r.day} style={{ borderTop: "1px solid #f1f5f9" }}>
-                <td style={{ padding: "2px 8px", textAlign: "right", color: "#64748b" }}>{r.day}</td>
-                <td style={{ padding: 2, textAlign: "right" }}>
+              <tr key={r.day}>
+                <td className="day-cell">{r.day}</td>
+                <td>
                   <input
                     aria-label={`Chuva dia ${r.day}`}
                     value={Number.isNaN(r.rain_mm) ? "" : String(r.rain_mm)}
                     onChange={(e) => setCell(i, "rain_mm", e.target.value)}
-                    style={{ width: 90, textAlign: "right" }}
                     inputMode="decimal"
                   />
                 </td>
-                <td style={{ padding: 2, textAlign: "right" }}>
+                <td>
                   <input
                     aria-label={`ET0 dia ${r.day}`}
                     value={Number.isNaN(r.et0_mm) ? "" : String(r.et0_mm)}
                     onChange={(e) => setCell(i, "et0_mm", e.target.value)}
-                    style={{ width: 90, textAlign: "right" }}
                     inputMode="decimal"
                   />
                 </td>
@@ -76,7 +82,7 @@ export default function ClimateTable({ rows, setRows, appDay, setAppDay }: Props
           </tbody>
         </table>
       </div>
-      <p style={{ fontSize: 12, opacity: 0.8 }}>
+      <p className="hint-text">
         Tabela editável (365 dias): edite células ou cole dados do Excel. A tabela é a fonte da série enviada para a simulação.
       </p>
     </>
