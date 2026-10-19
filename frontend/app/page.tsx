@@ -30,6 +30,12 @@ const DEFAULTS = {
   bulk: "1.3",
   cropMode: "sem",
   crop: "soja",
+  cropName: "Soja",
+  cropKc: "1",
+  cropH1: "-15",
+  cropH2: "-30",
+  cropH3: "-450",
+  cropH4: "-12000",
   depthCm: "200",
   rootDepthCm: "35",
   days: "7",
@@ -37,6 +43,9 @@ const DEFAULTS = {
   rainMm: "60",
   moisture: "80",
   et0: "4.0",
+  advEt: false,
+  evap: "0",
+  transp: "0",
   hubKey: "",
   hubScenario: "medio",
   hubAppDay: "30",
@@ -147,6 +156,12 @@ export default function Home() {
   const [kdInfo, setKdInfo] = useState<Record<string, { kd: string; citation: string }>>({});
   const [cropMode, setCropModeState] = useState(DEFAULTS.cropMode);
   const [crop, setCrop] = useState(DEFAULTS.crop);
+  const [cropName, setCropName] = useState(DEFAULTS.cropName);
+  const [cropKc, setCropKc] = useState(DEFAULTS.cropKc);
+  const [cropH1, setCropH1] = useState(DEFAULTS.cropH1);
+  const [cropH2, setCropH2] = useState(DEFAULTS.cropH2);
+  const [cropH3, setCropH3] = useState(DEFAULTS.cropH3);
+  const [cropH4, setCropH4] = useState(DEFAULTS.cropH4);
   const [depthCm, setDepthCm] = useState(DEFAULTS.depthCm);
   const [rootDepthCm, setRootDepthCm] = useState(DEFAULTS.rootDepthCm);
   const [days, setDays] = useState(DEFAULTS.days);
@@ -154,6 +169,9 @@ export default function Home() {
   const [rainMm, setRainMm] = useState(DEFAULTS.rainMm);
   const [moisture, setMoisture] = useState(DEFAULTS.moisture);
   const [et0, setEt0] = useState(DEFAULTS.et0);
+  const [advEt, setAdvEt] = useState(DEFAULTS.advEt);
+  const [evap, setEvap] = useState(DEFAULTS.evap);
+  const [transp, setTransp] = useState(DEFAULTS.transp);
   const [climateRows, setClimateRows] = useState<ClimateRow[]>(() => emptyRows(365));
   const [hubKey, setHubKey] = useState(DEFAULTS.hubKey);
   const [hubScenario, setHubScenario] = useState(DEFAULTS.hubScenario);
@@ -187,21 +205,31 @@ export default function Home() {
     getSoils().then(setSoils).catch(() => setValidationIssues(["API fora do ar (backend :8001)."]));
     getCrops().then((cs) => {
       setCrops(cs);
-      // Prefill raiz da cultura selecionada (Gradio: root_depth da cultura).
+      // Prefill cultura selecionada (Gradio: nome + raiz + Kc + Feddes da cultura).
       const found = cs.find((c) => c.key === crop);
       if (found) {
-        setRootDepthCm((prev) => (prev === "" ? String(found.root_depth_cm) : prev));
+        fillCropParams(found);
       }
     }).catch(() => {});
     return () => { if (timer.current) clearInterval(timer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function fillCropParams(c: Crop) {
+    setCropName(c.name);
+    setRootDepthCm(String(c.root_depth_cm));
+    setCropKc(String(c.kc));
+    setCropH1(String(c.h1));
+    setCropH2(String(c.h2));
+    setCropH3(String(c.h3));
+    setCropH4(String(c.h4));
+  }
+
   function setCropMode(mode: string) {
     setCropModeState(mode);
     if (mode === "com") {
       const found = crops.find((c) => c.key === crop);
-      if (found) setRootDepthCm(String(found.root_depth_cm));
+      if (found) fillCropParams(found);
     }
   }
 
@@ -276,7 +304,7 @@ export default function Home() {
   function handleCropSelect(key: string) {
     setCrop(key);
     const found = crops.find((c) => c.key === key);
-    if (found) setRootDepthCm(String(found.root_depth_cm));
+    if (found) fillCropParams(found);
   }
 
   function openValidation(issues: string[]) {
@@ -310,6 +338,13 @@ export default function Home() {
     return Number.isNaN(v) ? def : v;
   }
 
+  function numOrNull(x: string): number | null {
+    const t = String(x ?? "").trim().replace(",", ".");
+    if (!t) return null;
+    const v = parseFloat(t);
+    return Number.isNaN(v) ? null : v;
+  }
+
   function resetToDefaults() {
     if (timer.current) clearInterval(timer.current);
     setSoil(DEFAULTS.soil);
@@ -326,6 +361,12 @@ export default function Home() {
     setKdInfo({});
     setCropModeState(DEFAULTS.cropMode);
     setCrop(DEFAULTS.crop);
+    setCropName(DEFAULTS.cropName);
+    setCropKc(DEFAULTS.cropKc);
+    setCropH1(DEFAULTS.cropH1);
+    setCropH2(DEFAULTS.cropH2);
+    setCropH3(DEFAULTS.cropH3);
+    setCropH4(DEFAULTS.cropH4);
     setDepthCm(DEFAULTS.depthCm);
     setRootDepthCm(DEFAULTS.rootDepthCm);
     setDays(DEFAULTS.days);
@@ -333,6 +374,9 @@ export default function Home() {
     setRainMm(DEFAULTS.rainMm);
     setMoisture(DEFAULTS.moisture);
     setEt0(DEFAULTS.et0);
+    setAdvEt(DEFAULTS.advEt);
+    setEvap(DEFAULTS.evap);
+    setTransp(DEFAULTS.transp);
     setClimateRows(emptyRows(365));
     setHubKey(DEFAULTS.hubKey);
     setHubScenario(DEFAULTS.hubScenario);
@@ -460,12 +504,21 @@ export default function Home() {
           ks: num(ks, 80),
         } : null,
         crop_key: isCom ? crop : null,
+        crop_name: isCom ? (cropName.trim() || null) : null,
+        kc: isCom ? numOrNull(cropKc) : null,
+        h1: isCom ? numOrNull(cropH1) : null,
+        h2: isCom ? numOrNull(cropH2) : null,
+        h3: isCom ? numOrNull(cropH3) : null,
+        h4: isCom ? numOrNull(cropH4) : null,
         depth_cm: depthVal,
         root_depth_cm: isCom ? num(rootDepthCm, rootFallback) : null,
         total_days,
         rain_mm: num(rainMm, 0), rain_series,
         initial_moisture_pct: num(moisture, 80),
-        et0_mm_day: num(et0, 0), et0_series, solutes,
+        et0_mm_day: num(et0, 0), et0_series,
+        evap_mm_day: rainMode === "uniform" && advEt ? num(evap, 0) : 0,
+        transp_mm_day: rainMode === "uniform" && advEt && isCom ? num(transp, 0) : 0,
+        solutes,
         water_only: waterOnly,
         analysis_start_day,
         analysis_end_day,
@@ -578,7 +631,7 @@ export default function Home() {
   const isCom = cropMode === "com";
   const cropEntry = crops.find((c) => c.key === crop);
   const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
-  const cropName = isCom ? (cropEntry?.name ?? crop) : "Sem cultura";
+  const cropLabel = isCom ? (cropName.trim() || cropEntry?.name || crop) : "Sem cultura";
   const running = jobState === "queued" || jobState === "running";
 
   return (
@@ -615,6 +668,18 @@ export default function Home() {
                 setCropMode={setCropMode}
                 crop={crop}
                 setCrop={handleCropSelect}
+                cropName={cropName}
+                setCropName={setCropName}
+                cropKc={cropKc}
+                setCropKc={setCropKc}
+                cropH1={cropH1}
+                setCropH1={setCropH1}
+                cropH2={cropH2}
+                setCropH2={setCropH2}
+                cropH3={cropH3}
+                setCropH3={setCropH3}
+                cropH4={cropH4}
+                setCropH4={setCropH4}
                 depthCm={depthCm}
                 setDepthCm={setDepthCm}
                 rootDepthCm={rootDepthCm}
@@ -684,6 +749,14 @@ export default function Home() {
                 setMoisture={setMoisture}
                 et0={et0}
                 setEt0={setEt0}
+                hasCrop={isCom}
+                cropKc={cropKc}
+                advEt={advEt}
+                setAdvEt={setAdvEt}
+                evap={evap}
+                setEvap={setEvap}
+                transp={transp}
+                setTransp={setTransp}
                 climateRows={climateRows}
                 setClimateRows={setClimateRows}
                 hubKey={hubKey}
@@ -709,7 +782,7 @@ export default function Home() {
                 elapsed={elapsed}
                 result={result}
                 report={report}
-                cropName={cropName}
+                cropName={cropLabel}
                 rootDepth={rootDepth}
                 appliedMm={appliedMm}
                 onDownloadExcel={downloadExcel}

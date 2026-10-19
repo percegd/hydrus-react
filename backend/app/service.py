@@ -148,13 +148,69 @@ def _resolve_soil(req: SimulateRequest):
     return SOIL_DATABASE[req.soil_key]
 
 
+def _build_crop(req: SimulateRequest):
+    """Cultura com overrides editáveis, exatamente como o Gradio (app_gradio.py).
+
+    - crop_key no banco: parte dos valores do banco, aplicando overrides
+      (crop_name, root_depth_cm, kc, h1..h4) quando informados;
+    - crop_key="custom" (ou nome que não casa com o banco): cultura
+      personalizada montada dos campos, com os defaults do Gradio
+      (raiz 35 cm, kc 1.0, h1..h4 = -15/-30/-450/-12000);
+    - stage "Literatura (Feddes/FAO-56)" quando o nome casa com o banco,
+      senão "Personalizado" (mesma regra do Gradio).
+    """
+    from hydrus_core.crop import CROP_DATABASE, CropParameters
+
+    key = req.crop_key
+    if not key:
+        return None
+    if key == "custom":
+        base = None
+    else:
+        base = CROP_DATABASE.get(key)
+        if base is None:
+            return None
+    _name = (str(req.crop_name).strip() if req.crop_name else "") or (
+        base.name if base else "Cultura Personalizada"
+    )
+    _db_match = next(
+        (c for c in CROP_DATABASE.values() if c.name.strip().lower() == _name.lower()),
+        None,
+    )
+    def _ov(value, fallback):
+        return float(value) if value is not None else float(fallback)
+
+    if base is not None:
+        root = _ov(req.root_depth_cm, base.root_depth_cm)
+        kc = _ov(req.kc, base.kc)
+        h1 = _ov(req.h1, base.h1)
+        h2 = _ov(req.h2, base.h2)
+        h3 = _ov(req.h3, base.h3)
+        h4 = _ov(req.h4, base.h4)
+    else:
+        root = _ov(req.root_depth_cm, 35.0)
+        kc = _ov(req.kc, 1.0)
+        h1 = _ov(req.h1, -15.0)
+        h2 = _ov(req.h2, -30.0)
+        h3 = _ov(req.h3, -450.0)
+        h4 = _ov(req.h4, -12000.0)
+    return CropParameters(
+        name=_name,
+        stage=("Literatura (Feddes/FAO-56)" if _db_match else "Personalizado"),
+        root_depth_cm=root,
+        kc=kc,
+        h1=h1,
+        h2=h2,
+        h3=h3,
+        h4=h4,
+    )
+
+
 def _run_core(req: SimulateRequest):
     """Executa o solver uma vez; retorna (results, soil, crop, root_depth, total_rain, total_days)."""
     soil = _resolve_soil(req)
-    crop = CROP_DATABASE.get(req.crop_key) if req.crop_key else None
+    crop = _build_crop(req)
     root_depth = float(crop.root_depth_cm) if crop else float(req.depth_cm)
-    if req.root_depth_cm and crop:
-        root_depth = float(req.root_depth_cm)
     water_only = bool(req.water_only)
 
     _pmode = (req.placement.mode or "surface")
@@ -225,6 +281,19 @@ def _run_core(req: SimulateRequest):
     # no modo sazonal, nós de observação [20, 50, 100, perfil].
     _print_days_eff = _effective_print_days(req, total_days, sw, ew)
     _obs_depths = _default_obs_depths(float(req.depth_cm), _is_seasonal(req))
+    # ET avançada (Gradio adv_et_toggle, só no modo Lâmina): overrides manuais
+    # evap_mm_day ("0 = derivar de ET0") / transp_mm_day ("0 = ET0·Kc").
+    # No modo sazonal o Gradio ignora os campos (evap_cm_day=None); aqui igual.
+    try:
+        _e_override = float(req.evap_mm_day or 0.0)
+    except (TypeError, ValueError):
+        _e_override = 0.0
+    try:
+        _t_override = float(req.transp_mm_day or 0.0)
+    except (TypeError, ValueError):
+        _t_override = 0.0
+    _evap_arg = (_e_override / 10.0) if (_e_override > 0 and not _is_seasonal(req)) else None
+    _transp_arg = (_t_override if (_t_override > 0 and not _is_seasonal(req)) else None)
     results = sim.run(
         initial_moisture_pct=float(req.initial_moisture_pct),
         fertilizer_dose_kg_ha=sum(n["dose_kg_ha"] for n in nutrients),
@@ -237,6 +306,8 @@ def _run_core(req: SimulateRequest):
         obs_depths_cm=(_obs_depths if _obs_depths else None),
         print_days=(_print_days_eff if _print_days_eff else None),
         water_only=water_only,
+        evap_cm_day=_evap_arg,
+        transpiration_mm_day=_transp_arg,
     )
     return results, soil, crop, root_depth, total_rain, total_days
 

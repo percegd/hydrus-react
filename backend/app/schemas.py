@@ -121,6 +121,16 @@ class SimulateRequest(BaseModel):
     soil_key: Optional[str] = Field(default="latossolo_medio", examples=["latossolo_medio"])
     custom_soil: Optional[CustomSoilInput] = Field(default=None)
     crop_key: Optional[str] = Field(default="soja", examples=["soja"])
+    # T13: cultura editável como no Gradio (crop params box: nome editável,
+    # profundidade radicular, Kc e limiares de Feddes h1..h4). Todos opcionais:
+    # ausente = valor do banco para crop_key; crop_key="custom" = cultura
+    # personalizada montada a partir destes campos.
+    crop_name: Optional[str] = Field(default=None, examples=["Soja"])
+    kc: Optional[float] = Field(default=None, examples=[1.0])
+    h1: Optional[float] = Field(default=None, examples=[-15.0])
+    h2: Optional[float] = Field(default=None, examples=[-30.0])
+    h3: Optional[float] = Field(default=None, examples=[-450.0])
+    h4: Optional[float] = Field(default=None, examples=[-12000.0])
     depth_cm: float = Field(default=200.0, gt=0, le=300)
     root_depth_cm: Optional[float] = Field(default=None, gt=0)
     total_days: float = Field(default=7.0, gt=0, le=730)
@@ -131,6 +141,9 @@ class SimulateRequest(BaseModel):
     initial_moisture_pct: float = Field(default=80.0, ge=0, le=100)
     et0_mm_day: float = Field(default=4.0, ge=0)
     et0_series: Optional[list[float]] = Field(default=None, description="ET0 diária em mm")
+    # ET avançada (Gradio adv_et_toggle): 0 = derivar de ET0 (E = ET0 − T, T = ET0·Kc).
+    evap_mm_day: float = Field(default=0.0, ge=0)
+    transp_mm_day: float = Field(default=0.0, ge=0)
     placement: PlacementInput = Field(default_factory=PlacementInput)
     # T5: modo "Somente água" (Gradio simulation_mode): sem transporte de solutos.
     water_only: bool = Field(default=False)

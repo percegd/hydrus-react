@@ -157,7 +157,16 @@ def soils() -> list[dict]:
 @app.get("/crops")
 def crops() -> list[dict]:
     return [
-        {"key": k, "name": c.name, "root_depth_cm": c.root_depth_cm, "kc": c.kc}
+        {
+            "key": k,
+            "name": c.name,
+            "root_depth_cm": c.root_depth_cm,
+            "kc": c.kc,
+            "h1": c.h1,
+            "h2": c.h2,
+            "h3": c.h3,
+            "h4": c.h4,
+        }
         for k, c in CROP_DATABASE.items()
     ]
 
@@ -512,7 +521,7 @@ def _validate(req: SimulateRequest) -> None:
     # casos, então as checagens manuais abaixo são mantidas (não duplicam).
     # rain >730 dias e símbolo repetido: exclusivos da API, mantidos.
     errors: list[dict] = []
-    if req.crop_key and req.crop_key not in CROP_DATABASE:
+    if req.crop_key and req.crop_key != "custom" and req.crop_key not in CROP_DATABASE:
         errors.append({"field": "crop_key", "message": f"crop_key desconhecido: {req.crop_key}"})
     if req.rain_series and len(req.rain_series) > 730:
         errors.append({"field": "rain_series", "message": "rain_series com mais de 730 dias"})
