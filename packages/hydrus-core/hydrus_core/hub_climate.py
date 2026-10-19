@@ -19,7 +19,7 @@ import numpy as np
 
 from hydrus_core.et0 import fao56_penman_monteith
 
-_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "hub_climate.json")
+_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "hub_climate.json")
 
 
 @lru_cache(maxsize=1)

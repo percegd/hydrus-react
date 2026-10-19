@@ -21,3 +21,6 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["hydrus_core*"]
+
+[tool.setuptools.package-data]
+hydrus_core = ["data/*.json"]
