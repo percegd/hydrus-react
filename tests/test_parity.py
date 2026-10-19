@@ -21,7 +21,7 @@ needs_legacy = pytest.mark.skipif(
 )
 
 if os.path.isdir(os.path.join(LEGACY_ROOT, "core")) and LEGACY_ROOT not in sys.path:
-    sys.path.insert(0, LEGACY_ROOT)
+    sys.path.append(LEGACY_ROOT)  # no fim: o `app.py` legado não pode ocultar o pacote `app` do backend
 
 from hydrus_core.crop import CROP_DATABASE as NEW_CROPS  # noqa: E402
 from hydrus_core.hydrus_solver import Hydrus1DSimulator as NewSim  # noqa: E402
