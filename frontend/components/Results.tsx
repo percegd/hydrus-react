@@ -7,6 +7,7 @@ import ProfileChart from "./ProfileChart";
 import { plotUrl } from "../lib/api";
 import type { ExtraPlot, SimulateResponse } from "../lib/api";
 
+/* Paleta por nutriente — porte de NUTRIENT_ACCENTS (app_gradio.py). */
 const ACCENTS: Record<string, [string, string]> = {
   N: ["#fff7ed", "#c2410c"],
   K: ["#f5f3ff", "#6d28d9"],
@@ -15,6 +16,8 @@ const ACCENTS: Record<string, [string, string]> = {
   Ca: ["#ecfdf5", "#047857"],
   Mg: ["#fdf2f8", "#be185d"],
 };
+
+export type SoluteMeta = { kd: string; residual: string };
 
 type Props = {
   jobState: string;
@@ -26,6 +29,8 @@ type Props = {
   cropName: string;
   rootDepth: number;
   appliedMm: number | null;
+  hasCrop: boolean;
+  soluteMeta?: Record<string, SoluteMeta>;
   onDownloadExcel: () => void;
   onDownloadGraphs: () => void;
   onLoadReport: () => void;
@@ -67,11 +72,12 @@ function groupOf(key: string): PlotGroup {
   return "perfil";
 }
 
+/* Cabeçalhos de seção iguais aos do Gradio (Passo 5 / Resultados). */
 const GROUP_LABELS: Record<PlotGroup | "todos", string> = {
   todos: "Todos",
-  perfil: "Perfil em profundidade",
-  btc: "Avanço no tempo (BTC)",
-  evolucao: "Evolução nos dias de leitura",
+  perfil: "Distribuição em Profundidade C(z)",
+  btc: "Curvas de Avanço no Tempo C(t) e θ(t)",
+  evolucao: "Evolução Temporal do Perfil",
 };
 
 function soluteOf(key: string): string {
@@ -82,8 +88,13 @@ function soluteOf(key: string): string {
   return rest;
 }
 
+function fmtPeak(v: number | null | undefined): string {
+  if (v === null || v === undefined || (typeof v === "number" && Number.isNaN(v))) return "indefinido";
+  return `${v.toFixed(1)} cm`;
+}
+
 export default function Results(props: Props) {
-  const { jobState, elapsed, jobId, result, report, steps, cropName, rootDepth, appliedMm, onDownloadExcel, onDownloadGraphs, onLoadReport, onLoadSteps } = props;
+  const { jobState, elapsed, jobId, result, report, steps, cropName, rootDepth, appliedMm, hasCrop, soluteMeta, onDownloadExcel, onDownloadGraphs, onLoadReport, onLoadSteps } = props;
 
   function extraSrc(p: ExtraPlot): string | null {
     if (p.url && jobId) return plotUrl(jobId, p.key);
@@ -124,13 +135,19 @@ export default function Results(props: Props) {
     if (solute !== "todos") {
       const s = soluteOf(p.key);
       if (s && s !== solute) return false;
-      // Umidade/combinado aparecem em qualquer filtro de soluto? Não — só em "todos".
+      // Umidade/combinado aparecem só em "todos os solutos".
       if (solute !== "todos" && !s && p.key !== "perfil_combinado") return false;
     }
     return true;
   });
 
   const done = jobState === "done";
+  const wb = result?.water_balance ?? null;
+  const appliedLabel = wb?.applied_label ?? "Lâmina Aplicada";
+  const drainageLabel = wb?.drainage_label ?? "Drenagem no Fundo";
+  const appliedVal = wb ? wb.applied_mm : appliedMm;
+  const drainageVal = wb ? wb.drainage_mm : result?.drainage_mm;
+  const waterOnly = !result?.solutes?.length;
 
   return (
     <>
@@ -159,72 +176,75 @@ export default function Results(props: Props) {
 
           {tab === "resultados" && (
             <>
+              {/* Cartões de resultado — porte de build_metrics_cards_html (app_gradio.py):
+                  água (lâmina + drenagem) primeiro, depois um cartão por soluto. */}
               <div className="metrics-card-grid">
-                {result.water_balance ? (
-                  <>
-                    <div className="metric-card">
-                      <div className="metric-icon"><RainIcon /></div>
-                      <div className="metric-value">{result.water_balance.applied_mm.toFixed(1)} mm</div>
-                      <div className="metric-label">{result.water_balance.applied_label}</div>
-                    </div>
-                    <div className="metric-card">
-                      <div className="metric-icon"><DrainIcon /></div>
-                      <div className="metric-value">{result.water_balance.drainage_mm.toFixed(1)} mm</div>
-                      <div className="metric-label">{result.water_balance.drainage_label}</div>
-                      <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
-                    </div>
-                    <div className="metric-card">
-                      <div className="metric-icon"><LayersIcon /></div>
-                      <div className="metric-value">{result.water_balance.storage_mm >= 0 ? "+" : ""}{result.water_balance.storage_mm.toFixed(1)} mm</div>
-                      <div className="metric-label">{result.water_balance.storage_mm >= 0 ? "Ganho de Água no Perfil (θf − θi)" : "Perda de Água no Perfil (θf − θi)"}</div>
-                    </div>
-                    <div className="metric-card">
-                      <div className="metric-icon"><RainIcon /></div>
-                      <div className="metric-value">{result.water_balance.runoff_mm.toFixed(1)} mm</div>
-                      <div className="metric-label">Escoamento Superficial</div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="metric-card">
-                      <div className="metric-icon"><RainIcon /></div>
-                      <div className="metric-value">{appliedMm != null ? `${appliedMm.toFixed(0)} mm` : "—"}</div>
-                      <div className="metric-label">Lâmina Aplicada</div>
-                    </div>
-                    <div className="metric-card">
-                      <div className="metric-icon"><DrainIcon /></div>
-                      <div className="metric-value">{result.drainage_mm.toFixed(1)} mm</div>
-                      <div className="metric-label">Drenagem no Fundo</div>
-                      <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
-                    </div>
-                  </>
-                )}
+                <div className="metric-card">
+                  <div className="metric-icon"><RainIcon /></div>
+                  <div className="metric-value">{appliedVal != null ? `${appliedVal.toFixed(0)} mm` : "—"}</div>
+                  <div className="metric-label">{appliedLabel}</div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-icon"><DrainIcon /></div>
+                  <div className="metric-value">{drainageVal != null ? `${drainageVal.toFixed(1)} mm` : "—"}</div>
+                  <div className="metric-label">{drainageLabel}</div>
+                  <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
+                </div>
                 {result.solutes.map((s) => {
                   const [bg, fg] = ACCENTS[s.symbol] ?? ["#f1f5f9", "#334155"];
                   const dose = s.dose_kg_ha;
+                  const meta = soluteMeta?.[s.symbol];
+                  const kdNum = meta?.kd != null && meta.kd !== "" ? parseFloat(String(meta.kd).replace(",", ".")) : NaN;
+                  const resNum = meta?.residual != null && meta.residual !== "" ? parseFloat(String(meta.residual).replace(",", ".")) : 0;
                   return (
-                    <div className="metric-card" key={s.symbol}>
+                    <div className="metric-card metric-nutr" key={s.symbol}>
                       <div className="metric-nutr-head">
                         <span className="metric-nutr-sym" style={{ background: bg, color: fg }}>{s.symbol}</span>
                         <span className="metric-nutr-name">{s.name}</span>
                       </div>
                       <div className="metric-value">{s.retained_root_pct.toFixed(1)}%</div>
-                      <div className="metric-label">Retido na camada avaliada (0–{rootDepth} cm)</div>
+                      <div className="metric-label">Retido na camada avaliada (0–{rootDepth.toFixed(0)} cm)</div>
                       <div className="metric-sub">{(dose * s.retained_root_pct / 100).toFixed(1)} kg/ha de {dose.toFixed(0)} kg/ha aplicados</div>
                       <div className="metric-nutr-rows">
                         <div className="metric-nutr-row"><span>Abaixo da camada (no perfil)</span><b>{s.below_profile_pct.toFixed(1)}% · {(dose * s.below_profile_pct / 100).toFixed(1)} kg/ha</b></div>
-                        <div className="metric-nutr-row"><span>Atravessou o fundo</span><b>{s.bottom_pct.toFixed(1)}% · {(dose * s.bottom_pct / 100).toFixed(1)} kg/ha</b></div>
-                        <div className="metric-nutr-row"><span>Absorvido (passivo, sem teto nutricional)</span><b>{s.uptaken_pct.toFixed(1)}% · {(dose * s.uptaken_pct / 100).toFixed(1)} kg/ha</b></div>
-                        <div className="metric-nutr-row"><span>Pico no perfil</span><b>{s.peak_depth_cm ?? "indefinido"} cm</b></div>
+                        <div className="metric-nutr-row"><span>Atravessou o fundo ({rootDepth.toFixed(0)} cm)</span><b>{s.bottom_pct.toFixed(1)}% · {(dose * s.bottom_pct / 100).toFixed(1)} kg/ha</b></div>
+                        {s.uptaken_pct > 0.05 && (
+                          <div className="metric-nutr-row"><span>Absorvido (passivo, sem teto nutricional)</span><b>{s.uptaken_pct.toFixed(1)}% · {(dose * s.uptaken_pct / 100).toFixed(1)} kg/ha</b></div>
+                        )}
+                        <div className="metric-nutr-row"><span>Pico no perfil</span><b>{fmtPeak(s.peak_depth_cm)}</b></div>
+                        {Number.isFinite(kdNum) && (
+                          <div className="metric-nutr-row"><span>Kd</span><b>{kdNum.toFixed(3)} cm³/g</b></div>
+                        )}
+                        {resNum > 0 && (
+                          <div className="metric-nutr-row"><span>Residual inicial</span><b>{resNum.toFixed(2)} mg/dm³</b></div>
+                        )}
                       </div>
                     </div>
                   );
                 })}
+                {/* Modo "somente água": balanço hídrico (sem solutos) — porte do ramo
+                    water_only de build_metrics_cards_html. */}
+                {waterOnly && wb && (
+                  <>
+                    <div className="metric-card">
+                      <div className="metric-icon"><LayersIcon /></div>
+                      <div className="metric-value">{wb.storage_mm >= 0 ? "+" : ""}{wb.storage_mm.toFixed(1)} mm</div>
+                      <div className="metric-label">{wb.storage_mm >= 0 ? "Ganho de Água no Perfil (θf − θi)" : "Perda de Água no Perfil (θf − θi)"}</div>
+                    </div>
+                    {wb.runoff_mm > 0.05 && (
+                      <div className="metric-card">
+                        <div className="metric-icon"><RainIcon /></div>
+                        <div className="metric-value">{wb.runoff_mm.toFixed(1)} mm</div>
+                        <div className="metric-label">Escoamento Superficial</div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
-              {result.water_balance?.evap_mm != null && result.water_balance?.transp_mm != null && (
+              {wb?.evap_mm != null && wb?.transp_mm != null && (
                 <p className="muted">
-                  Evapotranspiração (E+T): {(result.water_balance.evap_mm + result.water_balance.transp_mm).toFixed(1)} mm
-                  {" "}(E {result.water_balance.evap_mm.toFixed(1)} + T {result.water_balance.transp_mm.toFixed(1)} mm)
+                  Evapotranspiração (E+T): {(wb.evap_mm + wb.transp_mm).toFixed(1)} mm
+                  {" "}(E {wb.evap_mm.toFixed(1)} + T {wb.transp_mm.toFixed(1)} mm)
                 </p>
               )}
               {result.profiles && Object.keys(result.profiles.solutes ?? {}).length > 0 && (
@@ -249,14 +269,14 @@ export default function Results(props: Props) {
                     ))}
                   </div>
                   {solutes.length > 1 && (
-                    <div className="btn-row" style={{ marginTop: 0, marginBottom: 12 }} role="tablist" aria-label="Gráficos por soluto">
+                    <div className="btn-row" style={{ marginTop: 0, marginBottom: 12 }} role="tablist" aria-label="Por Soluto">
                       <button
                         role="tab"
                         aria-selected={solute === "todos"}
                         className={solute === "todos" ? "btn btn-primary" : "btn"}
                         onClick={() => setSolute("todos")}
                       >
-                        Todos os solutos
+                        Por Soluto — todos
                       </button>
                       {solutes.map((sym) => (
                         <button
@@ -302,6 +322,9 @@ export default function Results(props: Props) {
                   <button className="btn" onClick={onDownloadGraphs}>Baixar Gráficos (PNG) ⤓</button>
                   <button className="btn" onClick={onDownloadExcel}>Baixar Dados do Perfil (.XLSX) ⤓</button>
                 </div>
+              )}
+              {!hasCrop && (
+                <p className="muted">Perfil sem raízes; sem cultura — a camada avaliada é o próprio domínio.</p>
               )}
             </>
           )}

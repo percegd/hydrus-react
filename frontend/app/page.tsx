@@ -39,14 +39,14 @@ const DEFAULTS = {
   depthCm: "200",
   rootDepthCm: "35",
   days: "7",
-  rainMode: "uniform" as RainMode,
+  rainMode: "hub" as RainMode,
   rainMm: "60",
   moisture: "80",
   et0: "4.0",
   advEt: false,
   evap: "0",
   transp: "0",
-  hubKey: "",
+  hubKey: "piracicaba_sp",
   hubScenario: "medio",
   hubAppDay: "30",
   uploadAppDay: "30",
@@ -691,6 +691,10 @@ export default function Home() {
   const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
   const cropLabel = isCom ? (cropName.trim() || cropEntry?.name || crop) : "Sem cultura";
   const running = jobState === "queued" || jobState === "running";
+  const soluteMeta = Object.fromEntries(rows.map((r) => {
+    const sym = r.custom ? String(r.name).trim() : r.symbol;
+    return [sym, { kd: r.kd, residual: r.res }];
+  }));
 
   return (
     <div className="hydrus-container">
@@ -845,6 +849,8 @@ export default function Home() {
                 cropName={cropLabel}
                 rootDepth={rootDepth}
                 appliedMm={appliedMm}
+                hasCrop={isCom}
+                soluteMeta={soluteMeta}
                 onDownloadExcel={downloadExcel}
                 onDownloadGraphs={downloadGraphs}
                 onLoadReport={loadReport}
