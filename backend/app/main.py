@@ -13,10 +13,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 from hydrus_core.crop import CROP_DATABASE
+from hydrus_core.literature_database import COMMERCIAL_FERTILIZERS
 from hydrus_core.soil_physics import SOIL_DATABASE
 
 from . import climate as _climate
-from .schemas import JobCreated, JobStatus, SimulateRequest, SimulateResponse
+from .schemas import (
+    FertilizerDoseRequest,
+    FertilizerDoseResponse,
+    JobCreated,
+    JobStatus,
+    KdEntry,
+    KdResponse,
+    RosettaRequest,
+    RosettaResponse,
+    SimulateRequest,
+    SimulateResponse,
+)
 from .service import execute_job, run_simulation
 from .validation import validate_request
 
@@ -148,6 +160,187 @@ def crops() -> list[dict]:
         {"key": k, "name": c.name, "root_depth_cm": c.root_depth_cm, "kc": c.kc}
         for k, c in CROP_DATABASE.items()
     ]
+
+
+@app.get("/fertilizers")
+def fertilizers() -> dict:
+    """Catálogo de fertilizantes comerciais + presets de mistura (Gradio).
+
+    commercial: COMMERCIAL_FERTILIZERS com rótulos do fert_choice;
+    blend_presets: presets de apply_blend_preset (% N-P-K-S-Ca-Mg).
+    """
+    from .fertilizers import list_blend_presets, list_fertilizers
+
+    return {"commercial": list_fertilizers(), "blend_presets": list_blend_presets()}
+
+
+@app.post("/fertilizers/dose", response_model=FertilizerDoseResponse)
+def fertilizer_dose(req: FertilizerDoseRequest) -> FertilizerDoseResponse:
+    """Converte dose bruta [kg/ha] -> dose elementar por nutriente.
+
+    Porta calculate_effective_dose do Gradio (incl. custom % N-P-K-S-Ca-Mg e
+    blend_preset). Com nutrient_symbol, replica o modo 1-soluto: erro 422
+    quando o adubo não contém o nutriente.
+    """
+    from .fertilizers import (
+        FERTILIZER_CHOICES,
+        NUTRIENT_ORDER,
+        blend_preset_pcts,
+        calculate_effective_dose,
+        elemental_doses_for_pcts,
+        fertilizer_display_name,
+        fertilizer_nutrient_pcts,
+        FertilizerDoseError,
+    )
+
+    fert_key = (req.fert_key or "").strip() or "direto"
+    # Aceita rótulo do dropdown do Gradio além da chave.
+    if fert_key in FERTILIZER_CHOICES:
+        fert_key = FERTILIZER_CHOICES[fert_key]
+    if fert_key not in COMMERCIAL_FERTILIZERS and fert_key not in ("direto", "custom"):
+        raise HTTPException(status_code=404, detail=f"fertilizante desconhecido: {req.fert_key}")
+    if req.gross_dose is not None and float(req.gross_dose) > 10000:
+        raise HTTPException(
+            status_code=422,
+            detail=[{"field": "gross_dose", "message": f"Dose bruta ({float(req.gross_dose):.0f}) acima de 10000: provável erro de digitação."}],
+        )
+
+    pcts: dict[str, float]
+    if req.blend_preset:
+        found = blend_preset_pcts(req.blend_preset)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"blend desconhecido: {req.blend_preset}")
+        fert_key = "custom"
+        pcts = found
+        fert_name = str(req.blend_preset)
+    elif req.custom_pcts:
+        fert_key = "custom" if fert_key == "direto" else fert_key
+        pcts = {s: 0.0 for s in NUTRIENT_ORDER}
+        for sym in NUTRIENT_ORDER:
+            for alias in (sym, sym.lower()):
+                if alias in (req.custom_pcts or {}):
+                    try:
+                        pcts[sym] = float((req.custom_pcts or {})[alias] or 0.0)
+                    except (TypeError, ValueError):
+                        raise HTTPException(
+                            status_code=422,
+                            detail=[{"field": f"custom_pcts.{sym}", "message": f"Teor de {sym} deve ser numérico."}],
+                        )
+        for sym, v in pcts.items():
+            if v < 0 or v > 100:
+                raise HTTPException(
+                    status_code=422,
+                    detail=[{"field": f"custom_pcts.{sym}", "message": f"Teor de {sym} ({v}) fora de [0, 100] %."}],
+                )
+        fert_name = "Fertilizante Personalizado"
+    elif fert_key == "custom":
+        pcts = {s: 0.0 for s in NUTRIENT_ORDER}
+        fert_name = "Fertilizante Personalizado"
+    else:
+        pcts = fertilizer_nutrient_pcts(fert_key)
+        fert_name = fertilizer_display_name(fert_key)
+
+    elemental = elemental_doses_for_pcts(pcts, float(req.gross_dose or 0.0))
+    if req.nutrient_symbol:
+        try:
+            _dose, message = calculate_effective_dose(fert_key, float(req.gross_dose or 0.0), req.nutrient_symbol)
+        except FertilizerDoseError as exc:
+            raise HTTPException(status_code=422, detail=[{"field": "nutrient_symbol", "message": str(exc)}])
+    else:
+        actives = ", ".join(f"{elemental[s]:.1f} kg/ha de {s}" for s in NUTRIENT_ORDER if elemental[s] > 0)
+        message = (
+            f"Dose bruta de {float(req.gross_dose or 0.0):.0f} kg/ha de {fert_name} contém "
+            f"{actives}." if actives else f"Dose bruta de {float(req.gross_dose or 0.0):.0f} kg/ha de {fert_name}."
+        )
+    return FertilizerDoseResponse(
+        fert_key=fert_key,
+        fert_name=fert_name,
+        gross_dose=float(req.gross_dose or 0.0),
+        nutrient_pcts={s: float(pcts.get(s, 0.0)) for s in NUTRIENT_ORDER},
+        elemental_doses={s: float(elemental.get(s, 0.0)) for s in NUTRIENT_ORDER},
+        message=message,
+    )
+
+
+@app.post("/soils/rosetta", response_model=RosettaResponse)
+def soils_rosetta(req: RosettaRequest) -> RosettaResponse:
+    """Estima van Genuchten via Rosetta (Gradio update_rosetta_parameters).
+
+    RosettaUnavailableError -> 422 (sem fallback aproximado, como no Gradio).
+    """
+    from hydrus_core.soil_physics import RosettaUnavailableError, classify_texture
+
+    from .soils import rosetta_params
+
+    try:
+        s = float(req.sand_pct)
+        c = float(req.clay_pct)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=422, detail=[{"field": "sand_pct", "message": "% de Areia/% de Argila deve ser numérico."}]
+        )
+    if not (0 <= s <= 100) or not (0 <= c <= 100):
+        raise HTTPException(
+            status_code=422,
+            detail=[{"field": "sand_pct", "message": f"Areia ({s:.0f}%) / Argila ({c:.0f}%) fora de [0, 100] — fisicamente impossível."}],
+        )
+    if s + c > 100:
+        raise HTTPException(
+            status_code=422,
+            detail=[{"field": "clay_pct", "message": f"Soma de Areia ({s:.0f}%) e Argila ({c:.0f}%) ultrapassa 100%. Corrija os valores (soma ≤ 100%)."}],
+        )
+    try:
+        params = rosetta_params(s, c, req.bulk_density)
+    except RosettaUnavailableError as exc:
+        raise HTTPException(status_code=422, detail=[{"field": "sand_pct", "message": str(exc)}])
+    silt = max(0.0, 100.0 - s - c)
+    return RosettaResponse(
+        theta_r=params["theta_r"],
+        theta_s=params["theta_s"],
+        alpha=params["alpha"],
+        n=params["n"],
+        ks=params["ks"],
+        bulk_density=params["bulk_density"],
+        silt_pct=round(silt, 1),
+        texture=classify_texture(s, c),
+    )
+
+
+@app.get("/kd", response_model=KdResponse)
+def kd_lookup(
+    soil_key: str | None = Query(default=None),
+    sand: float | None = Query(default=None),
+    clay: float | None = Query(default=None),
+    symbol: str | None = Query(default=None),
+) -> KdResponse:
+    """Kd de literatura por nutriente (Gradio default_literature_kd / badge).
+
+    soil_key = solo da lista; ou sand+clay (solo personalizado). Inclui
+    citação/descrição por nutriente e Langmuir do P (quando houver, como na
+    base de literatura). symbol filtra um nutriente.
+    """
+    from .soils import DEFAULT_SOIL_KEY, literature_kd, texture_for
+
+    key = soil_key or (None if (sand is not None or clay is not None) else DEFAULT_SOIL_KEY)
+    if key is not None and key != "custom" and key not in SOIL_DATABASE:
+        raise HTTPException(status_code=404, detail=f"solo desconhecido: {soil_key}")
+    s = float(sand) if sand is not None else None
+    c = float(clay) if clay is not None else None
+    if (s is not None and not (0 <= s <= 100)) or (c is not None and not (0 <= c <= 100)):
+        raise HTTPException(
+            status_code=422, detail=[{"field": "sand", "message": "Areia/Argila fora de [0, 100] — fisicamente impossível."}]
+        )
+    if s is not None and c is not None and s + c > 100:
+        raise HTTPException(
+            status_code=422, detail=[{"field": "clay", "message": f"Soma de Areia ({s:.0f}%) e Argila ({c:.0f}%) ultrapassa 100%. Corrija os valores (soma ≤ 100%)."}]
+        )
+    texture = texture_for(key, s, clay if c is None else c)
+    symbols = ["N", "K", "P", "S", "Ca", "Mg"]
+    if symbol:
+        up = str(symbol).strip().upper()
+        symbols = [up] if up in symbols else [str(symbol).strip()]
+    entries = [KdEntry(**literature_kd(sym, key, s, c)) for sym in symbols]
+    return KdResponse(soil_key=key, sand_pct=s, clay_pct=c, texture=texture, entries=entries)
 
 
 @app.get("/hubs")

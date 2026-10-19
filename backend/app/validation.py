@@ -58,9 +58,33 @@ def build_payload(req: SimulateRequest) -> dict:
 
     p: dict = {}
 
-    # Solo pelo soil_key (central valida soil_choice contra labels válidos).
-    p["soil_choice"] = req.soil_key
-    p["is_custom_soil"] = False
+    # Solo pelo soil_key (central valida soil_choice contra labels válidos),
+    # ou personalizado via custom_soil (Gradio is_custom_soil + Rosetta).
+    if req.custom_soil is not None:
+        p["soil_choice"] = req.soil_key or "custom"
+        p["is_custom_soil"] = True
+        try:
+            p["sand_pct"] = float(req.custom_soil.sand_pct)
+        except (TypeError, ValueError):
+            p["sand_pct"] = req.custom_soil.sand_pct
+        try:
+            p["clay_pct"] = float(req.custom_soil.clay_pct)
+        except (TypeError, ValueError):
+            p["clay_pct"] = req.custom_soil.clay_pct
+        for _attr, _key in (
+            ("theta_r", "adv_theta_r"),
+            ("theta_s", "adv_theta_s"),
+            ("alpha", "adv_alpha"),
+            ("n", "adv_n"),
+            ("ks", "adv_ks"),
+            ("bulk_density", "adv_bulk_density"),
+        ):
+            _v = getattr(req.custom_soil, _attr, None)
+            if _v is not None:
+                p[_key] = _v
+    else:
+        p["soil_choice"] = req.soil_key
+        p["is_custom_soil"] = False
     try:
         p["_soil_labels"] = set(SOIL_DATABASE.keys())
     except Exception:

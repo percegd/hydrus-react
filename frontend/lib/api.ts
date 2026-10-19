@@ -109,6 +109,30 @@ export type HubSeries = { hub_key: string; hub_label: string; scenario: string; 
 export type ClimateExample = { headers: string[]; rows: ClimateRow[]; filename: string; csv: string };
 export type ClimateParseResult = { rows: ClimateRow[]; records_read: number; total_rain_mm: number; message: string };
 
+export type FertilizerInfo = { key: string; label: string; name: string; nutrient_pcts: Record<string, number>; descr: string };
+export type BlendPresetInfo = { key: string; label: string; nutrient_pcts: Record<string, number> };
+export type FertilizerCatalog = { commercial: FertilizerInfo[]; blend_presets: BlendPresetInfo[] };
+export type FertilizerDoseBody = { fert_key?: string; gross_dose: number; nutrient_symbol?: string; custom_pcts?: Record<string, number>; blend_preset?: string };
+export type FertilizerDoseResult = { fert_key: string; fert_name: string; gross_dose: number; nutrient_pcts: Record<string, number>; elemental_doses: Record<string, number>; message: string };
+export type RosettaResult = { theta_r: number; theta_s: number; alpha: number; n: number; ks: number; bulk_density: number; silt_pct: number; texture: string };
+export type KdEntry = { symbol: string; kd: number; citation: string; description: string; texture?: string | null; langmuir?: Record<string, unknown> | null };
+export type KdResult = { soil_key: string | null; sand_pct: number | null; clay_pct: number | null; texture: string; entries: KdEntry[] };
+
+export const getFertilizers = () => req<FertilizerCatalog>("/fertilizers");
+export const postFertilizerDose = (body: FertilizerDoseBody) =>
+  req<FertilizerDoseResult>("/fertilizers/dose", { method: "POST", body: JSON.stringify(body) });
+export const postRosetta = (body: { sand_pct: number; clay_pct: number; bulk_density?: number }) =>
+  req<RosettaResult>("/soils/rosetta", { method: "POST", body: JSON.stringify(body) });
+export const getKd = (params: { soil_key?: string; sand?: number; clay?: number; symbol?: string }) => {
+  const q = new URLSearchParams();
+  if (params.soil_key) q.set("soil_key", params.soil_key);
+  if (params.sand !== undefined) q.set("sand", String(params.sand));
+  if (params.clay !== undefined) q.set("clay", String(params.clay));
+  if (params.symbol) q.set("symbol", params.symbol);
+  const qs = q.toString();
+  return req<KdResult>(`/kd${qs ? `?${qs}` : ""}`);
+};
+
 export const getSoils = () => req<Soil[]>("/soils");
 export const getHubs = () => req<HubInfo[]>("/hubs");
 export const getHubSeries = (key: string, scenario: string) =>

@@ -126,9 +126,31 @@ def _effective_print_days(req: SimulateRequest, total_days: float, sw: int, ew: 
     return _default_print_days(total_days, _is_seasonal(req))
 
 
+def _resolve_soil(req: SimulateRequest):
+    """Solo da lista ou personalizado (Rosetta + overrides, como o Gradio)."""
+    from .soils import resolve_custom_soil
+
+    if req.custom_soil is not None:
+        cs = req.custom_soil
+        return resolve_custom_soil(
+            sand_pct=float(cs.sand_pct),
+            clay_pct=float(cs.clay_pct),
+            bulk_density=(float(cs.bulk_density) if cs.bulk_density is not None else None),
+            overrides={
+                "theta_r": cs.theta_r,
+                "theta_s": cs.theta_s,
+                "alpha": cs.alpha,
+                "n": cs.n,
+                "ks": cs.ks,
+                "bulk_density": cs.bulk_density,
+            },
+        )
+    return SOIL_DATABASE[req.soil_key]
+
+
 def _run_core(req: SimulateRequest):
     """Executa o solver uma vez; retorna (results, soil, crop, root_depth, total_rain, total_days)."""
-    soil = SOIL_DATABASE[req.soil_key]
+    soil = _resolve_soil(req)
     crop = CROP_DATABASE.get(req.crop_key) if req.crop_key else None
     root_depth = float(crop.root_depth_cm) if crop else float(req.depth_cm)
     if req.root_depth_cm and crop:
