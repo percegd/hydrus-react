@@ -5,9 +5,9 @@ import Results from "../components/Results";
 import StepIntro from "../components/StepIntro";
 import StepNutrients, { DEFAULT_ROWS, SPECIES, defaultDispForDepth, type NutrientRow } from "../components/StepNutrients";
 import StepSoil from "../components/StepSoil";
-import StepWater from "../components/StepWater";
+import StepWater, { emptyRows, type RainMode } from "../components/StepWater";
 import WizardProgress from "../components/WizardProgress";
-import { ApiError, getCrops, getExcelBlob, getJob, getReport, getSoils, postJob, type Crop, type SimulateResponse, type Soil } from "../lib/api";
+import { ApiError, getCrops, getExcelBlob, getJob, getReport, getSoils, postJob, type ClimateRow, type Crop, type SimulateResponse, type Soil } from "../lib/api";
 
 const STEP_TITLES = [
   { title: "Apresentação", sub: "Visão geral da plataforma de simulação." },
@@ -24,12 +24,14 @@ const DEFAULTS = {
   depthCm: "200",
   rootDepthCm: "35",
   days: "7",
-  rainMode: "uniform" as const,
+  rainMode: "uniform" as RainMode,
   rainMm: "60",
   moisture: "80",
   et0: "4.0",
-  series: "",
-  et0Series: "",
+  hubKey: "",
+  hubScenario: "medio",
+  hubAppDay: "30",
+  uploadAppDay: "30",
   waterOnly: false,
   analysisStart: "1",
   analysisEnd: "365",
@@ -54,12 +56,15 @@ export default function Home() {
   const [depthCm, setDepthCm] = useState(DEFAULTS.depthCm);
   const [rootDepthCm, setRootDepthCm] = useState(DEFAULTS.rootDepthCm);
   const [days, setDays] = useState(DEFAULTS.days);
-  const [rainMode, setRainMode] = useState<"uniform" | "series">(DEFAULTS.rainMode);
+  const [rainMode, setRainMode] = useState<RainMode>(DEFAULTS.rainMode);
   const [rainMm, setRainMm] = useState(DEFAULTS.rainMm);
   const [moisture, setMoisture] = useState(DEFAULTS.moisture);
   const [et0, setEt0] = useState(DEFAULTS.et0);
-  const [series, setSeries] = useState(DEFAULTS.series);
-  const [et0Series, setEt0Series] = useState(DEFAULTS.et0Series);
+  const [climateRows, setClimateRows] = useState<ClimateRow[]>(() => emptyRows(365));
+  const [hubKey, setHubKey] = useState(DEFAULTS.hubKey);
+  const [hubScenario, setHubScenario] = useState(DEFAULTS.hubScenario);
+  const [hubAppDay, setHubAppDay] = useState(DEFAULTS.hubAppDay);
+  const [uploadAppDay, setUploadAppDay] = useState(DEFAULTS.uploadAppDay);
   const [waterOnly, setWaterOnly] = useState(DEFAULTS.waterOnly);
   const [analysisStart, setAnalysisStart] = useState(DEFAULTS.analysisStart);
   const [analysisEnd, setAnalysisEnd] = useState(DEFAULTS.analysisEnd);
@@ -131,24 +136,6 @@ export default function Home() {
     setRows((rs) => rs.filter((_, j) => j !== i));
   }
 
-    function parseSeries(text: string): number[] | undefined {
-      if (!text.trim()) return undefined;
-      // Separa por espaço/;/linha; vírgula só é separador quando não é decimal.
-      // "12,5" (decimal) => 12.5 ; "0, 12.5, 3" (separador) => [0,12.5,3].
-      const chunks = text.split(/[\s;]+/).filter(Boolean);
-      const vals: number[] = [];
-      for (const chunk of chunks) {
-        const singleDecimal = /^-?\d+,\d+$/.test(chunk.trim());
-        const parts = singleDecimal ? [chunk] : chunk.split(",").filter((p) => p.length > 0);
-        for (const p of parts) {
-          const v = Number(p.trim().replace(",", "."));
-          if (Number.isNaN(v) || v < 0) throw new Error("Série inválida (só números ≥ 0).");
-          vals.push(v);
-        }
-      }
-      return vals;
-    }
-
   function num(x: string, def: number): number {
     const v = parseFloat(String(x).replace(",", "."));
     return Number.isNaN(v) ? def : v;
@@ -166,8 +153,11 @@ export default function Home() {
     setRainMm(DEFAULTS.rainMm);
     setMoisture(DEFAULTS.moisture);
     setEt0(DEFAULTS.et0);
-    setSeries(DEFAULTS.series);
-    setEt0Series(DEFAULTS.et0Series);
+    setClimateRows(emptyRows(365));
+    setHubKey(DEFAULTS.hubKey);
+    setHubScenario(DEFAULTS.hubScenario);
+    setHubAppDay(DEFAULTS.hubAppDay);
+    setUploadAppDay(DEFAULTS.uploadAppDay);
     setWaterOnly(DEFAULTS.waterOnly);
     setAnalysisStart(DEFAULTS.analysisStart);
     setAnalysisEnd(DEFAULTS.analysisEnd);
@@ -207,13 +197,22 @@ export default function Home() {
     let rain_series: number[] | undefined;
     let total_days = num(days, 7);
     let et0_series: number[] | undefined;
+    let appDayEff = appDay;
     try {
-      if (rainMode === "series") {
-        rain_series = parseSeries(series);
-        if (!rain_series?.length) { setFieldErrors([]); setError("Cole a série diária de chuva."); return; }
+      if (rainMode === "hub" || rainMode === "upload") {
+        if (!climateRows.length) { setFieldErrors([]); setError("A tabela de série diária está vazia. Preencha a coluna de chuva (mm)."); return; }
+        rain_series = climateRows.map((r) => {
+          if (!Number.isFinite(r.rain_mm) || r.rain_mm < 0) throw new Error("Série inválida (só números ≥ 0).");
+          return r.rain_mm;
+        });
+        et0_series = climateRows.map((r) => {
+          if (!Number.isFinite(r.et0_mm) || r.et0_mm < 0) throw new Error("Série inválida (só números ≥ 0).");
+          return r.et0_mm;
+        });
+        if (!rain_series.some((v) => v > 0)) { setFieldErrors([]); setError("A tabela de série diária está vazia. Preencha a coluna de chuva (mm)."); return; }
         total_days = rain_series.length;
+        appDayEff = rainMode === "hub" ? hubAppDay : uploadAppDay;
       }
-      et0_series = parseSeries(et0Series);
     } catch (e) { setFieldErrors([]); setError(String((e as Error).message || e)); return; }
     const depthVal = num(depthCm, 200);
     const dispDefault = depthVal / 10;
@@ -232,7 +231,7 @@ export default function Home() {
     let print_days: number[] | undefined;
     let analysis_start_day = 1;
     let analysis_end_day = 365;
-    if (rainMode === "series") {
+    if (rainMode === "hub" || rainMode === "upload") {
       try {
         analysis_start_day = Math.round(num(analysisStart, 1));
         analysis_end_day = Math.round(num(analysisEnd, 365));
@@ -281,7 +280,7 @@ export default function Home() {
           mode: placement, z_top_cm: z_top, z_bottom_cm: z_bottom,
           fertigation_c0_mg_l: num(c0, 20),
           fertigation_pulse_days: fertContinuous ? 0 : num(pulse, 7),
-          application_day: num(appDay, 0),
+          application_day: num(appDayEff, 0),
         },
       };
       const { job_id } = await postJob(body);
@@ -450,10 +449,16 @@ export default function Home() {
                 setMoisture={setMoisture}
                 et0={et0}
                 setEt0={setEt0}
-                series={series}
-                setSeries={setSeries}
-                et0Series={et0Series}
-                setEt0Series={setEt0Series}
+                climateRows={climateRows}
+                setClimateRows={setClimateRows}
+                hubKey={hubKey}
+                setHubKey={setHubKey}
+                hubScenario={hubScenario}
+                setHubScenario={setHubScenario}
+                hubAppDay={hubAppDay}
+                setHubAppDay={setHubAppDay}
+                uploadAppDay={uploadAppDay}
+                setUploadAppDay={setUploadAppDay}
                 analysisStart={analysisStart}
                 setAnalysisStart={setAnalysisStart}
                 analysisEnd={analysisEnd}

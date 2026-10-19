@@ -8,13 +8,14 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 from hydrus_core.crop import CROP_DATABASE
 from hydrus_core.soil_physics import SOIL_DATABASE
 
+from . import climate as _climate
 from .schemas import JobCreated, JobStatus, SimulateRequest, SimulateResponse
 from .service import execute_job, run_simulation
 from .validation import validate_request
@@ -147,6 +148,72 @@ def crops() -> list[dict]:
         {"key": k, "name": c.name, "root_depth_cm": c.root_depth_cm, "kc": c.kc}
         for k, c in CROP_DATABASE.items()
     ]
+
+
+@app.get("/hubs")
+def hubs() -> list[dict]:
+    """Polos agrícolas (dropdown hub_choice do Gradio: nome + coords)."""
+    return _climate.list_hubs()
+
+
+@app.get("/hubs/{hub_key}/series")
+def hub_series(hub_key: str, scenario: str = Query(default="medio")) -> dict:
+    """Série diária de 365 dias do polo/cenário, como o Gradio monta.
+
+    scenario: seco | medio | umido (alias do "Ano Chuvoso" do Gradio;
+    "chuvoso" também é aceito).
+    """
+    if hub_key not in _climate._HUB_ORDER:
+        raise HTTPException(status_code=404, detail=f"polo desconhecido: {hub_key}")
+    try:
+        return _climate.series_payload(hub_key, scenario)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=[{"field": "scenario", "message": str(exc)}])
+
+
+@app.get("/climate/example")
+def climate_example() -> dict:
+    """Tabela-exemplo do formato esperado no upload (Dia, Chuva, ET0)."""
+    return _climate.example_table()
+
+
+@app.post("/climate/parse")
+async def climate_parse(file: UploadFile = File(...)) -> dict:
+    """Lê planilha climática (.xlsx/.csv, máx. 2 MB) -> 365 linhas.
+
+    Porta handle_climate_upload do Gradio; erros viram 422 com as mensagens
+    do Gradio ("Erro ao ler arquivo: ...").
+    """
+    name = file.filename or ""
+    lname = name.lower()
+    if not (lname.endswith(".xlsx") or lname.endswith(".xls") or lname.endswith(".csv")):
+        raise HTTPException(
+            status_code=422,
+            detail=[{"field": "file", "message": "Formato não suportado. Envie .xlsx ou .csv."}],
+        )
+    try:
+        content = await file.read()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=[{"field": "file", "message": f"Erro ao ler arquivo: {exc}"}],
+        )
+    if len(content) > _climate.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=[{"field": "file", "message": "Arquivo muito grande (máx. 2 MB)."}],
+        )
+    if not content:
+        raise HTTPException(
+            status_code=422,
+            detail=[{"field": "file", "message": "Erro ao ler arquivo: arquivo vazio ou sem dados válidos"}],
+        )
+    try:
+        return _climate.parse_upload_file(name, content)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail=[{"field": "file", "message": str(exc)}]
+        )
 
 
 @app.post("/simulate", response_model=SimulateResponse)

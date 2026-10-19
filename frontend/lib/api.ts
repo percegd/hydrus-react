@@ -103,7 +103,26 @@ async function toApiError(r: Response): Promise<ApiError> {
   return new ApiError(message, details, r.status);
 }
 
+export type HubInfo = { key: string; label: string; name: string; lat: number | null; lon: number | null; mean_annual_mm: number | null };
+export type ClimateRow = { day: number; rain_mm: number; et0_mm: number };
+export type HubSeries = { hub_key: string; hub_label: string; scenario: string; scenario_label: string; year: number | null; days: number; rain_series: number[]; et0_series: number[]; rows: ClimateRow[]; total_rain_mm: number };
+export type ClimateExample = { headers: string[]; rows: ClimateRow[]; filename: string; csv: string };
+export type ClimateParseResult = { rows: ClimateRow[]; records_read: number; total_rain_mm: number; message: string };
+
 export const getSoils = () => req<Soil[]>("/soils");
+export const getHubs = () => req<HubInfo[]>("/hubs");
+export const getHubSeries = (key: string, scenario: string) =>
+  req<HubSeries>(`/hubs/${encodeURIComponent(key)}/series?scenario=${encodeURIComponent(scenario)}`);
+export const getClimateExample = () => req<ClimateExample>("/climate/example");
+export const parseClimateFile = async (file: File): Promise<ClimateParseResult> => {
+  const form = new FormData();
+  form.append("file", file);
+  const r = await fetch("/api/climate/parse", { method: "POST", body: form });
+  if (!r.ok) {
+    throw await toApiError(r);
+  }
+  return r.json() as Promise<ClimateParseResult>;
+};
 export const getCrops = () => req<Crop[]>("/crops");
 export const postSimulate = (body: unknown) => req<SimulateResponse>("/simulate", { method: "POST", body: JSON.stringify(body) });
 export type JobCreated = { job_id: string };
