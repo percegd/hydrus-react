@@ -10,10 +10,32 @@ export type NutrientRow = {
   kd: string;
   disp: string;
   res: string;
-  rel: string;
-  relDays: string;
+  custom?: boolean;
+  active: boolean;
   kdEdited?: boolean;
   kdSource?: string;
+};
+
+/** Ordem fixa das linhas, igual à tabela do Gradio (Passo 2). */
+export const NUTRIENT_ORDER = ["N", "K", "P", "S", "Ca", "Mg"];
+
+export const FIXED_NAMES: Record<string, string> = {
+  N: "Nitrato",
+  K: "Potássio",
+  P: "Fósforo",
+  S: "Enxofre",
+  Ca: "Cálcio",
+  Mg: "Magnésio",
+};
+
+/** Kd inicial por nutriente (antes do Kd de literatura por textura carregar). */
+const INITIAL_KD: Record<string, string> = {
+  N: "0",
+  K: "0.45",
+  P: "25",
+  S: "0.15",
+  Ca: "1.2",
+  Mg: "0.8",
 };
 
 export const SPECIES = [
@@ -40,15 +62,33 @@ export function nutrientLabel(symbol: string, fallback: string): string {
   }
 }
 
+/** 6 linhas fixas (só K ativo, dose 30) + 1 linha "Outro soluto" — igual ao Gradio. */
 export const DEFAULT_ROWS: NutrientRow[] = [
-  { symbol: "K", name: "Potássio", dose: "30", kd: "0.45", disp: "20", res: "0", rel: "immediate", relDays: "60", kdEdited: false, kdSource: "" },
+  ...NUTRIENT_ORDER.map((sym) => ({
+    symbol: sym,
+    name: FIXED_NAMES[sym] ?? sym,
+    dose: sym === "K" ? "30" : "0",
+    kd: INITIAL_KD[sym] ?? "0",
+    disp: "20",
+    res: "0",
+    active: sym === "K",
+    kdEdited: false,
+    kdSource: "",
+  })),
+  { symbol: "", name: "", dose: "0", kd: "0.2", disp: "20", res: "0", custom: true, active: false, kdEdited: false, kdSource: "" },
 ];
+
+export const CUSTOM_PLACEHOLDER = "Outro soluto (ex: Br⁻, Cl⁻, Atrazina)";
 
 export function defaultDispForDepth(depthCm: string): string {
   const d = parseFloat(String(depthCm).replace(",", "."));
   if (!Number.isFinite(d) || d <= 0) return "20";
   const v = d / 10;
   return String(Math.round(v * 100) / 100);
+}
+
+export function blankCustomRow(disp: string): NutrientRow {
+  return { symbol: "", name: "", dose: "0", kd: "0.2", disp, res: "0", custom: true, active: false, kdEdited: false, kdSource: "" };
 }
 
 type Props = {
@@ -74,6 +114,10 @@ type Props = {
   setPulse: (v: string) => void;
   fertContinuous: boolean;
   setFertContinuous: (v: boolean) => void;
+  releaseType: string;
+  setReleaseType: (v: string) => void;
+  releaseDays: string;
+  setReleaseDays: (v: string) => void;
 };
 
 function FlaskIcon() {
@@ -125,6 +169,8 @@ export default function StepNutrients(props: Props) {
     zTop, setZTop, zBottom, setZBottom,
     c0, setC0, pulse, setPulse,
     fertContinuous, setFertContinuous,
+    releaseType, setReleaseType,
+    releaseDays, setReleaseDays,
   } = props;
 
   const [catalog, setCatalog] = useState<FertilizerInfo[]>([]);
@@ -191,20 +237,21 @@ export default function StepNutrients(props: Props) {
     }
   }
 
-  function rowActive(r: NutrientRow): boolean {
-    const v = parseFloat(String(r.dose).replace(",", "."));
-    return Number.isFinite(v) && v > 0;
-  }
-
   function toggleRow(i: number, on: boolean) {
+    const cur = rows[i];
     if (on) {
-      const cur = rows[i];
-      const v = parseFloat(String(cur.dose).replace(",", "."));
-      setRow(i, { dose: Number.isFinite(v) && v > 0 ? cur.dose : "30" });
+      if (cur.custom) {
+        setRow(i, { active: true });
+      } else {
+        const v = parseFloat(String(cur.dose).replace(",", "."));
+        setRow(i, { active: true, dose: Number.isFinite(v) && v > 0 ? cur.dose : "30" });
+      }
     } else {
-      setRow(i, { dose: "0" });
+      setRow(i, { active: false });
     }
   }
+
+  const customCount = rows.filter((r) => r.custom).length;
 
   const PLACEMENTS = [
     { value: "surface", label: "A lanço / Superfície (0 a 2 cm)" },
@@ -212,6 +259,8 @@ export default function StepNutrients(props: Props) {
     { value: "custom", label: "Profundidade Personalizada" },
     { value: "fertigation", label: "Fertirrigação" },
   ];
+
+  const isControlled = releaseType === "controlled";
 
   return (
     <>
@@ -265,35 +314,45 @@ export default function StepNutrients(props: Props) {
 
           <div style={{ marginTop: 10 }}>
             {rows.map((r, i) => {
-              const active = rowActive(r);
-              const info = kdInfo[r.symbol];
-              const badge = r.kdEdited ? "Valor editado manualmente" : `Literatura: ${r.kdSource || info?.citation || ""}`;
+              const active = !!r.active;
+              const info = r.custom ? undefined : kdInfo[r.symbol];
+              const badge = r.custom
+                ? "Soluto personalizado (traçador / poluente / íon diverso)"
+                : (r.kdEdited ? "Valor editado manualmente" : `Literatura: ${r.kdSource || info?.citation || ""}`);
               return (
                 <div key={i}>
                   <div className={`nutrient-row${active ? " active" : ""}`}>
-                    <div className="nutrient-col-check">
-                      <input
-                        type="checkbox"
-                        className="switch"
-                        checked={active}
-                        onChange={(e) => toggleRow(i, e.target.checked)}
-                        aria-label={`Ativar ${nutrientLabel(r.symbol, r.name)}`}
-                      />
-                      <select
-                        className="nutr-select"
-                        value={r.symbol}
-                        disabled={!active}
-                        onChange={(e) => {
-                          const sp = SPECIES.find((s) => s.symbol === e.target.value)!;
-                          const lit = kdInfo[sp.symbol];
-                          setRow(i, { symbol: sp.symbol, name: sp.name, kd: lit?.kd ?? String(sp.kd), kdEdited: false, kdSource: lit?.citation ?? "" });
-                        }}
-                        aria-label="Soluto"
-                        title={nutrientLabel(r.symbol, r.name)}
-                      >
-                        {SPECIES.map((s) => <option key={s.symbol} value={s.symbol}>{nutrientLabel(s.symbol, s.name)}</option>)}
-                      </select>
-                    </div>
+                    {r.custom ? (
+                      <div className="nutrient-col-name">
+                        <input
+                          type="checkbox"
+                          className="switch"
+                          checked={active}
+                          onChange={(e) => toggleRow(i, e.target.checked)}
+                          aria-label="Ativar outro soluto"
+                        />
+                        <input
+                          type="text"
+                          value={r.name}
+                          disabled={!active}
+                          onChange={(e) => setRow(i, { name: e.target.value, symbol: e.target.value })}
+                          placeholder={CUSTOM_PLACEHOLDER}
+                          aria-label="Nome do outro soluto"
+                          title="Nome/símbolo do soluto (ex: Br⁻, Cl⁻, Atrazina)"
+                        />
+                      </div>
+                    ) : (
+                      <div className="nutrient-col-check">
+                        <input
+                          type="checkbox"
+                          className="switch"
+                          checked={active}
+                          onChange={(e) => toggleRow(i, e.target.checked)}
+                          aria-label={`Ativar ${nutrientLabel(r.symbol, r.name)}`}
+                        />
+                        <span className="nutr-name">{nutrientLabel(r.symbol, r.name)}</span>
+                      </div>
+                    )}
                     <div className={`nutrient-col-dose${active ? "" : " input-disabled-dim"}`}>
                       <input value={r.dose} disabled={!active} onChange={(e) => setRow(i, { dose: e.target.value })} inputMode="decimal" aria-label="Dose elementar [kg/ha]" />
                     </div>
@@ -306,40 +365,49 @@ export default function StepNutrients(props: Props) {
                     <div className={`nutrient-col-res${active ? "" : " input-disabled-dim"}`}>
                       <input value={r.res} disabled={!active} onChange={(e) => setRow(i, { res: e.target.value })} inputMode="decimal" aria-label="Teor residual [mg/dm³]" />
                     </div>
-                    <button type="button" className="icon-btn" onClick={() => removeRow(i)} title="Remover soluto" aria-label="Remover soluto">✕</button>
+                    {r.custom && customCount > 1 && (
+                      <button type="button" className="icon-btn" onClick={() => removeRow(i)} title="Remover soluto" aria-label="Remover soluto">✕</button>
+                    )}
                   </div>
-                  {active && (
-                    <div style={{ margin: "-2px 0 8px 0" }}>
-                      <div className="seg-grid" role="radiogroup" aria-label={`Liberação de ${r.symbol}`}>
-                        <label className={`seg-option${r.rel !== "controlled" ? " selected" : ""}`}>
-                          <input type="radio" name={`rel-${i}`} checked={r.rel !== "controlled"} onChange={() => setRow(i, { rel: "immediate" })} />
-                          Convencional (Solubilização Instantânea)
-                        </label>
-                        <label className={`seg-option${r.rel === "controlled" ? " selected" : ""}`}>
-                          <input type="radio" name={`rel-${i}`} checked={r.rel === "controlled"} onChange={() => setRow(i, { rel: "controlled" })} />
-                          Liberação Controlada / Lenta
-                        </label>
-                      </div>
-                      {r.rel === "controlled" && (
-                        <div className="form-row" style={{ marginTop: 8 }}>
-                          <Field label="Duração Nominal da Liberação [dias]">
-                            <input value={r.relDays} onChange={(e) => setRow(i, { relDays: e.target.value })} inputMode="decimal" />
-                          </Field>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               );
             })}
           </div>
 
-          <button type="button" className="btn" onClick={addRow}>+ Adicionar outro soluto</button>
+          <div style={{ marginTop: 8 }}>
+            <button type="button" className="btn-add-solute" onClick={addRow}>+ Adicionar outro soluto</button>
+          </div>
 
           <div className="step-section-title">Liberação do fertilizante</div>
-          <p className="step-section-sub" style={{ fontSize: 13, color: "#64748b" }}>
-            Definida por soluto, na linha de cada nutriente acima.
-          </p>
+          <div className="seg-grid" role="radiogroup" aria-label="Liberação do fertilizante" style={{ marginTop: 10 }}>
+            <label className={`seg-option${!isControlled ? " selected" : ""}`}>
+              <input
+                type="radio"
+                name="release-type"
+                value="immediate"
+                checked={!isControlled}
+                onChange={() => setReleaseType("immediate")}
+              />
+              Convencional (Solubilização Instantânea)
+            </label>
+            <label className={`seg-option${isControlled ? " selected" : ""}`}>
+              <input
+                type="radio"
+                name="release-type"
+                value="controlled"
+                checked={isControlled}
+                onChange={() => setReleaseType("controlled")}
+              />
+              Liberação Controlada / Lenta
+            </label>
+          </div>
+          {isControlled && (
+            <div className="form-row" style={{ marginTop: 8 }}>
+              <Field label="Duração da liberação [dias]">
+                <input value={releaseDays} onChange={(e) => setReleaseDays(e.target.value)} inputMode="decimal" />
+              </Field>
+            </div>
+          )}
 
           <div className="step-section-title">Posicionamento do adubo no solo</div>
           <div className="seg-grid" role="radiogroup" aria-label="Posicionamento do adubo no solo" style={{ marginTop: 10 }}>

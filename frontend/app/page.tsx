@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Results from "../components/Results";
 import StepIntro from "../components/StepIntro";
-import StepNutrients, { DEFAULT_ROWS, NUTRIENT_SYMBOLS, SPECIES, defaultDispForDepth, type NutrientRow } from "../components/StepNutrients";
+import StepNutrients, { DEFAULT_ROWS, NUTRIENT_SYMBOLS, blankCustomRow, defaultDispForDepth, type NutrientRow } from "../components/StepNutrients";
 import StepSoil from "../components/StepSoil";
 import StepWater, { emptyRows, type RainMode } from "../components/StepWater";
 import WizardProgress from "../components/WizardProgress";
@@ -47,6 +47,8 @@ const DEFAULTS = {
   printDays: "55, 128, 237, 365",
   rows: DEFAULT_ROWS,
   placement: "surface",
+  releaseType: "immediate",
+  releaseDays: "60",
   appDay: "0",
   zTop: "5",
   zBottom: "10",
@@ -162,6 +164,8 @@ export default function Home() {
   const [analysisEnd, setAnalysisEnd] = useState(DEFAULTS.analysisEnd);
   const [printDays, setPrintDays] = useState(DEFAULTS.printDays);
   const [rows, setRows] = useState<NutrientRow[]>(DEFAULTS.rows.map((r) => ({ ...r })));
+  const [releaseType, setReleaseType] = useState(DEFAULTS.releaseType);
+  const [releaseDays, setReleaseDays] = useState(DEFAULTS.releaseDays);
   const [placement, setPlacement] = useState(DEFAULTS.placement);
   const [appDay, setAppDay] = useState(DEFAULTS.appDay);
   const [zTop, setZTop] = useState(DEFAULTS.zTop);
@@ -241,6 +245,8 @@ export default function Home() {
       setKdInfo(info);
       setRows((rs) => rs.map((row) => {
         // Igual ao Gradio: ao trocar o solo, o Kd sempre volta ao valor de literatura.
+        // Linhas "Outro soluto" não têm literatura (Kd 0.20 de traçador) — preservadas.
+        if (row.custom) return row;
         const lit = info[row.symbol];
         if (!lit) return row;
         return { ...row, kd: lit.kd, kdSource: lit.citation, kdEdited: false };
@@ -250,26 +256,21 @@ export default function Home() {
   }, [soil, isCustomSoil, sandPct, clayPct]);
 
   function applyFertilizer(doses: Record<string, number>) {
-    setRows((rs) => {
-      const next = rs.map((r) => ({ ...r }));
-      for (const sym of NUTRIENT_SYMBOLS) {
-        const dose = doses[sym] ?? 0;
-        if (dose <= 0) continue;
-        const lit = kdInfo[sym];
-        const sp = SPECIES.find((s) => s.symbol === sym);
-        const idx = next.findIndex((r) => r.symbol === sym);
-        if (idx >= 0) {
-          next[idx] = { ...next[idx], dose: String(Math.round(dose * 10) / 10), kd: lit?.kd ?? next[idx].kd, kdEdited: false, kdSource: lit?.citation ?? "" };
-        } else {
-          next.push({
-            symbol: sym, name: sp?.name ?? sym, dose: String(Math.round(dose * 10) / 10),
-            kd: lit?.kd ?? String(sp?.kd ?? 0), disp: defaultDispForDepth(depthCm), res: "0",
-            rel: "immediate", relDays: "60", kdEdited: false, kdSource: lit?.citation ?? "",
-          });
-        }
-      }
-      return next;
-    });
+    // As 6 linhas fixas sempre existem: só marca/desmarca e preenche a dose.
+    setRows((rs) => rs.map((r) => {
+      if (r.custom) return r;
+      const dose = doses[r.symbol] ?? 0;
+      if (dose <= 0) return { ...r, active: false };
+      const lit = kdInfo[r.symbol];
+      return {
+        ...r,
+        active: true,
+        dose: String(Math.round(dose * 10) / 10),
+        kd: lit?.kd ?? r.kd,
+        kdEdited: false,
+        kdSource: lit?.citation ?? "",
+      };
+    }));
   }
 
   function handleCropSelect(key: string) {
@@ -293,13 +294,15 @@ export default function Home() {
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
   function addRow() {
-    const used = new Set(rows.map((r) => r.symbol));
-    const next = SPECIES.find((s) => !used.has(s.symbol)) ?? SPECIES[0];
-    const lit = kdInfo[next.symbol];
-    setRows((rs) => [...rs, { symbol: next.symbol, name: next.name, dose: "30", kd: lit?.kd ?? String(next.kd), disp: defaultDispForDepth(depthCm), res: "0", rel: "immediate", relDays: "60", kdEdited: false, kdSource: lit?.citation ?? "" }]);
+    // Só adiciona linhas "Outro soluto" (as 6 fixas sempre existem).
+    setRows((rs) => [...rs, blankCustomRow(defaultDispForDepth(depthCm))]);
   }
   function removeRow(i: number) {
-    setRows((rs) => rs.filter((_, j) => j !== i));
+    setRows((rs) => {
+      if (!rs[i]?.custom) return rs;
+      if (rs.filter((r) => r.custom).length <= 1) return rs;
+      return rs.filter((_, j) => j !== i);
+    });
   }
 
   function num(x: string, def: number): number {
@@ -340,6 +343,8 @@ export default function Home() {
     setAnalysisEnd(DEFAULTS.analysisEnd);
     setPrintDays(DEFAULTS.printDays);
     setRows(DEFAULTS.rows.map((r) => ({ ...r })));
+    setReleaseType(DEFAULTS.releaseType);
+    setReleaseDays(DEFAULTS.releaseDays);
     setPlacement(DEFAULTS.placement);
     setAppDay(DEFAULTS.appDay);
     setZTop(DEFAULTS.zTop);
@@ -386,17 +391,24 @@ export default function Home() {
     } catch (e) { openValidation([String((e as Error).message || e)]); return; }
     const depthVal = num(depthCm, 200);
     const dispDefault = depthVal / 10;
+    const relType = releaseType === "controlled" ? "controlled" : "immediate";
+    const relDays = num(releaseDays, 60);
+    const unnamedCustom = !waterOnly && rows.some((r) => r.custom && r.active && !String(r.name).trim());
+    if (unnamedCustom) { openValidation(["Outro soluto: informe o nome/símbolo da espécie (ex: Br⁻, Cl⁻, Atrazina) ou desmarque a linha."]); return; }
     const solutes = waterOnly ? [] : rows
-      .filter((r) => parseFloat(String(r.dose).replace(",", ".")) > 0)
+      .filter((r) => r.active)
       .map((r) => {
+        const sym = r.custom ? String(r.name).trim() : r.symbol;
+        const nm = r.custom ? String(r.name).trim() : r.name;
         const dispNum = num(r.disp, dispDefault);
         return {
-          symbol: r.symbol, name: r.name, dose_kg_ha: parseFloat(String(r.dose).replace(",", ".")), kd: num(r.kd, 0),
+          symbol: sym, name: nm, dose_kg_ha: parseFloat(String(r.dose).replace(",", ".")), kd: num(r.kd, 0),
           dispersivity_cm: dispNum > 0 ? dispNum : dispDefault,
           initial_residual_mg_dm3: r.res === "" ? 0 : num(r.res, 0),
-          release_type: r.rel === "controlled" ? "controlled" : "immediate", release_days: num(r.relDays, 60),
+          release_type: relType, release_days: relDays,
         };
-      });
+      })
+      .filter((s) => s.symbol && s.dose_kg_ha > 0);
     if (!waterOnly && !solutes.length) { openValidation(["Modo de simulação: modo 'Água + nutrientes' exige ao menos um soluto com dose > 0. Marque um nutriente ou troque para 'Somente água'."]); return; }
     let print_days: number[] | undefined;
     let analysis_start_day = 1;
@@ -653,6 +665,10 @@ export default function Home() {
                 setPulse={setPulse}
                 fertContinuous={fertContinuous}
                 setFertContinuous={setFertContinuous}
+                releaseType={releaseType}
+                setReleaseType={setReleaseType}
+                releaseDays={releaseDays}
+                setReleaseDays={setReleaseDays}
               />
             )}
 
