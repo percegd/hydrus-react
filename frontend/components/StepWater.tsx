@@ -67,6 +67,8 @@ type Props = {
   setClimateRows: (rows: ClimateRow[]) => void;
   hubKey: string;
   setHubKey: (v: string) => void;
+  hubLabel: string;
+  setHubLabel: (v: string) => void;
   hubScenario: string;
   setHubScenario: (v: string) => void;
   hubAppDay: string;
@@ -180,7 +182,7 @@ export default function StepWater(props: Props) {
   const {
     days, setDays, rainMode, setRainMode, rainMm, setRainMm, moisture, setMoisture, et0, setEt0,
     hasCrop, cropKc, advEt, setAdvEt, evap, setEvap, transp, setTransp,
-    climateRows, setClimateRows, hubKey, setHubKey, hubScenario, setHubScenario,
+    climateRows, setClimateRows, hubKey, setHubKey, hubLabel, setHubLabel, hubScenario, setHubScenario,
     hubAppDay, setHubAppDay, uploadAppDay, setUploadAppDay,
     analysisStart, setAnalysisStart, analysisEnd, setAnalysisEnd, printDays, setPrintDays,
   } = props;
@@ -205,8 +207,13 @@ export default function StepWater(props: Props) {
       const def = hubs.find((h) => h.key === "piracicaba_sp") ?? hubs[0];
       setHubKey(def.key);
     }
+    // Mantém o rótulo exato do seletor p/ series_source_label do laudo.
+    if (hubKey && !hubLabel && hubs.length > 0) {
+      const found = hubs.find((h) => h.key === hubKey);
+      if (found) setHubLabel(found.label);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hubs]);
+  }, [hubs, hubKey]);
 
   // Trocar polo/cenário preenche a tabela (como os handlers do Gradio).
   async function loadSeries(key: string, scenario: string) {
@@ -215,6 +222,7 @@ export default function StepWater(props: Props) {
     try {
       const s = await getHubSeries(key, scenario);
       setClimateRows(s.rows.map((r) => ({ ...r })));
+      setHubLabel(s.hub_label);
       const yr = s.year ? ` (ano observado ${s.year})` : "";
       setSeriesInfo(`${s.hub_label} — ${s.scenario_label}${yr}: ${s.total_rain_mm.toFixed(1)} mm em ${s.days} dias.`);
     } catch (e) {

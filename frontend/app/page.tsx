@@ -175,6 +175,7 @@ export default function Home() {
   const [transp, setTransp] = useState(DEFAULTS.transp);
   const [climateRows, setClimateRows] = useState<ClimateRow[]>(() => emptyRows(365));
   const [hubKey, setHubKey] = useState(DEFAULTS.hubKey);
+  const [hubLabel, setHubLabel] = useState("");
   const [hubScenario, setHubScenario] = useState(DEFAULTS.hubScenario);
   const [hubAppDay, setHubAppDay] = useState(DEFAULTS.hubAppDay);
   const [uploadAppDay, setUploadAppDay] = useState(DEFAULTS.uploadAppDay);
@@ -401,6 +402,7 @@ export default function Home() {
     setTransp(DEFAULTS.transp);
     setClimateRows(emptyRows(365));
     setHubKey(DEFAULTS.hubKey);
+    setHubLabel("");
     setHubScenario(DEFAULTS.hubScenario);
     setHubAppDay(DEFAULTS.hubAppDay);
     setUploadAppDay(DEFAULTS.uploadAppDay);
@@ -556,6 +558,14 @@ export default function Home() {
         analysis_start_day,
         analysis_end_day,
         print_days,
+        // Paridade Gradio (laudo sazonal): fonte da série p/ o laudo.
+        // hub -> rótulo exato do seletor + " (NASA POWER)"; upload -> planilha
+        // do usuário; lâmina -> não envia (backend usa o default do polo).
+        ...(rainMode === "hub"
+          ? { series_source_label: `Série climática do polo — ${hubLabel || hubKey} (NASA POWER)` }
+          : rainMode === "upload"
+            ? { series_source_label: "Planilha climática importada pelo usuário (série diária)" }
+            : {}),
         placement: {
           mode: placement, z_top_cm: z_top, z_bottom_cm: z_bottom,
           fertigation_c0_mg_l: num(c0, 20),
@@ -859,6 +869,8 @@ export default function Home() {
                 setClimateRows={setClimateRows}
                 hubKey={hubKey}
                 setHubKey={setHubKey}
+                hubLabel={hubLabel}
+                setHubLabel={setHubLabel}
                 hubScenario={hubScenario}
                 setHubScenario={setHubScenario}
                 hubAppDay={hubAppDay}

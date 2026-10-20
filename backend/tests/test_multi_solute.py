@@ -32,13 +32,22 @@ def _assert_png_base64(value: str) -> None:
     assert base64.b64decode(value).startswith(PNG_MAGIC)
 
 
-def _assert_multi_solute_outputs(response, report: str) -> None:
+def _assert_multi_solute_outputs(response, report: str, seasonal: bool = False) -> None:
     # Novo comportamento do caminho rápido (execute_job/execute_job_fast):
     # sem base64 por-soluto legado (plots vazios por compatibilidade); as
     # imagens da tela de Resultados vão para screen + arquivos em tela/.
     assert (response.plots_png_base64 or {}) == {}
     assert response.plot_png_base64 is None
     assert response.screen is not None and response.screen.perfil is not None
+    if seasonal:
+        # Paridade Gradio: laudo sazonal com solutos é o bloco literal
+        # ("Formulação: N solutos (N, K, S)" + "Espécies simuladas"), sem
+        # nomes por extenso nem "(SÍMBOLO)" isolado.
+        assert "Série Hídrica" in report
+        assert "Formulação:" in report
+        for solute in SOLUTES:
+            assert solute["symbol"] in report
+        return
     for solute in SOLUTES:
         assert solute["name"] in report or f"({solute['symbol']})" in report
 
@@ -56,7 +65,7 @@ def test_execute_job_multi_solute_365_days_rain_series(tmp_path) -> None:
         _request(rain_series=rain_series), str(tmp_path)
     )
 
-    _assert_multi_solute_outputs(response, report)
+    _assert_multi_solute_outputs(response, report, seasonal=True)
 
 
 def test_simulate_post_multi_solute_returns_two_plots() -> None:

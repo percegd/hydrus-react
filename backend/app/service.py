@@ -63,18 +63,40 @@ def _default_print_days(total_days: float, seasonal: bool = False) -> list[float
 
 
 def _default_obs_depths(depth_cm: float, seasonal: bool) -> list[float] | None:
-    """Nós de observação padrão do modo sazonal do Gradio.
+    """Nós de observação padrão do campo do Gradio ("10, 20, 30, 50").
 
-    Gradio (série diária) usa [20, 50, 100, prof] quando o usuário não
-    informa nada; no modo coluna deixa o default do solver.
+    O Gradio usa o default "10, 20, 30, 50" em ambos os modos (coluna e
+    série diária); aqui filtramos a 0 < d <= prof e ordenamos sem duplicatas.
+    O parâmetro ``seasonal`` é mantido por compatibilidade de assinatura.
     """
-    if seasonal:
+    try:
+        prof = float(depth_cm)
+    except (TypeError, ValueError):
+        return None
+    out = sorted({float(d) for d in (10.0, 20.0, 30.0, 50.0) if 0.0 < float(d) <= prof})
+    return out or None
+
+
+def _effective_obs_depths(req: SimulateRequest, depth_cm: float) -> list[float] | None:
+    """Nós de observação efetivos como no Gradio.
+
+    Se o request informa obs_depths_cm não vazio, usa esses valores
+    (filtrados a 0 < d <= depth_cm, ordenados, sem duplicatas); senão o
+    default do campo do Gradio [10, 20, 30, 50] filtrado pela profundidade.
+    """
+    try:
+        prof = float(depth_cm)
+    except (TypeError, ValueError):
+        return None
+    raw = getattr(req, "obs_depths_cm", None)
+    if raw:
         try:
-            prof = float(depth_cm)
+            filt = sorted({float(d) for d in raw if 0.0 < float(d) <= prof})
         except (TypeError, ValueError):
-            return None
-        return sorted({d for d in (20.0, 50.0, 100.0, prof) if 0.0 <= d <= prof})
-    return None
+            filt = []
+        if filt:
+            return filt
+    return _default_obs_depths(prof, _is_seasonal(req))
 
 
 def _storage_mm(results) -> float:
@@ -220,6 +242,19 @@ def _run_core(req: SimulateRequest):
         _ztop, _zbot = 5.0, 10.0
     elif _pmode == "fertigation":
         _ztop, _zbot = 0.0, 0.0
+    # Paridade Gradio: fertigation_c0/pulse só valem no modo fertigation;
+    # nos demais posicionamentos o solver recebe 0.0 e 0.0 (sem injeção pela água).
+    _is_fert = str(_pmode or "").lower() == "fertigation"
+    try:
+        _c0_req = float(req.placement.fertigation_c0_mg_l)
+    except (TypeError, ValueError):
+        _c0_req = 0.0
+    try:
+        _pulse_req = float(req.placement.fertigation_pulse_days)
+    except (TypeError, ValueError):
+        _pulse_req = 0.0
+    _c0_eff = float(_c0_req) if _is_fert else 0.0
+    _pulse_eff = float(_pulse_req) if _is_fert else 0.0
     nutrients = [
         {
             "symbol": s.symbol,
@@ -233,8 +268,8 @@ def _run_core(req: SimulateRequest):
             "placement_mode": _pmode,
             "z_app_top_cm": _ztop,
             "z_app_bottom_cm": _zbot,
-            "fertigation_c0_mg_l": float(req.placement.fertigation_c0_mg_l),
-            "fertigation_pulse_days": float(req.placement.fertigation_pulse_days),
+            "fertigation_c0_mg_l": _c0_eff,
+            "fertigation_pulse_days": _pulse_eff,
         }
         for s in (req.solutes or [])
     ]
@@ -278,10 +313,17 @@ def _run_core(req: SimulateRequest):
         target_depth_cm=root_depth,
     )
     sim = Hydrus1DSimulator(soil=soil, crop=crop, config=cfg)
-    # Defaults iguais ao Gradio: dias de leitura por frações da duração e,
-    # no modo sazonal, nós de observação [20, 50, 100, perfil].
+    # Defaults iguais ao Gradio: dias de leitura por frações da duração e
+    # nós de observação default do campo do Gradio [10, 20, 30, 50].
     _print_days_eff = _effective_print_days(req, total_days, sw, ew)
-    _obs_depths = _default_obs_depths(float(req.depth_cm), _is_seasonal(req))
+    _obs_depths = _effective_obs_depths(req, float(req.depth_cm))
+    # Paridade Gradio: no modo série diária (sazonal) a umidade inicial é
+    # fixa em 20.0% (o campo de umidade prévia só vale no modo Lâmina).
+    _seasonal = _is_seasonal(req)
+    try:
+        _init_moist_eff = 20.0 if _seasonal else float(req.initial_moisture_pct)
+    except (TypeError, ValueError):
+        _init_moist_eff = 20.0 if _seasonal else 80.0
     # ET avançada (Gradio adv_et_toggle, só no modo Lâmina): overrides manuais
     # evap_mm_day ("0 = derivar de ET0") / transp_mm_day ("0 = ET0·Kc").
     # No modo sazonal o Gradio ignora os campos (evap_cm_day=None); aqui igual.
@@ -296,7 +338,7 @@ def _run_core(req: SimulateRequest):
     _evap_arg = (_e_override / 10.0) if (_e_override > 0 and not _is_seasonal(req)) else None
     _transp_arg = (_t_override if (_t_override > 0 and not _is_seasonal(req)) else None)
     results = sim.run(
-        initial_moisture_pct=float(req.initial_moisture_pct),
+        initial_moisture_pct=float(_init_moist_eff),
         fertilizer_dose_kg_ha=sum(n["dose_kg_ha"] for n in nutrients),
         water_events=water_events,
         et0_mm_day=et0_eff,
@@ -1006,7 +1048,8 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
         "h4": float(crop.h4 if crop else 0.0),
         "rain_mm": float(total_rain),
         "total_days": float(total_days),
-        "initial_moisture_pct": float(req.initial_moisture_pct),
+        # Paridade Gradio: no sazonal a umidade efetiva é fixa em 20.0%.
+        "initial_moisture_pct": float(20.0 if is_seasonal else req.initial_moisture_pct),
         "leaching_pct": float(prim.get("leaching_ratio_pct", 0.0) or 0.0),
         "retained_pct": float(prim.get("retained_root_pct", 0.0) or 0.0),
         "leaching_ratio_pct": float(prim.get("leaching_ratio_pct", 0.0) or 0.0),
@@ -1177,6 +1220,214 @@ def _report_active_depth(req: SimulateRequest) -> float:
     return float(_pbot - _ptop) if _pbot > _ptop else 0.0
 
 
+def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_depth: float,
+                            total_rain: float, total_days: float) -> str:
+    """Laudo sazonal com solutos — texto literal do Gradio (caminho série diária).
+
+    O Gradio NÃO usa generate_advanced_report neste modo; monta o bloco
+    abaixo (mesmos títulos, rótulos, negritos, ordem e formatação numérica).
+    O passo a passo é concatenado pelo frontend, não faz parte do laudo.
+    """
+    import math as _math
+
+    if req.rain_series:
+        _sw, _ew = _effective_window(req, len(req.rain_series))
+        _full_len = len(req.rain_series)
+    else:
+        _sw, _ew = 1, int(float(total_days))
+        _full_len = int(float(total_days))
+    _n_win = int(float(total_days))
+    _win_txt = f"{_sw}–{_ew}" if (_sw > 1 or _ew < 365) else "ano cheio (1–365)"
+    _base_source = getattr(req, "series_source_label", None) or "Série climática do polo (NASA POWER)"
+    if (_sw > 1 or _ew < _full_len):
+        source_label = f"{_base_source} (janela de análise: dias {_sw}–{_ew})"
+    else:
+        source_label = _base_source
+
+    try:
+        _zmax = float(max(getattr(results, "z", [0.0])))
+    except Exception:
+        try:
+            _zmax = float(req.depth_cm)
+        except (TypeError, ValueError):
+            _zmax = 0.0
+    prof_depth = float(_zmax)
+    drainage_mm = float(getattr(results, "q_bottom_cum_cm", 0.0) or 0.0) * 10.0
+    storage_mm = float(_storage_mm(results))
+    if crop is not None:
+        try:
+            crop_txt = f"{crop.name} (kc={float(crop.kc):.2f}, raiz {float(crop.root_depth_cm):.0f} cm)"
+        except (TypeError, ValueError):
+            crop_txt = f"{crop.name}"
+    else:
+        crop_txt = "Perfil de solo nu (sem cultura)"
+
+    _pm = str((req.placement.mode if req.placement else None) or "surface").lower()
+    if _pm == "furrow":
+        placement_label = "No Sulco de Plantio (5 a 10 cm)"
+    elif _pm == "custom":
+        try:
+            _ct = float(req.placement.z_top_cm)
+        except (TypeError, ValueError):
+            _ct = 0.0
+        try:
+            _cb = float(req.placement.z_bottom_cm)
+        except (TypeError, ValueError):
+            _cb = 0.0
+        placement_label = f"Profundidade Personalizada ({_ct:.0f} a {_cb:.0f} cm)"
+    elif _pm == "fertigation":
+        try:
+            _c0 = float(req.placement.fertigation_c0_mg_l or 0.0)
+        except (TypeError, ValueError):
+            _c0 = 0.0
+        try:
+            _pu = float(req.placement.fertigation_pulse_days or 0.0)
+        except (TypeError, ValueError):
+            _pu = 0.0
+        _pulse_txt = "contínuo" if _pu <= 0 else f"{_pu:.1f} d"
+        placement_label = f"Fertirrigação Líquida (C₀ = {_c0:.1f} mg/L, pulso = {_pulse_txt})"
+    else:
+        placement_label = "A lanço / Superfície (0 a 2 cm)"
+
+    try:
+        _app_raw = float(req.placement.application_day or 0.0) if req.placement else 0.0
+    except (TypeError, ValueError):
+        _app_raw = 0.0
+    _app_cal = int(round(_app_raw)) if _app_raw else 0
+
+    nutrients_list = [
+        {
+            "symbol": str(s.symbol),
+            "name": str(s.name),
+            "dose_kg_ha": float(s.dose_kg_ha),
+            "kd": float(s.kd),
+        }
+        for s in (req.solutes or [])
+    ]
+    elemental_dose = float(sum(n["dose_kg_ha"] for n in nutrients_list)) if nutrients_list else 0.0
+    try:
+        _root_seas = float(crop.root_depth_cm) if crop is not None else float(prof_depth)
+    except (TypeError, ValueError):
+        _root_seas = float(prof_depth)
+    _nr = getattr(results, "nutrient_results", {}) or {}
+    is_multi_nutr = len(nutrients_list) > 1
+
+    if is_multi_nutr:
+        _sp_map = {"N": "NO₃⁻", "K": "K⁺", "S": "SO₄²⁻", "Ca": "Ca²⁺", "Mg": "Mg²⁺", "P": "H₂PO₄⁻"}
+        _sp_list = ", ".join(
+            f"{n['symbol']} como {_sp_map.get(n['symbol'], n['symbol'])}" for n in nutrients_list
+        )
+        solutes_header_txt = (f"* **Formulação:** **{len(nutrients_list)} solutos** "
+                              f"({', '.join(n['symbol'] for n in nutrients_list)}) | "
+                              f"**Dose total:** **{elemental_dose:.0f} kg/ha**\n"
+                              f"* **Espécies simuladas (fixas, sem transformações):** {_sp_list}")
+
+        def _bloco_soluto(n):
+            _dd = (_nr.get(n['symbol']) or {})
+            _rt = float(_dd.get('retained_root_pct', 0.0) or 0.0)
+            _lq = float(_dd.get('leaching_ratio_pct', 0.0) or 0.0)
+            try:
+                _bt = float(_dd.get('leached_bottom_pct', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                _bt = 0.0
+            _bw = max(0.0, _lq - _bt)
+            return (f"* **{n['symbol']}** — dose {float(n['dose_kg_ha']):.1f} kg/ha | Kd {float(n['kd']):.4f} cm³/g | "
+                    f"retido {_rt:.1f}% | abaixo no perfil {_bw:.1f}% | fundo {_bt:.1f}%")
+        solutes_block_txt = "\n".join(_bloco_soluto(n) for n in nutrients_list)
+    else:
+        _n0 = nutrients_list[0] if nutrients_list else {"symbol": "", "name": "", "dose_kg_ha": 0.0, "kd": 0.0}
+        nutr_sym = str(_n0.get("symbol") or "")
+        nutr_display_name = str(_n0.get("name") or nutr_sym)
+        _dd0 = (_nr.get(nutr_sym) or {})
+        ret_root_pct = float((_dd0.get("retained_root_pct", 0.0)) or 0.0)
+        retained_pct = float(ret_root_pct)
+        retained_kg = float(elemental_dose * retained_pct / 100.0)
+        leached_pct = float((_dd0.get("leaching_ratio_pct", 0.0)) or 0.0)
+        uptaken_pct = float((_dd0.get("uptaken_pct", 0.0)) or 0.0)
+        uptaken_kg = float(elemental_dose * uptaken_pct / 100.0)
+        peak_cm = _dd0.get("peak_depth_cm", None)
+        try:
+            _ret_prof_s = float((_dd0.get("retained_profile_pct", float(getattr(results, "retained_profile_pct", 0.0)))) or 0.0)
+        except (TypeError, ValueError):
+            try:
+                _ret_prof_s = float(getattr(results, "retained_profile_pct", 0.0))
+            except (TypeError, ValueError):
+                _ret_prof_s = 0.0
+        ret_deep_pct = max(0.0, _ret_prof_s - ret_root_pct)
+        if crop is not None and float(getattr(crop, "root_depth_cm", 0.0) or 0.0) < prof_depth and ret_root_pct > 0:
+            ret_str = (
+                f"* **Retido na camada avaliada (0–{_root_seas:.0f} cm):** **{ret_root_pct:.1f}%** ({elemental_dose * ret_root_pct / 100.0:.1f} kg/ha)\n"
+                f"  * *Em subsuperfície ({_root_seas:.0f}–{prof_depth:.0f} cm):* **{ret_deep_pct:.1f}%** ({elemental_dose * ret_deep_pct / 100.0:.1f} kg/ha)"
+            )
+        else:
+            ret_str = f"* **Retido no perfil (0–{prof_depth:.0f} cm):** **{retained_pct:.1f}%** ({retained_kg:.1f} kg/ha)"
+        solutes_header_txt = (f"* **Nutriente avaliado:** {nutr_display_name} ({nutr_sym}) | "
+                              f"Dose: **{elemental_dose:.0f} kg/ha**")
+        _upt_line_s = (f"\n* **Absorvido (passivo, sem teto nutricional):** **{uptaken_pct:.1f}%** ({uptaken_kg:.1f} kg/ha)"
+                       if float(uptaken_pct or 0.0) > 0.05 else "")
+        try:
+            _bot_s = float(((_nr.get(nutr_sym) or {}).get("leached_bottom_pct", 0.0)) or 0.0)
+        except (TypeError, ValueError):
+            _bot_s = 0.0
+        _below_s = max(0.0, float(leached_pct or 0.0) - _bot_s)
+        _peak_txt = (
+            'indefinido' if peak_cm is None or (isinstance(peak_cm, float) and _math.isnan(float(peak_cm)))
+            else f'{float(peak_cm):.1f} cm'
+            if peak_cm is not None else 'indefinido'
+        )
+        try:
+            # cobre NaN não-float (ex.: numpy) como o Gradio
+            if peak_cm is not None and _math.isnan(float(peak_cm)):
+                _peak_txt = 'indefinido'
+            elif peak_cm is not None:
+                _peak_txt = f'{float(peak_cm):.1f} cm'
+            else:
+                _peak_txt = 'indefinido'
+        except (TypeError, ValueError):
+            _peak_txt = 'indefinido'
+        solutes_block_txt = (f"{ret_str}\n"
+                             f"* **Abaixo da camada no perfil ({_root_seas:.0f}–{prof_depth:.0f} cm):** **{_below_s:.1f}%** ({elemental_dose * _below_s / 100.0:.1f} kg/ha)\n"
+                             f"* **Atravessou o fundo ({prof_depth:.0f} cm):** **{_bot_s:.1f}%** ({elemental_dose * _bot_s / 100.0:.1f} kg/ha)"
+                             f"{_upt_line_s}\n"
+                             f"* **Profundidade do pico máximo:** **{_peak_txt}**")
+
+    try:
+        _eS = float(getattr(results, "evap_cum_cm", 0.0) or 0.0) * 10.0
+        _tS = float(getattr(results, "transp_cum_cm", 0.0) or 0.0) * 10.0
+        _roS = float(getattr(results, "runoff_cum_cm", 0.0) or 0.0) * 10.0
+        _clS = float(total_rain) - (_eS + _tS + float(drainage_mm) + _roS + float(storage_mm))
+        _hydro_seas = (
+            f"* **Evapotranspiração real (E+T):** **{_eS + _tS:.1f} mm** (E {_eS:.1f} + T {_tS:.1f} mm)\n"
+            f"* **Escoamento superficial:** **{_roS:.1f} mm**\n"
+            f"* **Δ Armazenamento no perfil (θfinal−θinicial):** **{float(storage_mm):+.1f} mm**\n"
+            f"* **Resíduo de fechamento hídrico (P−E−T−D−RO−ΔS):** **{_clS:+.2f} mm**\n"
+        )
+    except Exception:
+        _hydro_seas = ""
+    _scope_seas = (
+        "\n\n> ℹ️ **Escopo e limites:** cada soluto representa uma **espécie química fixa** "
+        "(N como NO₃⁻, K como K⁺, S como SO₄²⁻); o modelo **não simula transformações químicas**. "
+        "Kd de **referência bibliográfica** para a textura do solo, ajustáveis — **não calibrados** "
+        "para este talhão. Absorção **passiva, sem teto nutricional**. Uso recomendado: "
+        "**comparação entre manejos/cenários**, não previsão garantida."
+    )
+    report = f"""### Laudo de Simulação — Série Hídrica ({_n_win} dias, janela {_win_txt})
+
+#### 1. Cenário Hídrico
+* **Fonte da série:** {source_label}
+* **Precipitação no período:** **{float(total_rain):.1f} mm**
+* **Solo:** {soil.name} | **Cultura:** {crop_txt}
+{solutes_header_txt}
+* **Domínio do perfil:** **0 a {prof_depth:.0f} cm**
+
+#### 2. Balanço de Massa ao Longo de {_n_win} Dias
+* **Drenagem profunda acumulada:** **{float(drainage_mm):.1f} mm**
+{_hydro_seas}{solutes_block_txt}
+* **Método de aplicação:** {placement_label} | **Dia da aplicação (calendário):** {_app_cal}{_scope_seas}
+""".strip()
+    return report
+
+
 def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
                  total_rain: float, total_days: float) -> str:
     """Laudo multi-soluto via hydrus_core.agronomic_report (o core já cobre N solutos).
@@ -1235,14 +1486,9 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
     dose_total = sum(float(s.dose_kg_ha) for s in (req.solutes or []))
     active_depth = _report_active_depth(req)
     if _is_seasonal(req):
-        return generate_advanced_report(
-            results=results, soil=soil, crop=crop, rain_mm=float(total_rain),
-            fertilizer_dose_kg_ha=dose_total, nutrient_symbol=first.symbol,
-            nutrient_name=first.name, kd_used=float(first.kd),
-            release_type=(first.release_type or "immediate"),
-            release_days=float(first.release_days or 60.0),
-            active_depth_cm=float(active_depth),
-        )
+        # Paridade Gradio: laudo sazonal com solutos é o bloco literal do
+        # Gradio (sem generate_advanced_report; passo a passo vai no frontend).
+        return _seasonal_solute_report(req, results, soil, crop, root_depth, total_rain, total_days)
     z = getattr(results, "z", [0.0])
     try:
         prof_depth = float(max(z))

@@ -156,6 +156,16 @@ class SimulateRequest(BaseModel):
     print_days: Optional[list[float]] = Field(
         default=None, description="Dias de leitura (ex: 55, 128, 237, 365)"
     )
+    # Nós de observação [cm]: default do campo do Gradio "10, 20, 30, 50"
+    # (em ambos os modos; filtrado pela profundidade do perfil no service).
+    obs_depths_cm: Optional[list[float]] = Field(
+        default=None, description="Nós de observação em cm (default Gradio: 10, 20, 30, 50)"
+    )
+    # Rótulo da fonte da série p/ o laudo sazonal (frontend envia o rótulo
+    # exato do seletor + "(NASA POWER)"; default = série do polo).
+    series_source_label: Optional[str] = Field(
+        default="Série climática do polo (NASA POWER)"
+    )
 
 
 class JobCreated(BaseModel):
