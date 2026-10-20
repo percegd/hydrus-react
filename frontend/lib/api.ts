@@ -21,7 +21,9 @@ export type WaterBalance = {
   drainage_label: string;
 };
 export type ExtraPlot = { key: string; title: string; png_base64?: string | null; url?: string | null };
-export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; plots_png_base64?: Record<string, string> | null; extra_plots?: ExtraPlot[] | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null; water_only?: boolean; water_balance?: WaterBalance | null };
+export type ScreenGalleryItem = { symbol: string; name: string; url: string };
+export type ScreenImages = { perfil: string | null; btc: string | null; evolucao: string | null; galeria: ScreenGalleryItem[] };
+export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; plots_png_base64?: Record<string, string> | null; extra_plots?: ExtraPlot[] | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null; water_only?: boolean; water_balance?: WaterBalance | null; screen?: ScreenImages | null };
 export type HelpEntry = { key: string; title: string; unit: string; what: string; simulation: string };
 
 export class ApiError extends Error {

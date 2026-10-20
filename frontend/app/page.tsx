@@ -708,6 +708,13 @@ export default function Home() {
   const cropEntry = crops.find((c) => c.key === crop);
   const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
   const cropLabel = isCom ? (cropName.trim() || cropEntry?.name || crop) : "Sem cultura";
+  const resultsWaterOnly = result ? (result.water_only || !result.solutes?.length) : waterOnly;
+  const headerTitle = step === 4 && resultsWaterOnly
+    ? "Resultados da Modelagem Física 1D — Fluxo de Água"
+    : STEP_TITLES[step].title;
+  const headerSub = step === 4 && resultsWaterOnly
+    ? "Balanço hídrico do perfil resolvido pela Equação de Richards acoplada à evaporação do solo e à absorção radicular (Feddes, quando há cultura)."
+    : STEP_TITLES[step].sub;
   const running = jobState === "queued" || jobState === "running";
   const showOverlay = running && !overlayTimedOut;
 
@@ -743,9 +750,9 @@ export default function Home() {
         ) : (
           <>
             <div className="wizard-question-header">
-              <h2 className="wizard-question-title">{STEP_TITLES[step].title}</h2>
-              {STEP_TITLES[step].sub && (
-                <p className="wizard-question-subtitle">{STEP_TITLES[step].sub}</p>
+              <h2 className="wizard-question-title">{headerTitle}</h2>
+              {headerSub && (
+                <p className="wizard-question-subtitle">{headerSub}</p>
               )}
             </div>
 
