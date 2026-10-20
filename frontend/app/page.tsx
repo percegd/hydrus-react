@@ -167,6 +167,7 @@ export default function Home() {
   const [cropH3, setCropH3] = useState(DEFAULTS.cropH3);
   const [cropH4, setCropH4] = useState(DEFAULTS.cropH4);
   const [cropStartMode, setCropStartMode] = useState("planting");
+  const [cropStartTouched, setCropStartTouched] = useState(false);
   const [cropAgeDap, setCropAgeDap] = useState("");
   const [plantingDay, setPlantingDay] = useState("");
   const [afterHarvest, setAfterHarvest] = useState("bare");
@@ -283,9 +284,36 @@ export default function Home() {
     }
   }
 
+  function handleCropStartModeSelect(mode: string) {
+    const canPer = crop === "cafe" || crop === "cana_de_acucar";
+    setCropStartTouched(true);
+    if (mode === "perennial" && !canPer) {
+      const series = rainMode === "hub" || rainMode === "upload";
+      setCropStartMode(series ? "planting" : "established");
+      return;
+    }
+    setCropStartMode(mode);
+  }
+
+  function handleCropAgeDapChange(v: string) {
+    setCropStartTouched(true);
+    setCropAgeDap(v);
+  }
+
+  function handlePlantingDayChange(v: string) {
+    setCropStartTouched(true);
+    setPlantingDay(v);
+  }
+
   useEffect(() => {
     const series = rainMode === "hub" || rainMode === "upload";
-    setCropStartMode((m) => (crop === "cafe" ? "perennial" : series ? "planting" : "established"));
+    const canPer = crop === "cafe" || crop === "cana_de_acucar";
+    if (cropStartMode === "perennial" && !canPer) {
+      setCropStartMode(series ? "planting" : "established");
+      return;
+    }
+    if (cropStartTouched) return;
+    setCropStartMode(crop === "cafe" ? "perennial" : series ? "planting" : "established");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rainMode]);
 
@@ -380,6 +408,7 @@ export default function Home() {
     if (found) fillCropParams(found);
     const series = rainMode === "hub" || rainMode === "upload";
     setCropStartMode(defaultStartMode(key, series));
+    setCropStartTouched(false);
     setCropAgeDap(DAP_DEFAULTS[key] || "");
     setPlantingDay("");
     setAfterHarvest(key === "cana_de_acucar" ? "repeat" : "bare");
@@ -870,11 +899,11 @@ export default function Home() {
                 setBulk={setBulk}
                 rosettaNote={rosettaNote}
                 cropStartMode={cropStartMode}
-                setCropStartMode={setCropStartMode}
+                setCropStartMode={handleCropStartModeSelect}
                 cropAgeDap={cropAgeDap}
-                setCropAgeDap={setCropAgeDap}
+                setCropAgeDap={handleCropAgeDapChange}
                 plantingDay={plantingDay}
-                setPlantingDay={setPlantingDay}
+                setPlantingDay={handlePlantingDayChange}
                 afterHarvest={afterHarvest}
                 setAfterHarvest={setAfterHarvest}
                 rootGrowth={rootGrowth}
