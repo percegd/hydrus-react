@@ -859,3 +859,41 @@ input[type="range"]::-moz-range-thumb {
   .header-logo-img { height: 44px; }
   .app-header .app-subtitle { font-size: 12.5px; }
 }
+
+/* ---------------- Loading overlay em tela cheia (paridade Gradio) ---------------- */
+#fullscreen-loading {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 20px;
+}
+.loader-spinner {
+  width: 46px;
+  height: 46px;
+  border: 4px solid rgba(255, 255, 255, 0.18);
+  border-top-color: #10b981;
+  border-radius: 50%;
+  animation: hydrus-loader-spin 0.9s linear infinite;
+}
+@keyframes hydrus-loader-spin {
+  to { transform: rotate(360deg); }
+}
+.loader-message {
+  color: #fff;
+  font-size: 24px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.5;
+}
+.loader-message small {
+  font-size: 14px;
+  opacity: 0.7;
+  font-weight: 400;
+}

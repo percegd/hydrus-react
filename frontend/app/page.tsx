@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import LoadingOverlay from "../components/LoadingOverlay";
 import Results from "../components/Results";
 import StepIntro from "../components/StepIntro";
 import StepNutrients, { DEFAULT_ROWS, NUTRIENT_SYMBOLS, blankCustomRow, defaultDispForDepth, type NutrientRow } from "../components/StepNutrients";
@@ -203,6 +204,8 @@ export default function Home() {
   const pollAbort = useRef<AbortController | null>(null);
   const pollCancelled = useRef(false);
   const elapsedTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const safetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [overlayTimedOut, setOverlayTimedOut] = useState(false);
 
   function stopPolling() {
     pollCancelled.current = true;
@@ -213,6 +216,10 @@ export default function Home() {
     if (elapsedTimer.current) {
       clearInterval(elapsedTimer.current);
       elapsedTimer.current = null;
+    }
+    if (safetyTimer.current) {
+      clearTimeout(safetyTimer.current);
+      safetyTimer.current = null;
     }
   }
 
@@ -414,6 +421,7 @@ export default function Home() {
     setJobId("");
     setJobState("");
     setElapsed(0);
+    setOverlayTimedOut(false);
     setValidationIssues(null);
     setRestartOpen(false);
     setResult(null);
@@ -489,8 +497,16 @@ export default function Home() {
     }
     const appliedTotal = rain_series ? rain_series.reduce((a, b) => a + b, 0) : num(rainMm, 0);
     setAppliedMm(appliedTotal);
-    setStep(4);
+    // Permanece no Passo 3 com overlay de tela cheia até o job concluir.
+    setOverlayTimedOut(false);
     setJobState("queued");
+    // Timeout de segurança (paridade Gradio): após 300 s remove o overlay;
+    // o polling continua e o resultado aparece normalmente se concluir depois.
+    if (safetyTimer.current) clearTimeout(safetyTimer.current);
+    safetyTimer.current = setTimeout(() => {
+      setOverlayTimedOut(true);
+      safetyTimer.current = null;
+    }, 300000);
     // Posicionamento: faixas do Gradio (superfície 0–2, sulco 5–10, personalizada, fertirrigação).
     let z_top = 0;
     let z_bottom = 2;
@@ -596,6 +612,8 @@ export default function Home() {
             setElapsed(st.elapsed_s);
             setJobState("done");
             setResult(st.result);
+            setStep(4);
+            window.scrollTo({ top: 0, behavior: "smooth" });
             return;
           } else if (st.status === "failed") {
             stopPolling();
@@ -691,6 +709,17 @@ export default function Home() {
   const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
   const cropLabel = isCom ? (cropName.trim() || cropEntry?.name || crop) : "Sem cultura";
   const running = jobState === "queued" || jobState === "running";
+  const showOverlay = running && !overlayTimedOut;
+
+  // Bloqueia o scroll do body enquanto o overlay de tela cheia está aberto.
+  useEffect(() => {
+    if (!showOverlay) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [showOverlay]);
   const soluteMeta = Object.fromEntries(rows.map((r) => {
     const sym = r.custom ? String(r.name).trim() : r.symbol;
     return [sym, { kd: r.kd, residual: r.res }];
@@ -883,7 +912,7 @@ export default function Home() {
               Voltar
             </button>
             <button className={`btn-wizard-next${running ? " is-loading" : ""}`} onClick={run} disabled={running}>
-              {running ? "Calculando..." : "Calcular Resultados"}
+              Calcular Resultados
             </button>
           </>
         )}
@@ -900,6 +929,7 @@ export default function Home() {
       {restartOpen && (
         <RestartModal onCancel={() => setRestartOpen(false)} onConfirm={resetToDefaults} />
       )}
+      {showOverlay && <LoadingOverlay />}
     </div>
   );
 }
