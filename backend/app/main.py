@@ -38,8 +38,14 @@ def _execute(job_id: str, req: SimulateRequest) -> None:
         _jobs[job_id]["status"] = "running"
     try:
         resp, excel_path, _report = execute_job(req, os.path.join(_jobs_root, job_id))
+        _zip = os.path.join(_jobs_root, job_id, "graficos_simulacao.zip")
         with _jobs_lock:
-            _jobs[job_id].update(status="done", result=resp, excel_path=excel_path)
+            _jobs[job_id].update(
+                status="done",
+                result=resp,
+                excel_path=excel_path,
+                zip_path=_zip if os.path.exists(_zip) else None,
+            )
     except Exception as exc:  # noqa: BLE001 — erro vira status consultável
         with _jobs_lock:
             _jobs[job_id].update(status="failed", error=str(exc))
@@ -97,6 +103,7 @@ def job_status(job_id: str) -> JobStatus:
         error=job["error"],
         has_excel=bool(job.get("excel_path")),
         has_report=job["status"] == "done",
+        has_zip=bool(job.get("zip_path")),
     )
 
 
@@ -110,6 +117,18 @@ def job_excel(job_id: str):
     if not job or job["status"] != "done" or not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="excel indisponível")
     return FileResponse(path, filename=f"perfil_{job_id}.xlsx")
+
+
+@app.get("/jobs/{job_id}/graficos.zip")
+def job_graficos_zip(job_id: str):
+    import os
+
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    path = (job or {}).get("zip_path")
+    if not job or job["status"] != "done" or not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="graficos indisponíveis")
+    return FileResponse(path, filename=f"graficos_simulacao_{job_id}.zip")
 
 
 @app.get("/jobs/{job_id}/report")

@@ -55,13 +55,37 @@ class SoluteBalance(BaseModel):
     bottom_pct: float
     uptaken_pct: float
     peak_depth_cm: Optional[float]
+    kd: float = 0.0
+    kd_eff: float = 0.0
+    initial_residual_mg_dm3: float = 0.0
+    leaching_ratio_pct: float = 0.0
+
+
+class GalleryImage(BaseModel):
+    symbol: str
+    name: str
+    png: str
+
+
+class ResultImages(BaseModel):
+    perfil: Optional[str] = None
+    btc: Optional[str] = None
+    evolucao: Optional[str] = None
+    agua: Optional[str] = None
+    galeria: list[GalleryImage] = Field(default_factory=list)
 
 
 class SimulateResponse(BaseModel):
     drainage_mm: float
     solutes: list[SoluteBalance]
-    plot_png_base64: Optional[str] = None
-    profiles: Optional[dict] = None
+    images: ResultImages = Field(default_factory=ResultImages)
+    applied_mm: float = 0.0
+    eval_depth_cm: float = 0.0
+    target_depth_cm: float = 0.0
+    has_crop: bool = False
+    z_max_cm: float = 0.0
+    runoff_mm: float = 0.0
+    storage_mm: float = 0.0
 
 
 class JobStatus(BaseModel):
@@ -72,3 +96,4 @@ class JobStatus(BaseModel):
     error: Optional[str] = None
     has_excel: bool = False
     has_report: bool = False
+    has_zip: bool = False
