@@ -330,16 +330,16 @@ export default function StepNutrients(props: Props) {
                         <span className="nutr-name">{nutrientLabel(r.symbol, r.name)}</span>
                       </div>
                     )}
-                    <div className={`nutrient-col-dose${active ? "" : " input-disabled-dim"}`}>
+                    <div className={`nutrient-col-dose${active ? "" : " input-disabled-dim"}`} data-label="Dose [kg/ha]">
                       <input value={r.dose} disabled={!active} onChange={(e) => setRow(i, { dose: e.target.value })} inputMode="decimal" aria-label="Dose elementar [kg/ha]" />
                     </div>
-                    <div className={`nutrient-col-kd${active ? "" : " input-disabled-dim"}`} title={badge}>
+                    <div className={`nutrient-col-kd${active ? "" : " input-disabled-dim"}`} data-label="Kd [cm³/g]" title={badge}>
                       <input value={r.kd} disabled={!active} onChange={(e) => setRow(i, { kd: e.target.value, kdEdited: true })} inputMode="decimal" aria-label="Kd - Adsorção [cm³/g]" />
                     </div>
-                    <div className={`nutrient-col-disp${active ? "" : " input-disabled-dim"}`}>
+                    <div className={`nutrient-col-disp${active ? "" : " input-disabled-dim"}`} data-label="Disp. λ [cm]">
                       <input value={r.disp} disabled={!active} onChange={(e) => setRow(i, { disp: e.target.value })} inputMode="decimal" aria-label="Dispersividade λ [cm]" />
                     </div>
-                    <div className={`nutrient-col-res${active ? "" : " input-disabled-dim"}`}>
+                    <div className={`nutrient-col-res${active ? "" : " input-disabled-dim"}`} data-label="Residual [mg/dm³]">
                       <input value={r.res} disabled={!active} onChange={(e) => setRow(i, { res: e.target.value })} inputMode="decimal" aria-label="Teor residual [mg/dm³]" />
                     </div>
                     {r.custom && customCount > 1 && (

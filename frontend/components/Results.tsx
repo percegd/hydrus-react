@@ -220,6 +220,7 @@ export default function Results(props: Props) {
 
           {perfilSrc && (
             <>
+              <p className="graph-scroll-hint">Arraste os gráficos para o lado para ver tudo; use o gesto de pinça para ampliar.</p>
               <h3 className="results-section-title">{waterOnly ? "Perfil de Umidade θ(z)" : "Distribuição em Profundidade C(z)"}</h3>
               <div className="graph-white-card">
                 <img src={perfilSrc} alt={waterOnly ? "Perfil de Umidade θ(z)" : "Distribuição em Profundidade C(z)"} loading="lazy" />
