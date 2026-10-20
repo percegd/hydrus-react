@@ -991,6 +991,13 @@ input[type="range"]::-moz-range-thumb {
    ============================================================ */
 .graph-scroll-hint { display: none; }
 
+/* Celular e tablet em retrato (< 900px): a barra de passos não cabe com todos
+   os rótulos; mostra só os números e o rótulo do passo atual. */
+@media (max-width: 899px) {
+  .wizard-step:not(.step-active) .wizard-label { display: none; }
+  .wizard-progress-bar > span:first-child:not(:has(.step-active)) { display: none; }
+}
+
 @media (max-width: 767px) {
   html, body { overflow-x: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body::before { width: 100vw; }
@@ -1005,8 +1012,6 @@ input[type="range"]::-moz-range-thumb {
   /* Barra de progresso: só números; o rótulo aparece apenas no passo atual */
   .wizard-progress-bar { padding: 10px 12px; margin: 8px auto 10px auto; border-radius: 12px; }
   .wizard-step { font-size: 13px; gap: 6px; }
-  .wizard-step:not(.step-active) .wizard-label { display: none; }
-  .wizard-progress-bar > span:first-child:not(:has(.step-active)) { display: none; }
   .wizard-badge { width: 26px; height: 26px; font-size: 12.5px; }
   .wizard-connector { margin: 0 6px; min-width: 6px; }
 
