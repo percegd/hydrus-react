@@ -348,7 +348,22 @@ def crops_preview(req: SimulateRequest) -> dict:
         _act1 = bool(sched["active"][0])
         _fr = sched.get("uptake_frac_cum", [])
         _fr0 = float(_fr[0]) if len(_fr) else 0.0
-        _fr_end = float(_fr[min(len(_fr) - 1, max(int(_td), 0))]) if len(_fr) else 0.0
+        try:
+            _nfr = int(len(_fr))
+        except TypeError:
+            _nfr = 0
+        if not _nfr:
+            _fr_end = 0.0
+        else:
+            _x_td = float(_td)
+            if _x_td <= 0.0:
+                _fr_end = float(_fr[0])
+            elif _x_td >= float(_nfr - 1):
+                _fr_end = float(_fr[_nfr - 1])
+            else:
+                import math as _m_fr
+                _i_fr = max(0, min(int(_m_fr.floor(_x_td)), _nfr - 2))
+                _fr_end = float(_fr[_i_fr]) + (_x_td - float(_i_fr)) * (float(_fr[_i_fr + 1]) - float(_fr[_i_fr]))
     except Exception:
         raise HTTPException(status_code=422, detail=[{"field": "crop", "message": "Falha ao montar a prévia."}])
     _he = sched.get("hydrus_equiv") or {}

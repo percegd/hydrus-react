@@ -113,6 +113,33 @@ def test_teto_usa_demanda_restante():
     assert abs(cap - cap_restante) / max(cap_restante, 1e-9) < 0.05, (cap, cap_restante)
 
 
+def test_teto_interpolado_primeiro_dia_sem_corte():
+    # Teto com interpolação linear de F(x): sem degrau diário (milho 50 DAP,
+    # Lâmina 30 d / 100 mm, N 60 kg/ha; ET0 moderado p/ não limitar pela demanda).
+    # Antes: _idx_end=int(t+dt) zerava o teto o 1º dia inteiro (F(0)-F(0)).
+    c = _milho()
+    soil = SOIL_DATABASE["latossolo_medio"]
+    sched = crop_schedule(c, 31, -50, mode="established")
+    _ev = [(0.5, 0.3, 100.0)]
+    _nut = [{"symbol": "N", "name": "N", "dose_kg_ha": 60.0, "kd": 0.0}]
+    cfg1 = SimulationConfig(depth_cm=100.0, total_days=1.0)
+    res1 = Hydrus1DSimulator(soil=soil, crop=c, config=cfg1).run(
+        initial_moisture_pct=80.0, fertilizer_dose_kg_ha=60.0,
+        water_events=_ev, et0_mm_day=2.0, nutrients=_nut, crop_schedule=sched)
+    n1 = res1.nutrient_results["N"]
+    assert float(n1["uptaken_kg_ha"]) > 0.0
+    assert bool(n1["uptake_capped"]) is False
+    cfg30 = SimulationConfig(depth_cm=100.0, total_days=30.0)
+    res30 = Hydrus1DSimulator(soil=soil, crop=c, config=cfg30).run(
+        initial_moisture_pct=80.0, fertilizer_dose_kg_ha=60.0,
+        water_events=_ev, et0_mm_day=2.0, nutrients=_nut, crop_schedule=sched)
+    n30 = res30.nutrient_results["N"]
+    _cap = float(n30["uptake_cap_kg_ha"])
+    _upt = float(n30["uptaken_kg_ha"])
+    assert _upt < 0.5 * _cap
+    assert bool(n30["uptake_capped"]) is False
+
+
 def _run_case(crop_key, total_days, rain_mm=None, rain_series=None, **kw):
     from backend.app.schemas import SimulateRequest, PlacementInput, SoluteInput
     from backend.app.service import _run_core

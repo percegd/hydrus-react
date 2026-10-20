@@ -602,18 +602,65 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
                     return f"{float(_v):.2f}"
                 except (TypeError, ValueError):
                     return "—"
-            _hyd_txt = (f"lRoot={bool(_he.get('lRoot'))}, iRootIn={_he.get('iRootIn')}, "
-                        f"tRMin={_f(_he.get('tRMin'))}, tRHarv={_f(_he.get('tRHarv'))}, "
-                        f"xRMin={_f(_he.get('xRMin'))}, xRMax={_f(_he.get('xRMax'))}, "
-                        f"iRFak={_he.get('iRFak')}, tRMed={_f(_he.get('tRMed'))}, "
-                        f"xRMed={_f(_he.get('xRMed'))}, tRPeriod={_f(_he.get('tRPeriod'))}, "
-                        f"r={_f(_he.get('r'))} 1/d; hCritA usado pelo solver; "
+            try:
+                _iroot_raw = _he.get("iRootIn")
+                _iroot_int = int(_iroot_raw) if _iroot_raw is not None else None
+            except (TypeError, ValueError):
+                _iroot_int = None
+            _lroot_on = bool(_he.get("lRoot"))
+            _hcrit_txt = "hCritA = 10000 cm (|h| mínimo na superfície)"
+            _rootdist_txt = ("distribuição radicular: triangular (máx. na superfície); "
+                             "HYDRUS-1D usa Hoffman & van Genuchten 1983 (eq. 2.17) "
+                             "quando a raiz varia — opção futura")
+            if not _lroot_on:
+                _root_hyd = (f"lRoot=False (zona radicular fixa), "
+                             f"tRMin={_f(_he.get('tRMin'))}, "
+                             f"xRMin={_f(_he.get('xRMin'))}, xRMax={_f(_he.get('xRMax'))}")
+            elif _iroot_int == 1:
+                _root_hyd = (f"lRoot=True, iRootIn=1 (tabela RootDepth(t) gerada pelo crescimento linear FAO-56), "
+                             f"tRMin={_f(_he.get('tRMin'))}, tRHarv={_f(_he.get('tRHarv'))}, "
+                             f"xRMin={_f(_he.get('xRMin'))}, xRMax={_f(_he.get('xRMax'))}")
+                try:
+                    _tper = _he.get("tRPeriod")
+                    if _tper is not None:
+                        _root_hyd += f", tRPeriod={_f(_tper)}"
+                except Exception:
+                    pass
+            else:
+                _root_hyd = (f"lRoot={bool(_he.get('lRoot'))}, iRootIn={_he.get('iRootIn')}, "
+                             f"tRMin={_f(_he.get('tRMin'))}, tRHarv={_f(_he.get('tRHarv'))}, "
+                             f"xRMin={_f(_he.get('xRMin'))}, xRMax={_f(_he.get('xRMax'))}, "
+                             f"iRFak={_he.get('iRFak')}, tRMed={_f(_he.get('tRMed'))}, "
+                             f"xRMed={_f(_he.get('xRMed'))}, tRPeriod={_f(_he.get('tRPeriod'))}, "
+                             f"r={_f(_he.get('r'))} 1/d")
+            _hyd_txt = (f"{_root_hyd}; {_hcrit_txt}; "
                         f"Feddes h1..h4=({float(crop.h1):.0f},{float(crop.h2):.0f},{float(crop.h3):.0f},{float(crop.h4):.0f}) cm; "
                         f"cRootMax = ∞ (absorção passiva total); teto de absorção pela demanda: "
-                        f"extensão agronômica, não existe no HYDRUS-1D. "
+                        f"extensão agronômica, não existe no HYDRUS-1D; "
+                        f"{_rootdist_txt}. "
                         f"Fonte: Šimůnek et al. (2013) HYDRUS-1D v4.17, eq. 2.21-2.22, Tab. 12.4; FAO-56.")
     except Exception:
         pass
+    if not _hyd_txt:
+        try:
+            _is_per_fb = (_mode == "perennial") or bool(getattr(_cyc, "perennial", False))
+        except Exception:
+            _is_per_fb = False
+        if _is_per_fb:
+            try:
+                _rfix = float(crop.root_depth_cm)
+            except (TypeError, ValueError):
+                _rfix = 0.0
+            _hyd_txt = (f"lRoot=False (zona radicular fixa), "
+                        f"tRMin=0.00, xRMin={_rfix:.0f}, xRMax={_rfix:.0f}; "
+                        f"hCritA = 10000 cm (|h| mínimo na superfície); "
+                        f"Feddes h1..h4=({float(crop.h1):.0f},{float(crop.h2):.0f},{float(crop.h3):.0f},{float(crop.h4):.0f}) cm; "
+                        f"cRootMax = ∞ (absorção passiva total); teto de absorção pela demanda: "
+                        f"extensão agronômica, não existe no HYDRUS-1D; "
+                        f"distribuição radicular: triangular (máx. na superfície); "
+                        f"HYDRUS-1D usa Hoffman & van Genuchten 1983 (eq. 2.17) "
+                        f"quando a raiz varia — opção futura. "
+                        f"Fonte: Šimůnek et al. (2013) HYDRUS-1D v4.17, eq. 2.21-2.22, Tab. 12.4; FAO-56.")
     if _mode == "perennial" or (bool(getattr(_cyc, "perennial", False)) and not _has_cyc):
         out["cycle_txt"] = (f"Cultura perene ({crop.name}): sem estádios — Kcb constante "
                             f"e absorção distribuída ao longo do ano.")

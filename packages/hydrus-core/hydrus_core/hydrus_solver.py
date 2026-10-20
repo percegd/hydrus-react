@@ -532,8 +532,26 @@ class Hydrus1DSimulator:
                 if _sched is not None and _sched_n > 0:
                     try:
                         _fr = _sched.get("uptake_frac_cum", None)
-                        _fr_end = float(_fr[min(_sched_n - 1, max(int(self.cfg.total_days), 0))]) if _fr is not None else 0.0
-                        _fr0 = float(_fr[0]) if _fr is not None else 0.0
+                        # Interpolação linear em x=total_days (consistente com o teto do passo).
+                        _x_tot = float(self.cfg.total_days)
+                        try:
+                            _nfr0 = int(len(_fr)) if _fr is not None else 0
+                        except TypeError:
+                            _nfr0 = 0
+                        if _fr is None or _nfr0 == 0:
+                            _fr_end, _fr0 = 0.0, 0.0
+                        else:
+                            if _x_tot <= 0.0:
+                                _fr_end = float(_fr[0])
+                            elif _x_tot >= float(_nfr0 - 1):
+                                _fr_end = float(_fr[_nfr0 - 1])
+                            else:
+                                import math as _m_tot
+                                _i_tot = max(0, min(int(_m_tot.floor(_x_tot)), _nfr0 - 2))
+                                _a_tot = float(_fr[_i_tot])
+                                _b_tot = float(_fr[_i_tot + 1])
+                                _fr_end = _a_tot + (_x_tot - float(_i_tot)) * (_b_tot - _a_tot)
+                            _fr0 = float(_fr[0])
                     except Exception:
                         _fr_end, _fr0 = 0.0, 0.0
                     # Teto usa a demanda RESTANTE a partir do início (extensão agronômica;
@@ -954,9 +972,28 @@ class Hydrus1DSimulator:
                             _dem_mg = float(_dem_cap) * 0.01
                             if _sched is not None and _sched_n > 0:
                                 _fr_arr = _sched.get("uptake_frac_cum", None)
-                                _idx_end = min(int(t + dt), _sched_n - 1)
-                                _fr_end = float(_fr_arr[_idx_end]) if _fr_arr is not None else 0.0
-                                _fr0 = float(_fr_arr[0]) if _fr_arr is not None else 0.0
+                                # Teto com interpolação linear de F(x) (x=t+dt pode cair
+                                # dentro do dia; o índice inteiro zerava o 1º dia).
+                                _x_cap = float(t + dt)
+                                try:
+                                    _nfr = int(len(_fr_arr)) if _fr_arr is not None else 0
+                                except TypeError:
+                                    _nfr = 0
+                                if _fr_arr is None or _nfr == 0:
+                                    _fr_end, _fr0 = 0.0, 0.0
+                                else:
+                                    if _x_cap <= 0.0:
+                                        _fr_end = float(_fr_arr[0])
+                                    elif _x_cap >= float(_nfr - 1):
+                                        _fr_end = float(_fr_arr[_nfr - 1])
+                                    else:
+                                        import math as _m_cap
+                                        _i_cap = int(_m_cap.floor(_x_cap))
+                                        _i_cap = max(0, min(_i_cap, _nfr - 2))
+                                        _a_cap = float(_fr_arr[_i_cap])
+                                        _b_cap = float(_fr_arr[_i_cap + 1])
+                                        _fr_end = _a_cap + (_x_cap - float(_i_cap)) * (_b_cap - _a_cap)
+                                    _fr0 = float(_fr_arr[0])
                                 _teto_end = _dem_mg * max(0.0, _fr_end - _fr0)
                             elif _col_cycle is not None and (_col_L > 0 or _col_perennial):
                                 if _col_perennial:
