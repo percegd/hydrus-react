@@ -1,18 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import ProfileChart from "../components/ProfileChart";
+import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
+import MetricsCards from "../components/MetricsCards";
 import WizardProgress from "../components/WizardProgress";
-import { getCrops, getJob, getSoils, postJob, type Crop, type SimulateResponse, type Soil } from "../lib/api";
-
-const ACCENTS: Record<string, [string, string]> = {
-  N: ["#fff7ed", "#c2410c"],
-  K: ["#f5f3ff", "#6d28d9"],
-  P: ["#f7fee7", "#4d7c0f"],
-  S: ["#fefce8", "#a16207"],
-  Ca: ["#ecfdf5", "#047857"],
-  Mg: ["#fdf2f8", "#be185d"],
-};
+import { getCrops, getJob, getReport, getSoils, postJob, type Crop, type SimulateResponse, type Soil } from "../lib/api";
 
 const SPECIES = [
   { symbol: "N", name: "Nitrato", kd: 0 },
@@ -28,7 +24,7 @@ type Row = { symbol: string; name: string; dose: string; kd: string; rel: string
 const STEP_TITLES = [
   { title: "Passo 1 de 3: Solo, cultura e água", sub: "Defina o cenário físico da simulação." },
   { title: "Passo 2 de 3: Nutrientes e manejo", sub: "Solutos, doses, liberação e aplicação." },
-  { title: "Passo 3 de 3: Resultados", sub: "Balanço de massa, perfil e laudo." },
+  { title: "Resultados da Modelagem Física 1D", sub: "Balanço de água e nutrientes consolidado com base na Equação de Richards e Advecção-Dispersão." },
 ];
 
 export default function Home() {
@@ -53,6 +49,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<SimulateResponse | null>(null);
   const [report, setReport] = useState("");
+  const [showRestartModal, setShowRestartModal] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -123,6 +120,10 @@ export default function Home() {
             if (timer.current) clearInterval(timer.current);
             setJobState("done");
             setResult(st.result);
+            try {
+              const rep = await getReport(job_id);
+              setReport(rep.report_markdown);
+            } catch { /* laudo indisponível: mantém tela sem laudo */ }
           } else if (st.status === "failed") {
             if (timer.current) clearInterval(timer.current);
             setJobState("failed");
@@ -138,16 +139,18 @@ export default function Home() {
     }
   }
 
-  async function loadReport() {
-    try {
-      const r = await fetch(`/api/jobs/${jobId}/report`);
-      const j = await r.json();
-      setReport(j.report_markdown as string);
-    } catch (e) { setError(String(e)); }
+  function confirmRestart() {
+    if (timer.current) clearInterval(timer.current);
+    setShowRestartModal(false);
+    setStep(1);
+    setJobId("");
+    setJobState("");
+    setResult(null);
+    setReport("");
+    setError("");
   }
 
-  const rootDepth = crops.find((c) => c.key === crop)?.root_depth_cm ?? 35;
-  const cropName = crops.find((c) => c.key === crop)?.name ?? crop;
+  const perfilSrc = result?.images.perfil ?? result?.images.agua ?? null;
 
   return (
     <div className="hydrus-container">
@@ -280,58 +283,92 @@ export default function Home() {
           <>
             <div className="btn-row" style={{ marginTop: 0, marginBottom: 12 }}>
               <button className="btn" onClick={() => { if (timer.current) clearInterval(timer.current); setStep(2); setResult(null); setReport(""); }}>← Editar</button>
-              {jobState === "done" && (
-                <>
-                  <a href={`/api/jobs/${jobId}/excel`}><button className="btn">Baixar Excel</button></a>
-                  <button className="btn" onClick={loadReport}>Ver laudo</button>
-                </>
-              )}
             </div>
-            <p className="muted">Status: <strong>{jobState || "—"}</strong> {jobState === "running" && <span>({elapsed}s)</span>}</p>
+            <p className="muted">Status: <strong>{jobState || "—"}</strong> {(jobState === "running" || jobState === "queued") && <span>({elapsed}s)</span>}</p>
             {error && <p className="error-text">{error}</p>}
             {result && (
               <>
-                <div className="metrics-card-grid">
-                  <div className="metric-card">
-                    <div className="metric-icon">↓</div>
-                    <div className="metric-value">{result.drainage_mm.toFixed(1)} mm</div>
-                    <div className="metric-label">Drenagem no período</div>
-                    <div className="metric-sub">{cropName} · raiz {rootDepth} cm</div>
+                <MetricsCards result={result} />
+
+                {perfilSrc && (
+                  <>
+                    <h3 className="section-title">Distribuição em Profundidade C(z)</h3>
+                    <div className="graph-white-card" style={{ marginBottom: 16 }}>
+                      <img src={`data:image/png;base64,${perfilSrc}`} alt="Distribuição em profundidade" style={{ width: "100%" }} />
+                    </div>
+                  </>
+                )}
+
+                {result.images.btc && (
+                  <>
+                    <h3 className="section-title">Curvas de Avanço no Tempo C(t) e θ(t)</h3>
+                    <div className="graph-white-card" style={{ marginBottom: 16 }}>
+                      <img src={`data:image/png;base64,${result.images.btc}`} alt="Curvas de avanço no tempo" style={{ width: "100%" }} />
+                    </div>
+                  </>
+                )}
+
+                {result.images.evolucao && (
+                  <>
+                    <h3 className="section-title">Evolução Temporal do Perfil</h3>
+                    <div className="graph-white-card" style={{ marginBottom: 16 }}>
+                      <img src={`data:image/png;base64,${result.images.evolucao}`} alt="Evolução temporal do perfil" style={{ width: "100%" }} />
+                    </div>
+                  </>
+                )}
+
+                {result.images.galeria.length > 0 && (
+                  <>
+                    <h3 className="section-title">Por Soluto</h3>
+                    <div className="solute-gallery-grid" style={{ marginBottom: 16 }}>
+                      {result.images.galeria.map((g) => (
+                        <div className="graph-white-card" key={g.symbol}>
+                          <img src={`data:image/png;base64,${g.png}`} alt={`${g.name} (${g.symbol})`} style={{ width: "100%" }} />
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {jobState === "done" && (
+                  <div className="graph-download-actions-row">
+                    <a className="btn-download-action" href={`/api/jobs/${jobId}/graficos.zip`}>Baixar Gráficos (PNG) ⤓</a>
+                    <a className="btn-download-action" href={`/api/jobs/${jobId}/excel`}>Baixar Dados do Perfil (.XLSX) ⤓</a>
                   </div>
-                  {result.solutes.map((s) => {
-                    const [bg, fg] = ACCENTS[s.symbol] ?? ["#f1f5f9", "#334155"];
-                    const dose = s.dose_kg_ha;
-                    return (
-                      <div className="metric-card" key={s.symbol}>
-                        <div className="metric-nutr-head">
-                          <span className="metric-nutr-sym" style={{ background: bg, color: fg }}>{s.symbol}</span>
-                          <span className="metric-nutr-name">{s.name}</span>
-                        </div>
-                        <div className="metric-value">{s.retained_root_pct.toFixed(1)}%</div>
-                        <div className="metric-label">Retido na camada avaliada (0–{rootDepth} cm)</div>
-                        <div className="metric-sub">{(dose * s.retained_root_pct / 100).toFixed(1)} kg/ha de {dose.toFixed(0)} kg/ha aplicados</div>
-                        <div className="metric-nutr-rows">
-                          <div className="metric-nutr-row"><span>Abaixo da camada (no perfil)</span><b>{s.below_profile_pct.toFixed(1)}% · {(dose * s.below_profile_pct / 100).toFixed(1)} kg/ha</b></div>
-                          <div className="metric-nutr-row"><span>Atravessou o fundo</span><b>{s.bottom_pct.toFixed(1)}% · {(dose * s.bottom_pct / 100).toFixed(1)} kg/ha</b></div>
-                          <div className="metric-nutr-row"><span>Absorvido (passivo, sem teto nutricional)</span><b>{s.uptaken_pct.toFixed(1)}% · {(dose * s.uptaken_pct / 100).toFixed(1)} kg/ha</b></div>
-                          <div className="metric-nutr-row"><span>Pico no perfil</span><b>{s.peak_depth_cm ?? "indefinido"} cm</b></div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                )}
+
+                {report && (
+                  <div className="report-display-card">
+                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                      {report}
+                    </ReactMarkdown>
+                  </div>
+                )}
+
+                <div className="btn-row" style={{ marginTop: 20 }}>
+                  <button className="btn btn-primary" onClick={() => setShowRestartModal(true)}>Nova Simulação</button>
                 </div>
-                {result.profiles && (
-                  <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
-                    <ProfileChart profiles={result.profiles as never} rootDepth={rootDepth} />
-                  </div>
-                )}
-                {result.plot_png_base64 && (
-                  <div className="wizard-step-box" style={{ padding: 16, marginBottom: 16 }}>
-                    <img src={`data:image/png;base64,${result.plot_png_base64}`} alt="Perfil" style={{ width: "100%" }} />
-                  </div>
-                )}
-                {report && <div className="wizard-step-box" style={{ padding: 16 }}><pre className="laudo-pre">{report}</pre></div>}
               </>
+            )}
+
+            {showRestartModal && (
+              <div className="confirm-modal-overlay" onClick={() => setShowRestartModal(false)}>
+                <div className="confirm-modal-card" onClick={(e) => e.stopPropagation()}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 8 }}>
+                    <div style={{ width: 48, height: 48, borderRadius: 12, background: "#ecfdf5", display: "flex", alignItems: "center", justifyContent: "center", color: "#059669", flexShrink: 0, boxShadow: "0 2px 6px rgba(5, 150, 105, 0.12)" }}>
+                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: "#111827", letterSpacing: "-0.01em" }}>Iniciar Nova Simulação?</h3>
+                      <p style={{ margin: "8px 0 0 0", fontSize: 14.5, color: "#4b5563", lineHeight: 1.55 }}>Você retornará ao primeiro passo da modelagem. Os resultados calculados atualmente nesta tela serão substituídos.</p>
+                    </div>
+                  </div>
+                  <div className="modal-actions">
+                    <button className="btn-modal-cancel" onClick={() => setShowRestartModal(false)}>Cancelar</button>
+                    <button className="btn-modal-confirm" onClick={confirmRestart}>Confirmar e Reiniciar</button>
+                  </div>
+                </div>
+              </div>
             )}
           </>
         )}
