@@ -20,7 +20,7 @@ def _truncate(text: str, max_len: int) -> str:
 def plot_water_profile(
     results: SimulationResults,
     output_path: str = "water_profile.png",
-    title: str = "Solo 1D — Perfil de Umidade do Solo (Somente Água)",
+    title: str = "Perfil de Umidade do Solo (Somente Água)",
     soil: SoilParameters = None,
     root_depth_cm: float = None,
     crop=None,
@@ -236,7 +236,7 @@ def plot_nutrient_profile(
             nutr_header = "Multi-Nutriente" if is_multi else f"Dose: {fertilizer_kg_ha:,.0f} kg/ha {nutrient_symbol}"
 
         fig.suptitle(
-            f"Solo 1D — {crop_short}  |  {soil_short}\n"
+            f"{crop_short}  |  {soil_short}\n"
             f"{nutr_header}  |  Chuva/Irrigação: {rain_mm:.0f} mm",
             fontsize=10,
             fontweight='bold',
@@ -361,7 +361,7 @@ def plot_breakthrough_curves(
         fig, ax = plt.subplots(1, 1, figsize=(8.5, 5.8), dpi=150)
         _draw_theta(ax)
         fig.suptitle(
-            "Solo 1D — Umidade nos Nós de Observação θ(t)",
+            "Umidade nos Nós de Observação θ(t)",
             fontsize=11, fontweight="bold", color="#2e7d32", y=0.98
         )
         plt.tight_layout(rect=(0.01, 0.01, 0.99, 0.95))
@@ -561,7 +561,7 @@ def plot_profiles_at_days(
             ax.set_visible(False)
 
     fig.suptitle(
-        "Solo 1D — Evolução Temporal do Perfil (Snapshots nos Dias de Leitura)",
+        "Evolução Temporal do Perfil (Snapshots nos Dias de Leitura)",
         fontsize=12,
         fontweight="bold",
         color="#2e7d32",

@@ -90,7 +90,7 @@ def build_graph_files(
         plot_water_profile(
             results=results,
             output_path=_p,
-            title="Solo 1D — Perfil de Umidade do Solo θ(z)",
+            title="Perfil de Umidade do Solo θ(z)",
             soil=soil,
             root_depth_cm=(float(crop_obj.root_depth_cm) if crop_obj else None),
             crop=crop_obj,

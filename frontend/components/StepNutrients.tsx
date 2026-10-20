@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ApiError, getFertilizers, postFertilizerDose, type BlendPresetInfo, type FertilizerInfo } from "../lib/api";
+import { ApiError, getFertilizers, postFertilizerDose, type FertilizerInfo } from "../lib/api";
 import HelpIcon from "./HelpIcon";
 
 export type NutrientRow = {
@@ -100,7 +100,7 @@ type Props = {
   addRow: () => void;
   removeRow: (i: number) => void;
   kdInfo: Record<string, { kd: string; citation: string }>;
-  onApplyFertilizer: (doses: Record<string, number>) => void;
+  onApplyFertilizer: (doses: Record<string, number>, fertKey?: string, grossDose?: number) => void;
   placement: string;
   setPlacement: (v: string) => void;
   appDay: string;
@@ -180,12 +180,8 @@ export default function StepNutrients(props: Props) {
   } = props;
 
   const [catalog, setCatalog] = useState<FertilizerInfo[]>([]);
-  const [blends, setBlends] = useState<BlendPresetInfo[]>([]);
-  const [fertKey, setFertKey] = useState("kcl");
+  const [fertKey, setFertKey] = useState("polialita");
   const [grossDose, setGrossDose] = useState("200");
-  const [isCustomFert, setIsCustomFert] = useState(false);
-  const [customPcts, setCustomPcts] = useState<Record<string, string>>({ N: "0", K: "0", P: "0", S: "0", Ca: "0", Mg: "0" });
-  const [blendKey, setBlendKey] = useState("");
   const [fertMsg, setFertMsg] = useState("");
   const [fertError, setFertError] = useState("");
   const [fertBusy, setFertBusy] = useState(false);
@@ -194,8 +190,7 @@ export default function StepNutrients(props: Props) {
   useEffect(() => {
     getFertilizers().then((c) => {
       setCatalog(c.commercial);
-      setBlends(c.blend_presets);
-      if (c.commercial.length > 0 && !c.commercial.some((f) => f.key === "kcl")) setFertKey(c.commercial[0].key);
+      if (c.commercial.length > 0) setFertKey(c.commercial[0].key);
     }).catch(() => {});
   }, []);
 
@@ -209,37 +204,14 @@ export default function StepNutrients(props: Props) {
     }
     setFertBusy(true);
     try {
-      const body: { fert_key?: string; gross_dose: number; custom_pcts?: Record<string, number>; blend_preset?: string } = {
-        fert_key: isCustomFert ? "custom" : fertKey,
-        gross_dose: gross,
-      };
-      if (blendKey) {
-        body.blend_preset = blendKey;
-      } else if (isCustomFert) {
-        const pcts: Record<string, number> = {};
-        for (const s of NUTRIENT_SYMBOLS) {
-          const v = parseFloat((customPcts[s] ?? "0").replace(",", "."));
-          pcts[s] = Number.isFinite(v) ? v : 0;
-        }
-        body.custom_pcts = pcts;
-      }
-      const res = await postFertilizerDose(body);
-      onApplyFertilizer(res.elemental_doses);
+      const res = await postFertilizerDose({ fert_key: fertKey, gross_dose: gross });
+      onApplyFertilizer(res.elemental_doses, fertKey, gross);
       setFertMsg(res.message);
       setFertOpen(false);
     } catch (e) {
       setFertError(e instanceof ApiError ? e.message : String(e instanceof Error ? e.message : e));
     } finally {
       setFertBusy(false);
-    }
-  }
-
-  function applyBlend(key: string) {
-    setBlendKey(key);
-    if (key) setIsCustomFert(false);
-    const b = blends.find((x) => x.key === key);
-    if (b) {
-      setCustomPcts(Object.fromEntries(NUTRIENT_SYMBOLS.map((s) => [s, String(b.nutrient_pcts[s] ?? 0)])));
     }
   }
 
@@ -303,6 +275,7 @@ export default function StepNutrients(props: Props) {
               Carregar Fertilizante Comercial
             </button>
           </div>
+          {fertMsg && <p className="hint-text">{fertMsg}</p>}
 
           <div className="nutrient-table-header">
             <span className="col-nutr">Nutriente</span>
@@ -476,7 +449,7 @@ export default function StepNutrients(props: Props) {
             </p>
             <div className="form-row">
               <Field label="Fertilizante Comercial">
-                <select value={fertKey} onChange={(e) => setFertKey(e.target.value)} disabled={isCustomFert || !!blendKey}>
+                <select value={fertKey} onChange={(e) => setFertKey(e.target.value)}>
                   {catalog.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
                 </select>
               </Field>
@@ -486,40 +459,6 @@ export default function StepNutrients(props: Props) {
                 <input value={grossDose} onChange={(e) => setGrossDose(e.target.value)} inputMode="decimal" />
               </Field>
             </div>
-            <div className="form-row">
-              <div className="field fixed">
-                <span className="field-label">{"\u00A0"}</span>
-                <label className="switch-row">
-                  <input
-                    type="checkbox"
-                    className="switch"
-                    checked={isCustomFert}
-                    onChange={(e) => { setIsCustomFert(e.target.checked); setBlendKey(""); }}
-                  />
-                  Fertilizante Personalizado (teores próprios)
-                </label>
-              </div>
-              <Field label="Mistura pronta (blend)">
-                <select value={blendKey} onChange={(e) => applyBlend(e.target.value)}>
-                  <option value="">—</option>
-                  {blends.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
-                </select>
-              </Field>
-            </div>
-            {(isCustomFert || blendKey) && (
-              <div className="form-row">
-                {NUTRIENT_SYMBOLS.map((s) => (
-                  <Field key={s} label={`Teor ${s} [%]`}>
-                    <input
-                      value={customPcts[s] ?? "0"}
-                      onChange={(e) => { setCustomPcts((p) => ({ ...p, [s]: e.target.value })); setBlendKey(""); setIsCustomFert(true); }}
-                      inputMode="decimal"
-                    />
-                  </Field>
-                ))}
-              </div>
-            )}
-            {fertMsg && <p className="hint-text">{fertMsg}</p>}
             {fertError && <p className="error-text">{fertError}</p>}
             <div className="modal-actions">
               <button type="button" className="btn-modal-cancel" onClick={() => setFertOpen(false)}>Cancelar</button>

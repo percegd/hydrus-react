@@ -151,28 +151,36 @@ def elemental_doses_for_pcts(pcts: dict[str, float], gross_dose: float) -> dict[
 
 
 def list_fertilizers() -> list[dict]:
-    """Catálogo p/ GET /fertilizers: comerciais + rótulos Gradio + blend presets."""
+    """Catálogo p/ GET /fertilizers: comerciais + rótulos Gradio + blend presets.
+
+    Ordem = FERTILIZER_CHOICES (polialita primeiro, direto por último),
+    mesmos rótulos do Gradio.
+    """
     out: list[dict] = []
-    label_by_key = {v: k for k, v in FERTILIZER_CHOICES.items()}
-    for key, fert in COMMERCIAL_FERTILIZERS.items():
+    for label, key in FERTILIZER_CHOICES.items():
+        if key == "direto":
+            out.append(
+                {
+                    "key": "direto",
+                    "label": "Dose Direta do Elemento (Personalizado)",
+                    "name": "Dose Direta do Elemento",
+                    "nutrient_pcts": {s: 0.0 for s in NUTRIENT_ORDER},
+                    "descr": "Dose elementar direta, sem conversão por teor.",
+                }
+            )
+            continue
+        fert = COMMERCIAL_FERTILIZERS.get(key) or {}
+        if not fert:
+            continue
         out.append(
             {
                 "key": key,
-                "label": label_by_key.get(key, fert.get("name", key)),
+                "label": label,
                 "name": fert.get("name", key),
                 "nutrient_pcts": fertilizer_nutrient_pcts(key),
                 "descr": fert.get("descr", ""),
             }
         )
-    out.append(
-        {
-            "key": "direto",
-            "label": "Dose Direta do Elemento (Personalizado)",
-            "name": "Dose Direta do Elemento",
-            "nutrient_pcts": {s: 0.0 for s in NUTRIENT_ORDER},
-            "descr": "Dose elementar direta, sem conversão por teor.",
-        }
-    )
     return out
 
 

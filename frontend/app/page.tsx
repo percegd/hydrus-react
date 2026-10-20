@@ -126,7 +126,7 @@ function RestartModal({ onCancel, onConfirm }: { onCancel: () => void; onConfirm
           <div style={{ flex: 1 }}>
             <h3 className="modal-title" id="restart-title">Iniciar Nova Simulação?</h3>
             <p className="modal-sub">
-              Você retornará ao primeiro passo da modelagem. Os resultados calculados atualmente nesta tela serão substituídos.
+              Você retornará à tela de apresentação. Os dados da última simulação continuarão preenchidos para você ajustar; os resultados atuais serão substituídos ao calcular de novo.
             </p>
           </div>
         </div>
@@ -193,6 +193,7 @@ export default function Home() {
   const [c0, setC0] = useState(DEFAULTS.c0);
   const [pulse, setPulse] = useState(DEFAULTS.pulse);
   const [fertContinuous, setFertContinuous] = useState(DEFAULTS.fertContinuous);
+  const [lastFert, setLastFert] = useState<{ fert_key: string; gross_dose: number; doses: Record<string, number> } | null>(null);
   const [jobId, setJobId] = useState("");
   const [jobState, setJobState] = useState("");
   const [elapsed, setElapsed] = useState(0);
@@ -223,6 +224,10 @@ export default function Home() {
       safetyTimer.current = null;
     }
   }
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [step]);
 
   useEffect(() => {
     getSoils().then(setSoils).catch(() => setValidationIssues(["API fora do ar (backend :8001)."]));
@@ -306,22 +311,39 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soil, isCustomSoil, sandPct, clayPct]);
 
-  function applyFertilizer(doses: Record<string, number>) {
-    // As 6 linhas fixas sempre existem: só marca/desmarca e preenche a dose.
+  function applyFertilizer(doses: Record<string, number>, fertKey?: string, grossDose?: number) {
+    // Paridade Gradio (apply_commercial_fertilizer): 6 linhas fixas recebem
+    // dose = round(bruta × teor%/100, 1), ativa se > 0; Kd de literatura do
+    // solo atual, dispersividade padrão (0,1 × profundidade), residual "0".
+    // Linhas "Outro soluto" (custom) não mudam.
+    const dispDefault = defaultDispForDepth(depthCm);
     setRows((rs) => rs.map((r) => {
       if (r.custom) return r;
       const dose = doses[r.symbol] ?? 0;
-      if (dose <= 0) return { ...r, active: false };
+      const rounded = String(Math.round(dose * 10) / 10);
       const lit = kdInfo[r.symbol];
       return {
         ...r,
-        active: true,
-        dose: String(Math.round(dose * 10) / 10),
+        active: dose > 0,
+        dose: rounded,
         kd: lit?.kd ?? r.kd,
         kdEdited: false,
         kdSource: lit?.citation ?? "",
+        disp: dispDefault,
+        res: "0",
       };
     }));
+    // D) guarda origem comercial p/ a Etapa 1 do passo a passo (só vale se a
+    // tabela não for editada depois — verificado em run()).
+    if (fertKey && grossDose !== undefined && Number.isFinite(grossDose)) {
+      const rounded: Record<string, number> = {};
+      for (const sym of NUTRIENT_SYMBOLS) {
+        rounded[sym] = Math.round(((doses as Record<string, number>)[sym] ?? 0) * 10) / 10;
+      }
+      setLastFert({ fert_key: fertKey, gross_dose: grossDose, doses: rounded });
+    } else {
+      setLastFert(null);
+    }
   }
 
   function handleCropSelect(key: string) {
@@ -368,69 +390,19 @@ export default function Home() {
     return Number.isNaN(v) ? null : v;
   }
 
-  function resetToDefaults() {
+  function startNewSimulation() {
     stopPolling();
-    setSoil(DEFAULTS.soil);
-    setIsCustomSoil(DEFAULTS.isCustomSoil);
-    setSandPct(DEFAULTS.sandPct);
-    setClayPct(DEFAULTS.clayPct);
-    setThetaR(DEFAULTS.thetaR);
-    setThetaS(DEFAULTS.thetaS);
-    setVgAlpha(DEFAULTS.vgAlpha);
-    setVgN(DEFAULTS.vgN);
-    setKs(DEFAULTS.ks);
-    setBulk(DEFAULTS.bulk);
-    setRosettaNote("");
-    setKdInfo({});
-    setCropModeState(DEFAULTS.cropMode);
-    setCrop(DEFAULTS.crop);
-    setCropName(DEFAULTS.cropName);
-    setCropKc(DEFAULTS.cropKc);
-    setCropH1(DEFAULTS.cropH1);
-    setCropH2(DEFAULTS.cropH2);
-    setCropH3(DEFAULTS.cropH3);
-    setCropH4(DEFAULTS.cropH4);
-    setDepthCm(DEFAULTS.depthCm);
-    setRootDepthCm(DEFAULTS.rootDepthCm);
-    setDays(DEFAULTS.days);
-    setRainMode(DEFAULTS.rainMode);
-    setRainMm(DEFAULTS.rainMm);
-    setMoisture(DEFAULTS.moisture);
-    setEt0(DEFAULTS.et0);
-    setAdvEt(DEFAULTS.advEt);
-    setEvap(DEFAULTS.evap);
-    setTransp(DEFAULTS.transp);
-    setClimateRows(emptyRows(365));
-    setHubKey(DEFAULTS.hubKey);
-    setHubLabel("");
-    setHubScenario(DEFAULTS.hubScenario);
-    setHubAppDay(DEFAULTS.hubAppDay);
-    setUploadAppDay(DEFAULTS.uploadAppDay);
-    setWaterOnly(DEFAULTS.waterOnly);
-    setAnalysisStart(DEFAULTS.analysisStart);
-    setAnalysisEnd(DEFAULTS.analysisEnd);
-    setPrintDays(DEFAULTS.printDays);
-    setRows(DEFAULTS.rows.map((r) => ({ ...r })));
-    setReleaseType(DEFAULTS.releaseType);
-    setReleaseDays(DEFAULTS.releaseDays);
-    setPlacement(DEFAULTS.placement);
-    setAppDay(DEFAULTS.appDay);
-    setZTop(DEFAULTS.zTop);
-    setZBottom(DEFAULTS.zBottom);
-    setC0(DEFAULTS.c0);
-    setPulse(DEFAULTS.pulse);
-    setFertContinuous(DEFAULTS.fertContinuous);
     setJobId("");
     setJobState("");
     setElapsed(0);
     setOverlayTimedOut(false);
     setValidationIssues(null);
-    setRestartOpen(false);
     setResult(null);
     setReport("");
     setSteps("");
     setAppliedMm(null);
-    setStep(1);
+    setRestartOpen(false);
+    setStep(0);
   }
 
   async function run() {
@@ -525,6 +497,24 @@ export default function Home() {
     const isCom = cropMode === "com";
     const cropEntry = crops.find((c) => c.key === crop);
     const rootFallback = cropEntry ? cropEntry.root_depth_cm : 35;
+    // D) só envia a origem comercial se a tabela fixa não foi editada depois
+    // do modal: p/ cada linha fixa, (ativa e dose == doses[sym]) ou
+    // (inativa e doses[sym] == 0).
+    let fertilizer: { fert_key: string; gross_dose: number } | undefined;
+    if (lastFert) {
+      const ok = NUTRIENT_SYMBOLS.every((sym) => {
+        const row = rows.find((r) => !r.custom && r.symbol === sym);
+        const expected = lastFert.doses[sym] ?? 0;
+        if (!row) return expected === 0;
+        const cur = parseFloat(String(row.dose).replace(",", "."));
+        const curNum = Number.isFinite(cur) ? cur : NaN;
+        if (row.active) {
+          return Number.isFinite(curNum) && Math.abs(curNum - expected) < 1e-9;
+        }
+        return Math.abs(expected) < 1e-9;
+      });
+      if (ok) fertilizer = { fert_key: lastFert.fert_key, gross_dose: lastFert.gross_dose };
+    }
     try {
       const body = {
         soil_key: soil,
@@ -572,6 +562,7 @@ export default function Home() {
           fertigation_pulse_days: fertContinuous ? 0 : num(pulse, 7),
           application_day: num(appDayEff, 0),
         },
+        ...(fertilizer ? { fertilizer } : {}),
       };
       const { job_id } = await postJob(body);
       setJobId(job_id);
@@ -623,7 +614,6 @@ export default function Home() {
             setJobState("done");
             setResult(st.result);
             setStep(4);
-            window.scrollTo({ top: 0, behavior: "smooth" });
             return;
           } else if (st.status === "failed") {
             stopPolling();
@@ -946,7 +936,7 @@ export default function Home() {
         <ValidationModal issues={validationIssues} onClose={() => setValidationIssues(null)} />
       )}
       {restartOpen && (
-        <RestartModal onCancel={() => setRestartOpen(false)} onConfirm={resetToDefaults} />
+        <RestartModal onCancel={() => setRestartOpen(false)} onConfirm={startNewSimulation} />
       )}
       {showOverlay && <LoadingOverlay />}
     </div>

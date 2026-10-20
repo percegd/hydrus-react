@@ -755,6 +755,39 @@ input[type="range"]::-moz-range-thumb {
 }
 .help-badge:hover { background: #059669; border-color: #059669; color: #ffffff; }
 .help-modal-card { border: 1px solid #c7d2fe; max-width: 520px; }
+.help-modal-card {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: left;
+  max-width: min(520px, calc(100vw - 32px));
+  overflow-x: hidden;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+.help-modal-card *,
+.help-modal-card .help-modal-title,
+.help-modal-card .help-modal-body,
+.help-modal-card .help-modal-body p,
+.help-modal-card .modal-actions {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: left;
+}
+.help-modal-card .help-modal-body,
+.help-modal-card .help-modal-body p {
+  font-weight: 400;
+}
+.help-modal-card button,
+.help-modal-card .btn-modal-confirm {
+  text-align: center;
+  justify-content: center;
+}
 .help-modal-head { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
 .help-modal-icon {
   width: 34px; height: 34px; border-radius: 50%;

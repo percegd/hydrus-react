@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { getHelp, type HelpEntry } from "../lib/api";
 
 let cache: HelpEntry[] | null = null;
@@ -26,6 +27,11 @@ export default function HelpIcon({ helpKey }: { helpKey: string }) {
   const [open, setOpen] = useState(false);
   const [entry, setEntry] = useState<HelpEntry | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!open || loaded) return;
@@ -51,65 +57,68 @@ export default function HelpIcon({ helpKey }: { helpKey: string }) {
       >
         ?
       </button>
-      {open && (
-        <div
-          className="modal-overlay"
-          role="alertdialog"
-          aria-modal="true"
-          aria-label={entry?.title ?? "Ajuda"}
-          onClick={() => setOpen(false)}
-        >
-          <div
-            className="modal-card help-modal-card"
-            role="document"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="help-modal-head">
-              <div className="help-modal-icon">?</div>
-              <div>
-                <h3 className="help-modal-title">
-                  {entry ? (
-                    <>
-                      {entry.title} <span className="help-modal-unit">{entry.unit}</span>
-                    </>
-                  ) : loaded ? (
-                    "Ajuda indisponível no momento"
-                  ) : (
-                    "Carregando ajuda…"
-                  )}
-                </h3>
-              </div>
-            </div>
-            {entry ? (
-              <div className="help-modal-body">
-                <p>
-                  <b>O que é:</b> {entry.what}
-                </p>
-                <p>
-                  <b>Na simulação:</b> {entry.simulation}
-                </p>
-              </div>
-            ) : (
-              loaded && (
-                <div className="help-modal-body">
-                  <p>Não foi possível carregar o texto de ajuda. Tente novamente mais tarde.</p>
-                </div>
-              )
-            )}
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn-modal-confirm"
-                style={{ width: "100%" }}
-                onClick={() => setOpen(false)}
-                autoFocus
+      {open && mounted
+        ? createPortal(
+            <div
+              className="modal-overlay"
+              role="alertdialog"
+              aria-modal="true"
+              aria-label={entry?.title ?? "Ajuda"}
+              onClick={() => setOpen(false)}
+            >
+              <div
+                className="modal-card help-modal-card"
+                role="document"
+                onClick={(e) => e.stopPropagation()}
               >
-                Entendi
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                <div className="help-modal-head">
+                  <div className="help-modal-icon">?</div>
+                  <div>
+                    <h3 className="help-modal-title">
+                      {entry ? (
+                        <>
+                          {entry.title} <span className="help-modal-unit">{entry.unit}</span>
+                        </>
+                      ) : loaded ? (
+                        "Ajuda indisponível no momento"
+                      ) : (
+                        "Carregando ajuda…"
+                      )}
+                    </h3>
+                  </div>
+                </div>
+                {entry ? (
+                  <div className="help-modal-body">
+                    <p>
+                      <b>O que é:</b> {entry.what}
+                    </p>
+                    <p>
+                      <b>Na simulação:</b> {entry.simulation}
+                    </p>
+                  </div>
+                ) : (
+                  loaded && (
+                    <div className="help-modal-body">
+                      <p>Não foi possível carregar o texto de ajuda. Tente novamente mais tarde.</p>
+                    </div>
+                  )
+                )}
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="btn-modal-confirm"
+                    style={{ width: "100%" }}
+                    onClick={() => setOpen(false)}
+                    autoFocus
+                  >
+                    Entendi
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </>
   );
 }
