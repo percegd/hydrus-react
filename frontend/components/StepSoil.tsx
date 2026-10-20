@@ -181,6 +181,14 @@ export default function StepSoil({
 }: Props) {
   const comCultura = cropMode === "com";
   const [cropModalOpen, setCropModalOpen] = useState(false);
+  useEffect(() => {
+    if (!cropModalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCropModalOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cropModalOpen]);
   const [preview, setPreview] = useState<string>("");
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -558,7 +566,12 @@ export default function StepSoil({
       {cropModalOpen && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Selecionar Cultura Agrícola">
           <div className="modal-card fert-modal-card">
-            <h3 className="fert-modal-title" style={{ marginBottom: 14 }}>Selecionar Cultura Agrícola</h3>
+            <div className="modal-sticky-head">
+              <h3 className="fert-modal-title" style={{ margin: 0 }}>Selecionar Cultura Agrícola</h3>
+              <button type="button" className="modal-close-x" aria-label="Fechar" title="Fechar" onClick={() => setCropModalOpen(false)}>
+                ×
+              </button>
+            </div>
             <div className="choice-cards" role="radiogroup" aria-label="Culturas" style={{ flexDirection: "column", gap: 8 }}>
               {crops.map((c) => (
                 <label key={c.key} className={`choice-card${crop === c.key ? " selected" : ""}`}>
@@ -573,7 +586,7 @@ export default function StepSoil({
                 </label>
               ))}
             </div>
-            <div className="modal-actions">
+            <div className="modal-actions modal-sticky-foot">
               <button type="button" className="btn-modal-cancel" onClick={() => setCropModalOpen(false)}>
                 Fechar
               </button>

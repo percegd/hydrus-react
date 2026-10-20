@@ -799,7 +799,6 @@ input[type="range"]::-moz-range-thumb {
 .help-modal-unit { font-weight: 400; color: #64748b; font-size: 14px; }
 .help-modal-body p { font-size: 15px; color: #4b5563; line-height: 1.55; }
 .help-modal-body p b { color: #0f172a; }
-.help-link { color: #059669; font-weight: 600; cursor: pointer; }
 .help-section-title { display: inline-flex; align-items: center; gap: 8px; }
 
 /* ---------------- Resultados ---------------- */
@@ -962,3 +961,26 @@ input[type="range"]::-moz-range-thumb {
   opacity: 0.7;
   font-weight: 400;
 }
+
+/* Modal com cabeçalho (X) e rodapé fixos enquanto a lista rola */
+.modal-sticky-head {
+  position: sticky; top: -26px; z-index: 2; background: #ffffff;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: -26px -28px 14px -28px; padding: 20px 20px 12px 28px;
+  border-bottom: 1px solid #e5e7eb; border-radius: 18px 18px 0 0;
+}
+.modal-close-x {
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px;
+  border: 1px solid transparent; background: transparent; color: #4b5563;
+  font-size: 24px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.modal-close-x:hover { background: #f3f4f6; border-color: #d1d5db; color: #111827; }
+.modal-sticky-foot {
+  position: sticky; bottom: -26px; z-index: 2; background: #ffffff;
+  margin: 16px -28px -26px -28px; padding: 12px 28px 18px 28px;
+  border-top: 1px solid #e5e7eb; border-radius: 0 0 18px 18px;
+}
+/* Lâmina: toggle "Avançado" em posição fixa, com espaço até os campos */
+.custom-toggle-chk.et-adv-toggle { margin: 4px 0 12px 0; }
+.form-row.et-adv-inputs { margin-top: 4px; }

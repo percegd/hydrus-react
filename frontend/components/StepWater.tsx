@@ -311,9 +311,6 @@ export default function StepWater(props: Props) {
         ))}
       </div>
 
-      <p className="step-section-sub">
-        Fonte de água <HelpIcon helpKey="water_source" />
-      </p>
       {isUniform && (
         <>
           <div className="form-row" style={{ marginTop: 16 }}>
@@ -333,16 +330,7 @@ export default function StepWater(props: Props) {
               <input value={et0} onChange={(e) => setEt0(e.target.value)} inputMode="decimal" />
             </Field>
           </div>
-          {!advEt && (
-            <div className="et-split-info">
-              {hasCrop ? (
-                <><b>Transpiração (Tp = Kcb·ET0)</b> = {transpCalc.toFixed(2)} mm/dia &nbsp;•&nbsp; <b>Evaporação do solo (Ep = Ke·ET0)</b> = {evapCalc.toFixed(2)} mm/dia</>
-              ) : (
-                <><b>Evaporação do solo</b> = {evapCalc.toFixed(2)} mm/dia <span style={{ color: "#64748b" }}>(solo nu: 100% do ET0)</span></>
-              )}
-            </div>
-          )}
-          <div className="custom-toggle-chk">
+          <div className="custom-toggle-chk et-adv-toggle">
             <label>
               <input
                 type="checkbox"
@@ -353,8 +341,17 @@ export default function StepWater(props: Props) {
               Avançado: informar evaporação/transpiração manualmente
             </label>
           </div>
+          {!advEt && (
+            <div className="et-split-info">
+              {hasCrop ? (
+                <><b>Transpiração (Tp = Kcb·ET0)</b> = {transpCalc.toFixed(2)} mm/dia &nbsp;•&nbsp; <b>Evaporação do solo (Ep = Ke·ET0)</b> = {evapCalc.toFixed(2)} mm/dia</>
+              ) : (
+                <><b>Evaporação do solo</b> = {evapCalc.toFixed(2)} mm/dia <span style={{ color: "#64748b" }}>(solo nu: 100% do ET0)</span></>
+              )}
+            </div>
+          )}
           {advEt && (
-            <div className="form-row">
+            <div className="form-row et-adv-inputs">
               <Field label="Evaporação do solo [mm/dia] (0 = derivar de ET0 — Kc dual FAO-56)" helpKey="evap">
                 <input value={evap} onChange={(e) => setEvap(e.target.value)} inputMode="decimal" />
               </Field>
@@ -415,7 +412,7 @@ export default function StepWater(props: Props) {
           {hubError && <p className="error-text">{hubError}</p>}
           {seriesInfo && <p className="hint-text">{seriesInfo}</p>}
           <div className="upload-note">
-            <div><b>Tabela editável (365 dias):</b> edite células diretamente ou cole dados do Excel (Ctrl+V). <span className="help-link">ⓘ o que é isto? <HelpIcon helpKey="water_series" /></span></div>
+            <div><b>Tabela editável (365 dias):</b> edite células diretamente ou cole dados do Excel (Ctrl+V). <HelpIcon helpKey="water_series" /></div>
           </div>
           <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={hubAppDay} setAppDay={setHubAppDay} hideAppDay />
         </div>
@@ -434,7 +431,7 @@ export default function StepWater(props: Props) {
             </span>
           </div>
           <div className="upload-note">
-            <div><b>Série diária (365 dias):</b> a planilha importada preenche a tabela abaixo. São esperadas uma coluna de chuva (mm) e, opcionalmente, de ET0 (mm/dia). <span className="help-link">ⓘ o que é isto? <HelpIcon helpKey="water_upload" /></span></div>
+            <div><b>Série diária (365 dias):</b> a planilha importada preenche a tabela abaixo. São esperadas uma coluna de chuva (mm) e, opcionalmente, de ET0 (mm/dia). <HelpIcon helpKey="water_upload" /></div>
           </div>
           {uploadError && <p className="error-text">{uploadError}</p>}
           {uploadStatus && <p className="hint-text">{uploadStatus}</p>}
