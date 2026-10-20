@@ -16,6 +16,7 @@ from hydrus_core.soil_physics import (
     specific_moisture_capacity
 )
 from hydrus_core.crop import CropParameters, feddes_water_stress, root_distribution
+from hydrus_core import crop as _crop_mod
 
 @dataclass
 class SimulationConfig:
@@ -135,7 +136,9 @@ class Hydrus1DSimulator:
         evap_cm_day: Optional[float] = None, # Evaporação potencial do solo [cm/dia]; None => partição de ET0
         transpiration_mm_day: Optional[float] = None, # Transpiração potencial [mm/dia]; None => ET0·Kc (exige cultura)
         print_days: Optional[List[float]] = None, # Dias de leitura (perfis completos) [dias]
-        water_only: bool = False          # True => roda apenas fluxo de água (sem transporte de soluto)
+        water_only: bool = False,          # True => roda apenas fluxo de água (sem transporte de soluto)
+        crop_schedule: Optional[dict] = None,  # agenda diária do ciclo (crop.crop_schedule); None = modo coluna
+        uptake_cap: bool = True            # True => limita absorção acumulada à demanda da cultura
     ) -> SimulationResults:
         """
         Executa a simulação transiente acoplada de fluxo hídrico (Richards 1D)
@@ -224,6 +227,8 @@ class Hydrus1DSimulator:
         h_fc = -150.0
         theta_fc = float(water_content_from_h(np.array([h_fc]), self.soil)[0])
         # Umidade inicial escalonada entre o limiar residual (solo seco) e a capacidade de campo
+        # (0..100%; 100% = capacidade de campo). Iniciar em CC é a prática usual sem medição
+        # (Šimůnek et al. 2008 manual HYDRUS-1D; aquecimento/spin-up como alternativa).
         th_min = self.soil.theta_r + 0.01
         frac = np.clip(initial_moisture_pct / 100.0, 0.0, 1.0)
         theta_val = th_min + max(0.005, theta_fc - th_min) * frac
@@ -474,7 +479,78 @@ class Hydrus1DSimulator:
         
         # Constante de difusão molecular em água [cm2/dia]
         d_diff = 1.0
-        
+
+        # --- P9: agenda do ciclo (Kc dual + raiz variável + teto de absorção) ---
+        # crop_schedule: dict de arrays diários (active, kcb, few/ke, root_depth_cm,
+        # uptake_frac_cum) gerado por hydrus_core.crop.crop_schedule.
+        _sched = crop_schedule if isinstance(crop_schedule, dict) else None
+        _sched_n = 0
+        if _sched is not None:
+            try:
+                _sched_n = int(len(_sched.get("kcb", [])))
+            except Exception:
+                _sched_n = 0
+                _sched = None
+        # Demanda total por nutriente (kg/ha elemento; ordem de grandeza, calibre localmente)
+        _demand_kg_ha: Dict[str, float] = {}
+        if self.crop is not None and getattr(self.crop, "uptake_demand_kg_ha", None):
+            try:
+                for _k, _v in dict(getattr(self.crop, "uptake_demand_kg_ha") or {}).items():
+                    _demand_kg_ha[str(_k)] = float(_v)
+            except Exception:
+                _demand_kg_ha = {}
+            # Estádios herdam a demanda da mãe via cycle_key
+            if not _demand_kg_ha:
+                try:
+                    _cyc = _crop_mod._resolve_cycle(self.crop)
+                    for _k, _v in dict(getattr(_cyc, "uptake_demand_kg_ha", None) or {}).items():
+                        _demand_kg_ha[str(_k)] = float(_v)
+                except Exception:
+                    pass
+        # Ciclo-mãe p/ teto sem schedule (modo coluna): F(offset+t)-F(offset)
+        _col_cycle = None
+        _col_L = 0.0
+        _col_perennial = False
+        _col_offset = 0.0
+        if self.crop is not None:
+            try:
+                _col_cycle = _crop_mod._resolve_cycle(self.crop)
+                _ll = getattr(_col_cycle, "stage_lengths_days", None)
+                if _ll and len(_ll) == 4:
+                    _col_L = float(sum(float(v) for v in _ll))
+                _col_perennial = bool(getattr(_col_cycle, "perennial", False))
+                _col_offset = float(getattr(self.crop, "stage_offset_days", 0.0) or 0.0)
+            except Exception:
+                _col_cycle, _col_L, _col_perennial, _col_offset = None, 0.0, False, 0.0
+        # Teto acumulado por nutriente (mg/cm2) + flag de corte
+        for _ni in active_nutrients:
+            _ni["uptake_capped"] = False
+            _ni["uptake_cap_mg_cm2"] = None
+            _sym0 = str(_ni.get("symbol", ""))
+            _dem = _demand_kg_ha.get(_sym0, None)
+            if uptake_cap and _dem is not None and _dem > 0:
+                if _sched is not None and _sched_n > 0:
+                    try:
+                        _fr = _sched.get("uptake_frac_cum", None)
+                        _fr_end = float(_fr[min(_sched_n - 1, max(int(self.cfg.total_days), 0))]) if _fr is not None else 0.0
+                    except Exception:
+                        _fr_end = 0.0
+                    _ni["uptake_cap_mg_cm2"] = float(_dem) * 0.01 * max(0.0, _fr_end)
+                elif _col_cycle is not None and (_col_L > 0 or _col_perennial):
+                    if _col_perennial:
+                        _fend = max(0.0, float(self.cfg.total_days)) / 365.0
+                    else:
+                        _fend = _crop_mod._logistic_f(_col_offset + float(self.cfg.total_days), _col_L) - _crop_mod._logistic_f(_col_offset, _col_L)
+                    _ni["uptake_cap_mg_cm2"] = float(_dem) * 0.01 * max(0.0, _fend)
+        _last_root_day = -1
+        _root_max_for_mask = float(self.crop.root_depth_cm) if self.crop else float(getattr(self.config, "target_depth_cm", 30.0))
+        if _sched is not None and _sched_n > 0:
+            try:
+                import numpy as _np2
+                _root_max_for_mask = float(_np2.max(_np2.asarray(_sched.get("root_depth_cm", [_root_max_for_mask]), dtype=float)))
+            except Exception:
+                pass
+
         # Loop Temporal
         while t < self.cfg.total_days:
             if t + dt > self.cfg.total_days:
@@ -524,21 +600,66 @@ class Hydrus1DSimulator:
                 _et0_arr = np.asarray(et0_mm_day, dtype=float).ravel()
                 et0_today_mm = float(_et0_arr[min(int(t), _et0_arr.size - 1)])
 
-            # Demanda de transpiração da cultura [cm/dia]
-            # Explícita (transpiration_mm_day) ou ET0·Kc (só com cultura)
-            kc = self.crop.kc if self.crop else 0.0
+            # Demanda hídrica: Kc dual FAO-56 Cap. 7 (Allen et al. 1998).
+            # Tp = Kcb·ET0 (x ativo); Ep = Ke·ET0, Ke = min(Kcmax-Kcb, few·Kcmax),
+            # Kcmax = max(1,2; Kcb+0,05) (eq. 72, sem correção climática),
+            # few = 1-fc, fc = ((Kcb-0,15)/(Kcmax-0,15))^(1+0,5h) (eq. 76, clip 0..0,99).
+            # Ke ≤ 1 p/ continuidade com solo nu (Ep=ET0). A redução por secagem (Kr)
+            # já é feita fisicamente pelo limitador hCritA da superfície (como no
+            # HYDRUS-1D, Šimůnek et al. 2008) — ver max_evap abaixo. Fora do ciclo:
+            # Tp=0, Ep=ET0. Sem schedule (coluna): Kcb = max(0,15; kc-0,05)
+            # (Kcb mid ≈ Kc mid − 0,05) e height_m da cultura (custom: 1,0 m).
+            _sched_idx = min(int(t), _sched_n - 1) if (_sched is not None and _sched_n > 0) else None
+            _sched_active = True
+            if self.crop is not None:
+                if _sched is not None and _sched_idx is not None:
+                    try:
+                        _sched_active = bool(_sched["active"][_sched_idx])
+                        _kcb_day = float(_sched["kcb"][_sched_idx])
+                    except Exception:
+                        _sched_active, _kcb_day = True, max(0.15, float(self.crop.kc) - 0.05)
+                    # Raiz variável: recalcula root_b no máx. 1x por dia
+                    try:
+                        _rday = float(_sched["root_depth_cm"][_sched_idx])
+                        if int(t) != _last_root_day and _rday > 0:
+                            self.root_b = root_distribution(self.z, _rday)
+                            _last_root_day = int(t)
+                    except Exception:
+                        pass
+                    if not _sched_active:
+                        _tp_pot = 0.0
+                        _ke_day = 1.0
+                        _ep_pot = float(et0_today_mm) / 10.0
+                    else:
+                        try:
+                            _ke_day = float(_sched["ke_max"][_sched_idx])
+                        except Exception:
+                            _fw0, _km0, _ke0 = _crop_mod._dual_ke_few(_kcb_day, float(getattr(self.crop, "height_m", 1.0) or 1.0))
+                            _ke_day = _ke0
+                        _tp_pot = _kcb_day * float(et0_today_mm) / 10.0
+                        _ep_pot = min(1.0, max(0.0, _ke_day)) * float(et0_today_mm) / 10.0
+                else:
+                    _kcb_day = max(0.15, float(self.crop.kc) - 0.05)
+                    try:
+                        _hh = float(getattr(self.crop, "height_m", None) or 1.0)
+                    except (TypeError, ValueError):
+                        _hh = 1.0
+                    _fw0, _km0, _ke0 = _crop_mod._dual_ke_few(_kcb_day, _hh)
+                    _tp_pot = _kcb_day * float(et0_today_mm) / 10.0
+                    _ep_pot = min(1.0, max(0.0, _ke0)) * float(et0_today_mm) / 10.0
+            else:
+                _tp_pot = 0.0
+                _ep_pot = float(et0_today_mm) / 10.0
+            # Explícitos continuam sobrepondo (mesma semântica)
             if transpiration_mm_day is not None:
                 transpiration_demand_cm_day = max(0.0, float(transpiration_mm_day)) / 10.0
             else:
-                transpiration_demand_cm_day = (et0_today_mm / 10.0) * kc
-
-            # Evaporação do solo: explícita (evap_cm_day) ou partição de ET0 (E = ET0 - Tp)
-            # com limitador hCritA (equivalente ao contorno atmosférico do HYDRUS)
+                transpiration_demand_cm_day = float(_tp_pot) if self.crop else 0.0
+            # Evaporação do solo: explícita (evap_cm_day) ou partição dual (E = Ke·ET0)
             if evap_cm_day is not None:
                 evap_pot_cm_day = max(0.0, float(evap_cm_day))
             else:
-                et0_cm_day = et0_today_mm / 10.0
-                evap_pot_cm_day = max(0.0, et0_cm_day - transpiration_demand_cm_day)
+                evap_pot_cm_day = float(_ep_pot) if self.crop else max(0.0, float(et0_today_mm) / 10.0 - transpiration_demand_cm_day)
             if evap_pot_cm_day > 0.0:
                 k0_surf = hydraulic_conductivity(np.array([h[0]]), self.soil)[0]
                 max_evap = max(0.0, ((h[1] - (-10000.0)) / dz) * k0_surf)
@@ -745,8 +866,9 @@ class Hydrus1DSimulator:
             q_nodes[-1] = q_bottom
             v_pore = q_nodes / theta_safe
             q_faces_pos = np.maximum(q_faces, 0.0) / dz
-            uptake_rate = s_root[1:-1] if self.crop else 0.0
-            uptake_0 = s_root[0] if self.crop else 0.0
+            uptake_rate_base = s_root[1:-1].copy() if self.crop else 0.0
+            uptake_0_base = float(s_root[0]) if self.crop else 0.0
+            uptake_last_base = float(s_root[-1]) if self.crop else 0.0
 
             # --- 2. RESOLVER TRANSPORTE DE SOLUTOS PARA CADA NUTRIENTE ---
             for n_item in active_nutrients:
@@ -814,6 +936,48 @@ class Hydrus1DSimulator:
                 ret_cap = theta_safe + self.soil.bulk_density * np.maximum(0.0, kd_eff)
                 c_aq_old = c_old / ret_cap
 
+                # P9: teto de absorção por nutriente (demanda da cultura).
+                # Absorção passiva (fluxo de massa, Šimůnek & Hopmans 2009) limitada pela
+                # demanda nutricional (Feddes 1978 p/ água; teto nutricional: Raij 1997/Malavolta 2006).
+                # Conservativo: U_pot = Σ s_root·c_aq_old·dz·dt; permitido = teto(t+dt)−uptaken;
+                # f = min(1, permitido/U_pot). Usa f·s_root na matriz E na acumulação (fecha balanço).
+                _f_cap = 1.0
+                if self.crop and uptake_cap:
+                    _dem_cap = _demand_kg_ha.get(str(n_item.get("symbol", "")), None)
+                    if _dem_cap is not None and _dem_cap > 0:
+                        try:
+                            _dem_mg = float(_dem_cap) * 0.01
+                            if _sched is not None and _sched_n > 0:
+                                _fr_arr = _sched.get("uptake_frac_cum", None)
+                                _idx_end = min(int(t + dt), _sched_n - 1)
+                                _fr_end = float(_fr_arr[_idx_end]) if _fr_arr is not None else 0.0
+                                _teto_end = _dem_mg * max(0.0, _fr_end)
+                            elif _col_cycle is not None and (_col_L > 0 or _col_perennial):
+                                if _col_perennial:
+                                    # F linear (demanda anual/365 por dia): F(off+t)-F(off) = t/365
+                                    _f_end = max(0.0, float(t + dt)) / 365.0
+                                else:
+                                    _f_end = _crop_mod._logistic_f(_col_offset + float(t + dt), _col_L) - _crop_mod._logistic_f(_col_offset, _col_L)
+                                _teto_end = _dem_mg * max(0.0, _f_end)
+                            else:
+                                _teto_end = None
+                            if _teto_end is not None:
+                                _upt_sofar = float(n_item.get("uptaken_mg_cm2", 0.0))
+                                _permit = max(0.0, float(_teto_end) - _upt_sofar)
+                                # U_pot com c_aq_old (explícito conservativo)
+                                _upot = float(np.sum(s_root * np.maximum(c_aq_old, 0.0) * dz)) * float(dt)
+                                if _upot > 1e-18:
+                                    _f_cap = float(np.clip(_permit / _upot, 0.0, 1.0))
+                                else:
+                                    _f_cap = 1.0
+                                if _f_cap < 1.0 - 1e-12:
+                                    n_item["uptake_capped"] = True
+                        except Exception:
+                            _f_cap = 1.0
+                _up_rate = (uptake_rate_base * _f_cap) if self.crop else 0.0
+                _up_0 = float(uptake_0_base * _f_cap) if self.crop else 0.0
+                _up_last = float(uptake_last_base * _f_cap) if self.crop else 0.0
+
                 # Dispersão hidrodinâmica específica
                 d_hydro = n_disp * np.abs(v_pore) + d_diff
                 d_half = 0.5 * (d_hydro[:-1] + d_hydro[1:])
@@ -836,14 +1000,14 @@ class Hydrus1DSimulator:
 
                 A_sol[:-1] = -(disp_top + q_down[:-1])   # c[i-1] entra de cima quando desce
                 C_sol[1:]  = -(disp_bot + q_up[1:])      # c[i+1] entra de baixo quando sobe
-                B_sol[1:-1] = (ret_cap[1:-1] / dt) + disp_top + disp_bot + q_down[1:] + q_up[:-1] + uptake_rate
+                B_sol[1:-1] = (ret_cap[1:-1] / dt) + disp_top + disp_bot + q_down[1:] + q_up[:-1] + _up_rate
 
                 # Contorno superior (i = 0)
                 d_bot_0 = 0.5 * (d_hydro[0] + d_hydro[1])
                 theta_bot_0 = 0.5 * (theta_safe[0] + theta_safe[1])
                 disp_bot_0 = (theta_bot_0 * d_bot_0) / (dz * dz)
 
-                B_sol[0] = (ret_cap[0] / dt) + disp_bot_0 + q_down[0] + uptake_0
+                B_sol[0] = (ret_cap[0] / dt) + disp_bot_0 + q_down[0] + _up_0
                 # Fluxo ascendente no topo (evaporação): o soluto NÃO cruza a superfície,
                 # logo o nó 0 apenas recebe o soluto que sobe do nó 1 (sem saída de massa).
                 C_sol[0] = -(disp_bot_0 + q_up[0])
@@ -869,7 +1033,7 @@ class Hydrus1DSimulator:
                 disp_top_n = (theta_top_n * d_top_n) / (dz * dz)
                 adv_out_n = max(q_bottom, 0.0) / dz
 
-                B_sol[-1] = (ret_cap[-1] / dt) + disp_top_n + adv_out_n + q_up[-1] + float(s_root[-1] if self.crop else 0.0)
+                B_sol[-1] = (ret_cap[-1] / dt) + disp_top_n + adv_out_n + q_up[-1] + float(_up_last if self.crop else 0.0)
                 A_sol[-1] = -(disp_top_n + q_down[-1])
 
                 # Resolver sistema de soluto
@@ -893,9 +1057,10 @@ class Hydrus1DSimulator:
                 # (não dV) — mesma convenção do perfil (soma c*dz) e da matriz
                 # do soluto; dV (0.5 nas fronteiras) subcontava a absorção nos
                 # nós 0/-1 e vazava massa do fechamento em cenários com uptake
-                # forte (até -7% em 7 dias com milho).
+                # forte (até -7% em 7 dias com milho). P9: mesmos termos f·s_root
+                # da matriz (balanço fecha; excedente fica no solo).
                 if self.crop:
-                    uptake_vec = s_root.copy()
+                    uptake_vec = s_root * _f_cap
                     n_item["uptaken_mg_cm2"] += float(np.sum(uptake_vec * c_aq_new * dz)) * dt
             
             # Avanço temporal e adaptação do passo
@@ -959,7 +1124,8 @@ class Hydrus1DSimulator:
             _pd_idx += 1
                 
         # --- CÁLCULO DOS INDICADORES FINAIS AGRONÔMICOS ---
-        root_depth = self.crop.root_depth_cm if self.crop else getattr(self.config, "target_depth_cm", 30.0)
+        # Máscaras usam a profundidade MÁXIMA da cultura (raiz cresce até o máx no ciclo).
+        root_depth = float(_root_max_for_mask) if self.crop else getattr(self.config, "target_depth_cm", 30.0)
         root_mask = z <= root_depth
         below_root_mask = z > root_depth
         
@@ -975,35 +1141,41 @@ class Hydrus1DSimulator:
             m_below = float(np.sum(c_final[below_root_mask] * dz))
             m_leached = float(n_item["leached_bottom"])
             m_lost_total = m_below + m_leached
-
-            # Lixiviação em relação à dose total formulada (crua, sem clip — resto aplicado abaixo)
-            leaching_pct_total = float((m_lost_total / max(applied_m, 1e-4)) * 100.0)
-
-            # Lixiviação em relação ao que já foi liberado no solo (crua, sem clip)
-            leaching_pct_released = float((m_lost_total / max(rel_m, 1e-4)) * 100.0)
-
-            # Retenção na rizosfera (% da dose total, crua — resto aplicado após uptake)
-            retained_root_pct_raw = float((m_root / max(applied_m, 1e-4)) * 100.0)
-
-            # Protegido na cápsula (% da dose total)
-            capsule_pct = float((rem_capsule_m / max(applied_m, 1e-4)) * 100.0)
-            capsule_pct = np.clip(capsule_pct, 0.0, 100.0)
-
-            # Balanço de massa no perfil (fronteira = fundo do domínio) — métrica principal
-            # R2: pcts CRUS sem clip(0,100) + fechamento contra (aplicado+residual).
-            # O residual entra em c_prof mas não na dose; sem somá-lo ao
-            # denominador do fechamento, 10 mg/dm3 em 0-20 cm vira +19.4% fantasma.
             m_profile = float(np.sum(c_final * dz))
             m_uptaken = float(n_item.get("uptaken_mg_cm2", 0.0))
             m_residual = float(n_item.get("residual_mg_cm2", 0.0))
+            # P9: todos os % de destino sobre m_inputs = dose (+ fertirrigação) + residual,
+            # SEM recorte; na CRF a dose inclui a cápsula. Assim
+            # retido+abaixo+fundo+absorvido+cápsula = 100 + mass_closure_pct (erro numérico, |·|<1%).
             m_inputs = applied_m + m_residual
-            retained_profile_pct = float((m_profile / max(applied_m, 1e-4)) * 100.0)
-            leached_bottom_pct = float((m_leached / max(applied_m, 1e-4)) * 100.0)
-            uptaken_pct = float((m_uptaken / max(applied_m, 1e-4)) * 100.0)
-            mass_closure_pct = float((m_profile + m_leached + m_uptaken - m_inputs) / max(m_inputs, 1e-4) * 100.0)
+            _den = max(m_inputs, 1e-12)
+            if m_inputs < 1e-12:
+                leaching_pct_total = 0.0
+                retained_root_pct = 0.0
+                capsule_pct = 0.0
+                retained_profile_pct = 0.0
+                leached_bottom_pct = 0.0
+                uptaken_pct = 0.0
+            else:
+                leaching_pct_total = float((m_lost_total / _den) * 100.0)
+                retained_root_pct = float((m_root / _den) * 100.0)
+                capsule_pct = float((rem_capsule_m / _den) * 100.0)
+                retained_profile_pct = float((m_profile / _den) * 100.0)
+                leached_bottom_pct = float((m_leached / _den) * 100.0)
+                uptaken_pct = float((m_uptaken / _den) * 100.0)
 
-            # Resto consistente tela==Excel (sem clip independente): retido = min(cru, 100-leach-upt)
-            retained_root_pct = float(min(retained_root_pct_raw, max(0.0, 100.0 - leaching_pct_total - uptaken_pct)))
+            # Lixiviação em relação ao que já foi liberado no solo (crua, sobre liberado)
+            leaching_pct_released = float((m_lost_total / max(rel_m, 1e-4)) * 100.0)
+
+            # Balanço de massa no perfil (fronteira = fundo do domínio) — métrica principal
+            # P9: cápsula entra no fechamento (antes a CRF aparecia como erro):
+            # mass_closure = (perfil + lixiviado + absorvido + cápsula − inputs)/inputs.
+            # O residual entra em c_prof; sem somá-lo ao denominador, 10 mg/dm3 em
+            # 0-20 cm virava +19,4% fantasma. Mantido sem clip (resíduo numérico exposto).
+            if m_inputs < 1e-12:
+                mass_closure_pct = 0.0
+            else:
+                mass_closure_pct = float((m_profile + m_leached + m_uptaken + rem_capsule_m - m_inputs) / _den * 100.0)
 
             # Pico indefinido (NaN) se sem massa ou perfil plano/fantasma — sem recomendação, só descrição
             try:
@@ -1032,9 +1204,11 @@ class Hydrus1DSimulator:
                 "initial_residual_mg_dm3": n_item["initial_residual_mg_dm3"],
                 "applied_kg_ha": applied_m * 100.0,
                 "released_kg_ha": rel_m * 100.0,
+                "fertigation_c0_mg_l": float(n_item.get("fertigation_c0_mg_l", 0.0) or 0.0),
                 "capsule_kg_ha": rem_capsule_m * 100.0,
                 "retained_kg_ha": m_root * 100.0,
                 "leached_kg_ha": m_lost_total * 100.0,
+                "input_kg_ha": m_inputs * 100.0,
                 "retained_root_pct": retained_root_pct,
                 "capsule_pct": capsule_pct,
                 "retained_profile_kg_ha": m_profile * 100.0,
@@ -1047,6 +1221,9 @@ class Hydrus1DSimulator:
                 "residual_kg_ha": m_residual * 100.0,
                 "mass_closure_pct": mass_closure_pct,
                 "mass_closure": mass_closure_pct,
+                "uptake_cap_kg_ha": (float(n_item.get("uptake_cap_mg_cm2", 0.0) or 0.0) * 100.0
+                                     if n_item.get("uptake_cap_mg_cm2", None) is not None else None),
+                "uptake_capped": bool(n_item.get("uptake_capped", False)),
                 "sorption": str(n_item.get("sorption", "linear")),
                 "smax_mg_g": float(n_item.get("smax_mg_g", 0.0) or 0.0),
                 "kl_cm3_mg": float(n_item.get("kl_cm3_mg", 0.0) or 0.0),

@@ -1,5 +1,5 @@
 """
-Módulo Explicativo e Auditoria Passo a Passo Dinâmica do Solo 1D.
+Módulo Explicativo e Auditoria Passo a Passo Dinâmica do Hydrus (perfil de solo).
 Gera a memória de cálculo completa e transparente da simulação EXECUTADA PELO USUÁRIO,
 substituindo numericamente cada entrada na física matemática correspondente:
 1. Dados e Parâmetros Configurados pelo Usuário
@@ -37,7 +37,7 @@ def get_default_sim_params() -> Dict[str, Any]:
         "mode_label": "Simulação e Diagnóstico de Campo",
         "nutrient_label": "Potássio (K+)",
         "nutrient_symbol": "K",
-        "fertilizer_label": "Polialita (11.6% K, 19% S, 12% Ca, 3.6% Mg)",
+        "fertilizer_label": "Polialita (11.6% K, 19.2% S, 12.2% Ca, 3.6% Mg)",
         "fertilizer_name": "Polialita Comercial",
         "gross_dose": 360.0,
         "elemental_dose": 41.76,
@@ -250,7 +250,7 @@ def _generate_water_only_step_by_step(p: Dict[str, Any]) -> Tuple[str, str]:
 
     md_template = r"""
 # Memória de Cálculo & Passo a Passo — Fluxo de Água no Solo (Somente Água)
-**Resolução Numérica Passo a Passo da Simulação Executada (Solo 1D)**
+**Resolução Numérica Passo a Passo da Simulação Executada**
 
 Esta simulação **não transporta solutos**. Resolve apenas a **Equação de Richards 1D** acoplada à
 evaporação do solo e, quando há cultura, à absorção radicular (Feddes).
@@ -338,7 +338,7 @@ $$
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cálculo Detalhado (passo a passo) — Fluxo de Água — Solo 1D</title>
+    <title>Cálculo Detalhado (passo a passo) — Fluxo de Água — Hydrus</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"
@@ -381,7 +381,7 @@ $$
             <img src="/logo-gpeas" alt="GPEAS" class="header-logo-img" />
         </div>
         <div class="app-header-text">
-            <h1>Solo 1D — Relatório Físico & Auditoria</h1>
+            <h1>Hydrus — Relatório Físico & Auditoria</h1>
             <p>Fluxo de Água no Perfil do Solo (Somente Água)</p>
         </div>
     </div>
@@ -593,11 +593,30 @@ def generate_simulation_step_by_step(params: Optional[Dict[str, Any]] = None) ->
     total_days = float(p.get("total_days", 7.0))
     profile_depth = float(p.get("profile_depth_cm", p.get("root_depth_cm", 100.0)))
     
-    retained_kg_ha = elem_dose * (retained_pct / 100.0)
-    leached_kg_ha = elem_dose * (leached_pct / 100.0)
-    _below_kg_ha = elem_dose * (_below_pct0 / 100.0)
-    _bottom_kg_ha = elem_dose * (_bottom_pct0 / 100.0)
-    _upt_kg_ha = elem_dose * (_upt_pct0 / 100.0)
+    # kg/ha vindos do solver (sobre dose+residual; com residual, % × dose
+    # elementar não fecha — usa os campos do balanço, com fallback legado).
+    _prim_d = _nres.get(nutr_sym, {}) if isinstance(_nres, dict) else {}
+
+    def _kg(_key: str, _fb: float) -> float:
+        try:
+            _v = float((_prim_d or {}).get(_key, _fb))
+        except (TypeError, ValueError):
+            return float(_fb)
+        try:
+            import math as _mm2
+            if _mm2.isnan(_v):
+                return float(_fb)
+        except Exception:
+            pass
+        return float(_v)
+
+    retained_kg_ha = _kg("retained_kg_ha", elem_dose * (retained_pct / 100.0))
+    _leach_kg_sol = _kg("leached_kg_ha", elem_dose * (leached_pct / 100.0))
+    _bottom_kg_sol = _kg("leached_bottom_kg_ha", elem_dose * (_bottom_pct0 / 100.0))
+    _below_kg_ha = max(0.0, _leach_kg_sol - _bottom_kg_sol)
+    _bottom_kg_ha = _bottom_kg_sol
+    leached_kg_ha = _leach_kg_sol
+    _upt_kg_ha = _kg("uptaken_kg_ha", elem_dose * (_upt_pct0 / 100.0))
 
     # Bloco multi-soluto (padrão HYDRUS-1D: N solutos independentes, um balanço por soluto)
     # Cada soluto = espécie química fixa, sem transformações entre espécies.
@@ -949,7 +968,7 @@ def generate_simulation_step_by_step(params: Optional[Dict[str, Any]] = None) ->
     # -------------------------------------------------------------
     md_template = r"""
 # Memória de Cálculo & Passo a Passo da Simulação
-**Resolução Numérica Passo a Passo da Simulação Executada (Solo 1D)**
+**Resolução Numérica Passo a Passo da Simulação Executada**
 
 ---
 
@@ -1081,7 +1100,7 @@ $$
 > {{etapa6_info}}  
 > {{etapa6_origin}}
 
-Integrando numericamente todo o perfil da coluna de solo ao término dos **{{total_days}} dias** (mesmo balanço de cards, laudo e tabelas — soma retido + abaixo + fundo + absorvido = dose):
+Integrando numericamente todo o perfil da coluna de solo ao término dos **{{total_days}} dias** (mesmo balanço de cards, laudo e tabelas — soma retido + abaixo + fundo + absorvido + grânulo = dose + residual):
 $$
 {{mass_lhs}} = \int_0^{{{root_depth}}\text{ cm}} \left[ \theta(z) C(z) + \rho_b K_d C(z) \right] dz = \mathbf{{{retained_kg_ha}}\text{ kg/ha}}
 $$
@@ -1102,7 +1121,7 @@ $$
 ### Escopo e Limites da Simulação
 * **Espécies simuladas:** cada soluto representa uma espécie química fixa (N como NO₃⁻, K como K⁺, S como SO₄²⁻); o modelo **não simula transformações químicas** entre espécies.
 * **Kd de referência:** valores de literatura para a textura do solo, ajustáveis na tabela de nutrientes — **não calibrados experimentalmente** para este talhão.
-* **Absorção passiva:** proporcional à transpiração e à concentração dissolvida, **sem teto nutricional**; representa o potencial máximo de captura, não uma previsão garantida.
+* **Absorção pela cultura:** proporcional à transpiração e à concentração dissolvida, **limitada pela demanda nutricional da cultura no ciclo** (teto por nutriente; o excedente permanece no solo); representa o potencial de captura sob essa demanda, não uma previsão garantida.
 * **Uso recomendado:** comparação entre manejos/cenários, não previsão quantitativa garantida de absorção ou perda para a cultura.
 
 """.strip()
@@ -1115,7 +1134,7 @@ $$
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cálculo Detalhado (passo a passo) - Solo 1D</title>
+    <title>Cálculo Detalhado (passo a passo) - Hydrus</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"
@@ -1393,7 +1412,7 @@ $$
             <img src="/logo-gpeas" alt="GPEAS" class="header-logo-img" />
         </div>
         <div class="app-header-text">
-            <h1>Solo 1D — Relatório Físico & Auditoria</h1>
+            <h1>Hydrus — Relatório Físico & Auditoria</h1>
             <p>Simulação de transporte de água e nutrientes no perfil do solo</p>
         </div>
     </div>
@@ -1604,7 +1623,7 @@ $$
             <div class="step-body">
                 <p><b>Espécies simuladas:</b> cada soluto representa uma espécie química fixa (N como NO₃⁻, K como K⁺, S como SO₄²⁻); o modelo <b>não simula transformações químicas</b> entre espécies.</p>
                 <p><b>Kd de referência:</b> valores de literatura para a textura do solo, ajustáveis na tabela de nutrientes — <b>não calibrados experimentalmente</b> para este talhão.</p>
-                <p><b>Absorção passiva:</b> proporcional à transpiração e à concentração dissolvida, <b>sem teto nutricional</b>; representa o potencial máximo de captura, não uma previsão garantida.</p>
+                <p><b>Absorção pela cultura:</b> proporcional à transpiração e à concentração dissolvida, <b>limitada pela demanda nutricional da cultura no ciclo</b>; representa o potencial de captura sob essa demanda, não uma previsão garantida.</p>
                 <p><b>Uso recomendado:</b> comparação entre manejos/cenários, não previsão quantitativa garantida de absorção ou perda para a cultura.</p>
             </div>
         </div>

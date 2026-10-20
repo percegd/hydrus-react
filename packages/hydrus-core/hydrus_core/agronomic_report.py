@@ -106,33 +106,65 @@ def _fmt_peak(peak_cm) -> str:
     except (TypeError, ValueError):
         return "indefinido"
 
+def _fnum(_d: dict, _key: str, _fb: float = 0.0) -> float:
+    try:
+        _v = float((_d or {}).get(_key, _fb))
+    except (TypeError, ValueError):
+        return float(_fb)
+    try:
+        import math as _mm
+
+        if _mm.isnan(_v):
+            return float(_fb)
+    except Exception:
+        pass
+    return float(_v)
+
+
 def _mass_totals(results, dose_total: float, primary_sym: str) -> dict:
-    """Balanço real multissoluto: soma por soluto (kg), nunca % primário × dose total.
-    retained já exclui uptaken: retained=min(exato, 100-pct-upt) → soma nunca >100."""
+    """Balanço real multissoluto: kg vindos do solver (sobre dose+residual).
+
+    Os % do solver são sobre as entradas (dose aplicada/injetada + residual
+    inicial), sem recorte; retido+abaixo+fundo+absorvido+cápsula ≈ 100%
+    (±1%, resíduo numérico em mass_closure_pct). Sem o min-clip legado
+    (que escondia a cápsula do fechamento). Fallbacks mantêm compat com
+    results antigos sem os campos kg.
+    """
     nr = getattr(results, "nutrient_results", None) or {}
     is_multi = len(nr) > 1
     if is_multi:
-        tot_dose = sum(float(d.get("dose_kg_ha", 0.0) or 0.0) for d in nr.values())
-        if tot_dose <= 0:
-            tot_dose = float(dose_total or 0.0)
-        tot_lost = sum(float(d.get("leached_kg_ha", 0.0) or 0.0) for d in nr.values())
-        tot_ret = sum(float(d.get("retained_kg_ha", 0.0) or 0.0) for d in nr.values())
-        tot_upt = sum(float(d.get("uptaken_kg_ha", 0.0) or 0.0) for d in nr.values())
-        pct = (tot_lost / tot_dose * 100.0) if tot_dose > 0 else 0.0
-        ret = (tot_ret / tot_dose * 100.0) if tot_dose > 0 else 0.0
-        upt = (tot_upt / tot_dose * 100.0) if tot_dose > 0 else 0.0
-        ret = min(ret, max(0.0, 100.0 - pct - upt))
-        return {"is_multi": True, "total_dose": tot_dose, "pct": pct, "retained_pct": ret,
-                "uptaken_pct": upt, "lost_kg": tot_lost, "retained_kg": tot_ret, "uptaken_kg": tot_upt}
+        tot_dose = sum(_fnum(d, "dose_kg_ha") for d in nr.values()) or float(dose_total or 0.0)
+        tot_input = sum(_fnum(d, "input_kg_ha", _fnum(d, "dose_kg_ha")) for d in nr.values()) or tot_dose
+        tot_lost = sum(_fnum(d, "leached_kg_ha", _fnum(d, "dose_kg_ha") * _fnum(d, "leaching_ratio_pct") / 100.0) for d in nr.values())
+        tot_ret = sum(_fnum(d, "retained_kg_ha", _fnum(d, "dose_kg_ha") * _fnum(d, "retained_root_pct") / 100.0) for d in nr.values())
+        tot_upt = sum(_fnum(d, "uptaken_kg_ha", _fnum(d, "dose_kg_ha") * _fnum(d, "uptaken_pct") / 100.0) for d in nr.values())
+        tot_cap = sum(_fnum(d, "capsule_kg_ha", _fnum(d, "dose_kg_ha") * _fnum(d, "capsule_pct") / 100.0) for d in nr.values())
+        tot_res = sum(_fnum(d, "residual_kg_ha") for d in nr.values())
+        _den = tot_input if tot_input > 0 else 1.0
+        pct = tot_lost / _den * 100.0
+        ret = tot_ret / _den * 100.0
+        upt = tot_upt / _den * 100.0
+        cap = tot_cap / _den * 100.0
+        return {"is_multi": True, "total_dose": tot_dose, "total_input": tot_input,
+                "total_residual": tot_res, "pct": pct, "retained_pct": ret,
+                "uptaken_pct": upt, "capsule_pct": cap,
+                "lost_kg": tot_lost, "retained_kg": tot_ret, "uptaken_kg": tot_upt,
+                "capsule_kg": tot_cap}
     d = nr.get(primary_sym, {}) if nr else {}
-    pct = float(d.get("leaching_ratio_pct", results.leaching_ratio_pct))
-    upt = float(d.get("uptaken_pct", float(getattr(results, "uptaken_pct", 0.0) or 0.0)))
-    ret_exact = float(d.get("retained_root_pct", max(0.0, 100.0 - pct - upt)))
-    ret = min(ret_exact, max(0.0, 100.0 - pct - upt))
-    td = float(d.get("dose_kg_ha", dose_total))
-    return {"is_multi": False, "total_dose": td, "pct": pct, "retained_pct": ret,
-            "uptaken_pct": upt, "lost_kg": td * pct / 100.0, "retained_kg": td * ret / 100.0,
-            "uptaken_kg": td * upt / 100.0}
+    _dose = _fnum(d, "dose_kg_ha", float(dose_total or 0.0))
+    _inp = _fnum(d, "input_kg_ha", _dose)
+    pct = _fnum(d, "leaching_ratio_pct", float(getattr(results, "leaching_ratio_pct", 0.0) or 0.0))
+    upt = _fnum(d, "uptaken_pct", float(getattr(results, "uptaken_pct", 0.0) or 0.0))
+    ret = _fnum(d, "retained_root_pct", max(0.0, 100.0 - pct - upt))
+    cap = _fnum(d, "capsule_pct")
+    _den1 = _inp if _inp > 0 else 1.0
+    return {"is_multi": False, "total_dose": _dose, "total_input": _inp,
+            "total_residual": _fnum(d, "residual_kg_ha"),
+            "pct": pct, "retained_pct": ret, "uptaken_pct": upt, "capsule_pct": cap,
+            "lost_kg": _fnum(d, "leached_kg_ha", _dose * pct / 100.0),
+            "retained_kg": _fnum(d, "retained_kg_ha", _dose * ret / 100.0),
+            "uptaken_kg": _fnum(d, "uptaken_kg_ha", _dose * upt / 100.0),
+            "capsule_kg": _fnum(d, "capsule_kg_ha", _dose * cap / 100.0)}
 
 
 def _risk_banner(results, primary_sym: str, fallback_pct: float, root_depth_cm=None, peak_cm=None) -> tuple:
@@ -263,10 +295,46 @@ SCOPE_NOTE = (
     "> ℹ️ **Escopo e limites:** cada soluto representa uma **espécie química fixa** "
     "(N como NO₃⁻, K como K⁺, S como SO₄²⁻); o modelo **não simula transformações químicas** "
     "entre espécies. Kd de **referência bibliográfica** para a textura do solo, ajustáveis — "
-    "**não calibrados experimentalmente** para este talhão. Absorção **passiva** "
-    "(proporcional à transpiração, sem teto nutricional): potencial máximo de captura, "
+    "**não calibrados experimentalmente** para este talhão. Absorção **pela cultura "
+    "(limitada pela demanda nutricional do ciclo)**: potencial de captura sob essa demanda, "
     "não previsão garantida. Uso recomendado: **comparação entre manejos/cenários**."
 )
+
+
+def _capped_suffix(nr_dict: dict, is_multi: bool) -> str:
+    """Sufixo quando o solver limitou a absorção em parte do período."""
+    try:
+        capped = [(str(s), (dd or {})) for s, dd in (nr_dict or {}).items() if (dd or {}).get("uptake_capped")]
+    except Exception:
+        capped = []
+    if not capped:
+        return ""
+
+    def _cap_part(dd: dict) -> str:
+        try:
+            v = dd.get("uptake_cap_kg_ha", None)
+            if v is None:
+                return ""
+            return f"; teto no período: {float(v):.1f} kg/ha"
+        except (TypeError, ValueError):
+            return ""
+
+    if is_multi:
+        parts = ", ".join(f"{s}{_cap_part(dd)}" for s, dd in capped)
+        return f" — **limitada pela marcha de absorção da cultura em parte do período em: {parts}**"
+    return f" — **limitada pela marcha de absorção da cultura em parte do período{_cap_part(capped[0][1])}**"
+
+
+def _residual_suffix(bal: dict) -> str:
+    """Sufixo '(dose Y + residual Z)' quando há massa residual inicial."""
+    try:
+        r = float(bal.get("total_residual", 0.0) or 0.0)
+        d = float(bal.get("total_dose", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return ""
+    if r > 0.005:
+        return f" (dose {d:.1f} + residual {r:.1f} kg/ha)"
+    return ""
 
 
 def _dose_sanity(
@@ -517,16 +585,16 @@ def generate_advanced_report(
         _n_sol = len(results.nutrient_results)
         _sol_list = ", ".join(f"{d['name']} ({s})" for s, d in results.nutrient_results.items())
         solutes_header = (f"* **Formulação Multi-Soluto:** **{_n_sol} solutos independentes** "
-                          f"({_sol_list}) | **Dose Total Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**")
+                          f"({_sol_list}) | **Dose Total Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**{_residual_suffix(_bal)}")
         soluto_ref = "conjunto de solutos"
     else:
         solutes_header = (f"* **Nutriente Avaliado:** {nutrient_name} ({nutrient_symbol}) | "
-                          f"**Dose Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**")
+                          f"**Dose Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**{_residual_suffix(_bal)}")
         soluto_ref = nutrient_name
 
     _crop_line = (f"* **Cultura & Estádio:** {crop.name} (Profundidade Radicular Efetiva: **{root_z:.0f} cm**)"
                   if has_crop else f"* **Cultura:** Sem cultura | **Camada Avaliada:** **{root_z:.0f} cm**")
-    _upt_line = (f"\n* **Absorvido (passivo, sem teto nutricional):** **{uptaken_pct:.1f}%** ({uptaken_kg_ha:,.1f} kg/ha de {soluto_ref}) — transporte passivo via transpiração; sem demanda máxima da planta"
+    _upt_line = (f"\n* **Absorvido pela cultura (limitado pela demanda):** **{uptaken_pct:.1f}%** ({uptaken_kg_ha:,.1f} kg/ha de {soluto_ref}) — absorção via transpiração, limitada à demanda nutricional do ciclo{_capped_suffix(_nr, _is_multi_rep)}"
                  if float(uptaken_pct or 0.0) > 0.05 else "")
     # (L4) R calculado exibido; (L10) Kd efetivo quando difere do nominal
     _theta_ref_adv = max(0.15, float(soil.theta_s) * 0.75)
@@ -717,6 +785,13 @@ def generate_column_report(
             return float((_d or {}).get("dose_kg_ha", 0.0) or 0.0)
         except (TypeError, ValueError):
             return 0.0
+
+    def _kg_of(_d, _key: str, _pct: float) -> float:
+        try:
+            return float((_d or {}).get(_key, _dose_of(_d) * float(_pct or 0.0) / 100.0))
+        except (TypeError, ValueError):
+            return float(_dose_of(_d) * float(_pct or 0.0) / 100.0)
+
     if _is_multi_c:
         _fundo_col_line = ""
         for _s, _d in _nr_c.items():
@@ -724,16 +799,16 @@ def generate_column_report(
                 _b = float((_d or {}).get("leached_bottom_pct", 0.0) or 0.0)
             except (TypeError, ValueError):
                 _b = 0.0
-            _fundo_col_line += f"\n* **Atravessou o fundo ({_s}):** **{_b:.1f}%** ({_dose_of(_d) * _b / 100.0:.1f} kg/ha)"
+            _fundo_col_line += f"\n* **Atravessou o fundo ({_s}):** **{_b:.1f}%** ({_kg_of(_d, 'leached_bottom_kg_ha', _b):.1f} kg/ha)"
             _cc = _cap_of(_d)
             if _cc > 0.05:
-                _fundo_col_line += f"\n* **Ainda no grânulo, não liberado ({_s}):** **{_cc:.1f}%** ({_dose_of(_d) * _cc / 100.0:.1f} kg/ha)"
+                _fundo_col_line += f"\n* **Ainda no grânulo, não liberado ({_s}):** **{_cc:.1f}%** ({_kg_of(_d, 'capsule_kg_ha', _cc):.1f} kg/ha)"
     else:
-        _fundo_col_line = f"\n* **Atravessou o fundo (coluna {column_height_cm:.0f} cm):** **{_bot_col:.1f}%** ({fertilizer_dose_kg_ha * _bot_col / 100.0:.1f} kg/ha)"
+        _fundo_col_line = f"\n* **Atravessou o fundo (coluna {column_height_cm:.0f} cm):** **{_bot_col:.1f}%** ({_kg_of(_prim_c, 'leached_bottom_kg_ha', _bot_col):.1f} kg/ha)"
         _cap_col = _cap_of(_prim_c)
         if _cap_col > 0.05:
             _fundo_col_line += (f"\n* **Ainda no grânulo (não liberado):** "
-                                f"**{_cap_col:.1f}%** ({fertilizer_dose_kg_ha * _cap_col / 100.0:.1f} kg/ha)")
+                                f"**{_cap_col:.1f}%** ({_kg_of(_prim_c, 'capsule_kg_ha', _cap_col):.1f} kg/ha)")
     _scope_col = f"\n\n{SCOPE_NOTE}"
 
     # Drenagem em mm (+ RO/armazenamento/ET quando existirem — L11)
@@ -796,18 +871,18 @@ def generate_column_report(
         _sol_list = ", ".join(f"{d['name']} ({s})" for s, d in results.nutrient_results.items())
         if is_fertigation:
             solutes_header = (f"* **Formulação Multi-Soluto:** **{_n_sol} solutos independentes** "
-                              f"({_sol_list}) | **Dose Total Aplicada (injetada):** **{fertilizer_dose_kg_ha:.1f} kg/ha**")
+                              f"({_sol_list}) | **Dose Total Aplicada (injetada):** **{fertilizer_dose_kg_ha:.1f} kg/ha**{_residual_suffix(_bal)}")
         else:
             solutes_header = (f"* **Formulação Multi-Soluto:** **{_n_sol} solutos independentes** "
-                              f"({_sol_list}) | **Dose Total Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**")
+                              f"({_sol_list}) | **Dose Total Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**{_residual_suffix(_bal)}")
         soluto_ref = "conjunto de solutos"
     else:
         if is_fertigation:
             solutes_header = (f"* **Nutriente / Soluto:** {nutrient_name} ({nutrient_symbol}) | "
-                              f"**Dose Aplicada (injetada):** **{fertilizer_dose_kg_ha:.1f} kg/ha**")
+                              f"**Dose Aplicada (injetada):** **{fertilizer_dose_kg_ha:.1f} kg/ha**{_residual_suffix(_bal)}")
         else:
             solutes_header = (f"* **Nutriente / Soluto:** {nutrient_name} ({nutrient_symbol}) | "
-                              f"**Dose Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**")
+                              f"**Dose Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**{_residual_suffix(_bal)}")
         soluto_ref = nutrient_name
 
     try:
@@ -843,7 +918,7 @@ def generate_column_report(
 #### 2. Balanço Físico de Massa & Perfil de Concentração
 * **Profundidade do Pico de Concentração Máxima:** **{_fmt_peak(peak)}**
 * **Retenção na Camada de Interesse (0–{target_depth_cm:.0f} cm):** **{retained_pct:.1f}%** ({retained_kg_ha:,.1f} kg/ha)
-* **Deslocamento além da Camada (> {target_depth_cm:.0f} cm):** **{pct:.1f}%** ({lost_kg_ha:,.1f} kg/ha){chr(10) + f"* **Absorvido (passivo, sem teto nutricional):** **{uptaken_pct:.1f}%** ({uptaken_kg_ha:,.1f} kg/ha) — transporte passivo via transpiração; sem demanda máxima da planta" if float(uptaken_pct or 0.0) > 0.05 else ""}{_fundo_col_line}
+* **Deslocamento além da Camada (> {target_depth_cm:.0f} cm):** **{pct:.1f}%** ({lost_kg_ha:,.1f} kg/ha){chr(10) + f"* **Absorvido pela cultura (limitado pela demanda):** **{uptaken_pct:.1f}%** ({uptaken_kg_ha:,.1f} kg/ha) — absorção via transpiração, limitada à demanda nutricional do ciclo{_capped_suffix(_nr_c, _is_multi_c)}" if float(uptaken_pct or 0.0) > 0.05 else ""}{_fundo_col_line}
 * **Drenagem Acumulada no Fundo da Coluna:** **{drainage_mm:.1f} mm**{_hydro_extra}{_et_line}{_closure_col_line}
 
 #### 3. Descrição Física do Soluto (sem recomendação)

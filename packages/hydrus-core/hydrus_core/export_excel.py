@@ -179,23 +179,53 @@ def _export_column_sheets(writer: pd.ExcelWriter, results: Any, p: Dict[str, Any
     if p.get("water_only"):
         summary_rows = _water_balance_summary_rows(p)
     else:
-        # (L1) Base unificada raiz/camada: leaching_ratio/retained_root, nunca bottom/profile.
+        # Base raiz/camada: leaching_ratio/retained_root sobre dose+residual,
+        # sem recorte — retido+abaixo+fundo+absorvido+cápsula ≈ 100% (±1%).
         _nr_p = p.get("nutrient_results") or {}
         if isinstance(_nr_p, dict) and len(_nr_p) > 1:
             _tot_d = sum(float((_d or {}).get("dose_kg_ha", 0.0) or 0.0) for _d in _nr_p.values()) or 1.0
-            _leach = sum(float((_d or {}).get("leaching_ratio_pct", 0.0) or 0.0) * float((_d or {}).get("dose_kg_ha", 0.0) or 0.0) for _d in _nr_p.values()) / _tot_d
-            _ret_r = sum(float((_d or {}).get("retained_root_pct", 0.0) or 0.0) * float((_d or {}).get("dose_kg_ha", 0.0) or 0.0) for _d in _nr_p.values()) / _tot_d
-            _upt = float(p.get("uptaken_pct", 0.0) or 0.0)
+
+            def _wavg(_key: str) -> float:
+                return sum(float((_d or {}).get(_key, 0.0) or 0.0) * float((_d or {}).get("dose_kg_ha", 0.0) or 0.0) for _d in _nr_p.values()) / _tot_d
+
+            _leach = _wavg("leaching_ratio_pct")
+            _ret_r = _wavg("retained_root_pct")
+            _upt = _wavg("uptaken_pct")
+            _cap = _wavg("capsule_pct")
+            _inp_tot = sum(float((_d or {}).get("input_kg_ha", float((_d or {}).get("dose_kg_ha", 0.0) or 0.0))) for _d in _nr_p.values())
+            _res_tot = sum(float((_d or {}).get("residual_kg_ha", 0.0) or 0.0) for _d in _nr_p.values())
+            _capped_any = any(bool((_d or {}).get("uptake_capped")) for _d in _nr_p.values())
         elif isinstance(_nr_p, dict) and len(_nr_p) == 1:
             _only = next(iter(_nr_p.values()))
             _leach = float((_only or {}).get("leaching_ratio_pct", p.get("leaching_pct", p.get("leached_bottom_pct", 0.0))) or 0.0)
             _ret_r = float((_only or {}).get("retained_root_pct", p.get("retained_pct", p.get("retained_profile_pct", 0.0))) or 0.0)
             _upt = float((_only or {}).get("uptaken_pct", p.get("uptaken_pct", 0.0)) or 0.0)
+            _cap = float((_only or {}).get("capsule_pct", 0.0) or 0.0)
+            _inp_tot = float((_only or {}).get("input_kg_ha", (_only or {}).get("dose_kg_ha", 0.0)) or 0.0)
+            _res_tot = float((_only or {}).get("residual_kg_ha", 0.0) or 0.0)
+            _capped_any = bool((_only or {}).get("uptake_capped"))
         else:
             _leach = float(p.get("leaching_pct", p.get("leaching_ratio_pct", 0.0)) or 0.0)
             _ret_r = float(p.get("retained_pct", p.get("retained_root_pct", 0.0)) or 0.0)
             _upt = float(p.get("uptaken_pct", 0.0) or 0.0)
-        _ret = min(_ret_r, max(0.0, 100.0 - _leach - _upt))
+            _cap = 0.0
+            _inp_tot = float(p.get("elemental_dose", p.get("gross_dose", 0.0)) or 0.0)
+            _res_tot = 0.0
+            _capped_any = False
+        _ret = float(_ret_r)
+        _teto_period = "-"
+        try:
+            if _capped_any and isinstance(_nr_p, dict) and _nr_p:
+                _vals = []
+                for _dd in _nr_p.values():
+                    if bool((_dd or {}).get("uptake_capped")):
+                        _v = (_dd or {}).get("uptake_cap_kg_ha", None)
+                        if _v is not None:
+                            _vals.append(float(_v))
+                if _vals:
+                    _teto_period = round(float(sum(_vals)), 2)
+        except Exception:
+            _teto_period = "-"
         # (L10) Kd efetivo médio quando disponível
         _kd_eff_txt = p.get("kd", 0.0)
         try:
@@ -224,6 +254,8 @@ def _export_column_sheets(writer: pd.ExcelWriter, results: Any, p: Dict[str, Any
             ("Nutriente Avaliado", p.get("nutrient_label", p.get("nutrient_symbol", "-"))),
             ("Símbolo do Nutriente", p.get("nutrient_symbol", "-")),
             ("Dose Aplicada [kg/ha]", p.get("elemental_dose", p.get("gross_dose", 0.0))),
+            ("Massa de Entrada — dose + residual [kg/ha]", round(float(_inp_tot), 2)),
+            ("Residual Inicial [kg/ha]", round(float(_res_tot), 2)),
             ("Lâmina de Água / Irrigação [mm]", p.get("rain_mm", 0.0)),
             ("Duração da Simulação [dias]", p.get("total_days", 0.0)),
             ("Coeficiente Kd nominal [cm³/g]", p.get("kd", 0.0)),
@@ -232,6 +264,10 @@ def _export_column_sheets(writer: pd.ExcelWriter, results: Any, p: Dict[str, Any
             ("Camada de Avaliação [cm]", p.get("root_depth_cm", 30.0)),
             ("Retenção na Camada [%]", round(_ret, 2)),
             ("Lixiviação / Deslocamento Além da Camada [%]", _leach),
+            ("Ainda no Grânulo (não liberado) [%]", round(float(_cap), 2)),
+            ("Absorção pela Cultura [%] (limitada pela demanda)", round(float(_upt), 2)),
+            ("Absorção limitada pela demanda em parte do período", "sim" if _capped_any else "não"),
+            ("Teto no período [kg/ha]", _teto_period),
             ("Profundidade do Pico Máximo [cm]", _excel_peak_label(results, p)),
             ("Drenagem Acumulada no Fundo [mm]", float(p.get("drainage_mm", float(p.get("q_bottom_cm", 0.0)) * 10.0))),
             ("Δ Armazenamento no Perfil [mm]", float(p.get("storage_mm", 0.0))),
@@ -244,8 +280,6 @@ def _export_column_sheets(writer: pd.ExcelWriter, results: Any, p: Dict[str, Any
             _syms_c = {p.get("nutrient_symbol", "")}
         if "P" in _syms_c:
             summary_rows.append(("Nota de unidade (P)", "Perfil = P total (dissolvido+adsorvido, mg/cm³); BTC/dias = P dissolvido (mg/L)"))
-        if float(p.get("uptaken_pct", 0.0)) > 0:
-            summary_rows.append(("Absorção Passiva [%] (sem teto nutricional)", float(p.get("uptaken_pct", 0.0))))
     df_sum = pd.DataFrame(summary_rows, columns=["Parâmetro / Indicador", "Valor"])
     df_sum.to_excel(writer, sheet_name="Parametros_e_Balanco", index=False)
 
@@ -299,11 +333,33 @@ def _export_seasonal_sheets(writer: pd.ExcelWriter, res: Any, p: Dict[str, Any])
         else:
             _leach_s = float(getattr(res, "mass_leached_pct", p.get("leaching_pct", p.get("leaching_ratio_pct", 0.0))) or 0.0)
         _upt_s = float(p.get("uptaken_pct", 0.0) or 0.0)
+        _cap_s = 0.0
+        _capped_s = False
+        _inp_s = float(p.get("elemental_dose", 100.0) or 0.0)
+        _res_s = 0.0
         _ret_base = p.get("retained_pct", p.get("retained_root_pct", 100.0 - _leach_s))
         if isinstance(_nr_s, dict) and _nr_s:
             _tot_ds2 = sum(float((_d or {}).get("dose_kg_ha", 0.0) or 0.0) for _d in _nr_s.values()) or 1.0
             _ret_base = sum(float((_d or {}).get("retained_root_pct", 0.0) or 0.0) * float((_d or {}).get("dose_kg_ha", 0.0) or 0.0) for _d in _nr_s.values()) / _tot_ds2
-        _ret_s = min(float(_ret_base or 0.0), max(0.0, 100.0 - _leach_s - _upt_s))
+            _upt_s = sum(float((_d or {}).get("uptaken_pct", 0.0) or 0.0) * float((_d or {}).get("dose_kg_ha", 0.0) or 0.0) for _d in _nr_s.values()) / _tot_ds2
+            _cap_s = sum(float((_d or {}).get("capsule_pct", 0.0) or 0.0) * float((_d or {}).get("dose_kg_ha", 0.0) or 0.0) for _d in _nr_s.values()) / _tot_ds2
+            _capped_s = any(bool((_d or {}).get("uptake_capped")) for _d in _nr_s.values())
+            _inp_s = sum(float((_d or {}).get("input_kg_ha", float((_d or {}).get("dose_kg_ha", 0.0) or 0.0))) for _d in _nr_s.values())
+            _res_s = sum(float((_d or {}).get("residual_kg_ha", 0.0) or 0.0) for _d in _nr_s.values())
+        _ret_s = float(_ret_base or 0.0)
+        _teto_period_s = "-"
+        try:
+            if _capped_s and isinstance(_nr_s, dict) and _nr_s:
+                _vals_s = []
+                for _dd in _nr_s.values():
+                    if bool((_dd or {}).get("uptake_capped")):
+                        _v = (_dd or {}).get("uptake_cap_kg_ha", None)
+                        if _v is not None:
+                            _vals_s.append(float(_v))
+                if _vals_s:
+                    _teto_period_s = round(float(sum(_vals_s)), 2)
+        except Exception:
+            _teto_period_s = "-"
         _mode_lbl = str(p.get("mode_label", "") or "")
         _is_full_year = ("ano cheio" in _mode_lbl) or ("1–365" in _mode_lbl) or ("janela" not in _mode_lbl.lower() and "dias" not in _mode_lbl.lower())
         # Heurística robusta: total_days >= 360 → anual; senão período.
@@ -324,12 +380,17 @@ def _export_seasonal_sheets(writer: pd.ExcelWriter, res: Any, p: Dict[str, Any])
             ("Nutriente Avaliado", getattr(res, "nutrient_name", p.get("nutrient_label", sym))),
             ("Símbolo do Nutriente", sym),
             ("Dose Aplicada [kg/ha]", p.get("elemental_dose", 100.0)),
+            ("Massa de Entrada — dose + residual [kg/ha]", round(float(_inp_s), 2)),
+            ("Residual Inicial [kg/ha]", round(float(_res_s), 2)),
             ("Coeficiente Kd nominal [cm³/g]", getattr(res, "kd_used", p.get("kd", 0.0))),
             ("Dispersividade Longitudinal [cm]", p.get("dispersivity", 10.0)),
             ("Camada Útil / Raiz [cm]", getattr(res, "root_depth_cm", p.get("root_depth_cm", 40.0))),
             (_ret_lbl, round(_ret_s, 2)),
             (_leach_lbl, _leach_s),
-            ("Absorção Passiva Acumulada [%] (sem teto nutricional)", float(p.get("uptaken_pct", 0.0))),
+            ("Ainda no Grânulo (não liberado) [%]", round(float(_cap_s), 2)),
+            ("Absorção pela Cultura [%] (limitada pela demanda)", round(float(_upt_s), 2)),
+            ("Absorção limitada pela demanda em parte do período", "sim" if _capped_s else "não"),
+            ("Teto no período [kg/ha]", _teto_period_s),
             ("Profundidade do Pico Máximo no Fim do Ano [cm]", _excel_peak_label(res, p)),
             (_dren_lbl, float(p.get("drainage_mm", float(getattr(res, "drainage_cum_cm", 0.0)) * 10.0))),
             ("Δ Armazenamento no Perfil [mm]", float(p.get("storage_mm", 0.0))),

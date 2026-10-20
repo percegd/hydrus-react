@@ -219,24 +219,26 @@ LITERATURE_KD_DATABASE: Dict[Tuple[str, str], KdLiteratureEntry] = {
 
 # -------------------------------------------------------------
 # 2. BASE DE FERTILIZANTES COMERCIAIS
+# Conversões elemento/óxido (MAPA IN SDA 39/2018): P=P2O5x0,4364; K=K2Ox0,8301;
+# Ca=CaOx0,7147; Mg=MgOx0,6030; S=SO3x0,4005.
 # -------------------------------------------------------------
 COMMERCIAL_FERTILIZERS = {
     "ureia": {
         "name": "Ureia Protegida ou Convencional (45-00-00)",
         "primary_nutrient": "N",
-        "nutrient_pct": 45.0,
+        "nutrient_pct": 45.0,  # garantia comercial típica; MAPA mín. 44% N (IN SDA 39/2018)
         "descr": "Fonte de alta concentração em N. Solúvel, transforma-se rapidamente em nitrato."
     },
     "nitrato_amonio": {
         "name": "Nitrato de Amônio (33-00-00)",
         "primary_nutrient": "N",
-        "nutrient_pct": 33.0,
+        "nutrient_pct": 33.0,  # comercial típico; MAPA mín. 32% N
         "descr": "Fornece 50% de N na forma nítrica imediata e 50% amoniacal."
     },
     "sulfato_amonio": {
         "name": "Sulfato de Amônio (21-00-00 + 24% S)",
         "primary_nutrient": "N",
-        "nutrient_pct": 21.0,
+        "nutrient_pct": 21.0,  # comercial típico; MAPA mín. 20% N e 22% S
         "secondary_nutrient": "S",
         "secondary_pct": 24.0,
         "descr": "Excelente fonte combinada de Nitrogênio e Enxofre solúvel."
@@ -244,47 +246,66 @@ COMMERCIAL_FERTILIZERS = {
     "kcl": {
         "name": "Cloreto de Potássio - KCl (00-00-60)",
         "primary_nutrient": "K",
-        "nutrient_pct": 52.4, # Pureza estequiométrica (39.1/74.6 = 52.4% K elementar, conforme TCC Isabela 2024)
+        # 60% K2O rotulado x 0,8301 = 49,8% K; 52,4% é o KCl puro estequiométrico, não o produto 00-00-60
+        "nutrient_pct": 49.8,
         "descr": "Fonte padrão de potássio na agricultura brasileira. Alta solubilidade."
     },
     "polialita": {
         "name": "Polialita / Polissulfato (K2Ca2Mg(SO4)4 · 2H2O)",
         "primary_nutrient": "K",
-        "nutrient_pct": 11.6, # 14% K2O
+        "nutrient_pct": 11.6,  # 14% K2O x 0,8301 (garantia comercial)
         "secondary_nutrient": "S",
-        "secondary_pct": 19.0,
+        "secondary_pct": 19.2,  # 48% SO3 x 0,4005
         "tertiary_nutrient": "Ca",
-        "tertiary_pct": 12.0,
+        "tertiary_pct": 12.2,  # 17% CaO x 0,7147
         "quaternary_nutrient": "Mg",
-        "quaternary_pct": 3.6,
+        "quaternary_pct": 3.6,  # 6% MgO x 0,6030
         "descr": "Fertilizante multinutriente natural de liberação gradual prolongada."
     },
     "kmag": {
         "name": "K-Mag / Sulpomag (00-00-22 + 11% Mg + 22% S)",
         "primary_nutrient": "K",
-        "nutrient_pct": 18.0,
+        "nutrient_pct": 18.3,  # 22% K2O x 0,8301 (sulfato duplo de K e Mg)
         "secondary_nutrient": "Mg",
-        "secondary_pct": 11.0,
+        "secondary_pct": 10.8,  # 18% MgO x 0,6030
         "tertiary_nutrient": "S",
-        "tertiary_pct": 22.0,
+        "tertiary_pct": 22.0,  # S elementar garantido
         "descr": "Duplo sulfato de potássio e magnésio, fonte solúvel sem cloro."
     },
     "map": {
         "name": "MAP - Fosfato Monoamônico (11-52-00)",
         "primary_nutrient": "P",
-        "nutrient_pct": 22.7, # 52% P2O5 = 22.7% P elementar
+        "nutrient_pct": 22.7,  # 52% P2O5 x 0,4364 (garantia comercial MAPA)
         "secondary_nutrient": "N",
         "secondary_pct": 11.0,
         "descr": "Fonte de alta concentração em fósforo com arranque de nitrogênio."
     },
+    "ssp": {
+        "name": "Superfosfato Simples - SSP (00-18-00)",
+        "primary_nutrient": "P",
+        "nutrient_pct": 7.9,  # 18% P2O5 x 0,4364
+        "secondary_nutrient": "Ca",
+        "secondary_pct": 16.0,  # Ca elementar típico do SSP
+        "tertiary_nutrient": "S",
+        "tertiary_pct": 10.0,  # S elementar típico do SSP
+        "descr": "Fonte fosfatada com Ca e S; solubilidade moderada."
+    },
+    "tsp": {
+        "name": "Superfosfato Triplo - TSP (00-46-00)",
+        "primary_nutrient": "P",
+        "nutrient_pct": 20.1,  # 46% P2O5 x 0,4364
+        "secondary_nutrient": "Ca",
+        "secondary_pct": 10.0,  # Ca elementar típico do TSP
+        "descr": "Fonte fosfatada concentrada sem S."
+    },
     "kcl_gesso": {
         "name": "KCl + Gesso Agrícola (Blend Condicionador)",
         "primary_nutrient": "K",
-        "nutrient_pct": 26.2,  # 50% KCl (52.4% K / 2 = 26.2% K)
+        "nutrient_pct": 24.9,  # blend 50:50 KCl 60% K2O (49,8% K / 2)
         "secondary_nutrient": "Ca",
-        "secondary_pct": 10.0, # ~20% Ca no gesso agrícola * 50% = 10% Ca
+        "secondary_pct": 9.0,  # gesso ~18% Ca x 50%
         "tertiary_nutrient": "S",
-        "tertiary_pct": 8.0,   # ~16% S no gesso agrícola * 50% = 8% S
+        "tertiary_pct": 7.5,  # gesso ~15% S x 50%
         "descr": "Mistura física/blend para condicionamento de subsuperfície com fornecimento de K, Ca e S."
     }
 }

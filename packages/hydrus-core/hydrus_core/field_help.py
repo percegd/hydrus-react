@@ -158,7 +158,7 @@ FIELD_HELP = {
     "fert_c0": (
         "Concentração da solução injetada (C₀)",
         "[mg/L]",
-        "Concentração do nutriente na água de irrigação da fertirrigação.",
+        "Calculada por nutriente = dose ÷ lâmina no período de injeção (o valor digitado é ignorado; mantido por compatibilidade).",
         "É a condição de contorno do topo durante a injeção: C₀ alto com muita lâmina empurra o nutriente fundo rápido.",
     ),
     "fert_pulse": (
@@ -179,6 +179,12 @@ FIELD_HELP = {
         "Quão molhado o solo já está antes de começar.",
         "Solo já úmido conduz e lixivia mais rápido desde o dia 1; seco atrasa a frente de molhamento.",
     ),
+    "seasonal_moisture": (
+        "Umidade inicial do perfil",
+        "[% do intervalo residual→CC]",
+        "Fração entre a umidade residual e a capacidade de campo no primeiro dia da série; 100% = perfil na capacidade de campo.",
+        "Sem medição de campo, começar na capacidade de campo (100%) é a prática usual (Šimůnek et al. 2008, manual HYDRUS-1D): evita o ΔS artificial de +100 a +220 mm que um início seco criaria no balanço hídrico da série.",
+    ),
     "total_days": (
         "Duração do ensaio",
         "[dias]",
@@ -194,13 +200,13 @@ FIELD_HELP = {
     "evap": (
         "Evaporação do solo",
         "[mm/dia]",
-        "Água que sai direto do solo nu (0 = derivada de ET0).",
+        "Água que sai direto do solo nu (0 = derivada de ET0 pelo Kc dual FAO-56: Ep = Ke·ET0).",
         "Compõe a saída de água no balanço; em solo nu é a principal perda junto da drenagem.",
     ),
     "transp": (
         "Transpiração",
         "[mm/dia]",
-        "Água puxada pelas raízes (0 = ET0·Kc).",
+        "Água puxada pelas raízes (0 = derivada de ET0 pelo Kc dual FAO-56: Tp = Kcb·ET0, cap. 7).",
         "É o motor do uptake: sem transpiração, a planta não absorve nutriente no modelo.",
     ),
     "app_day": (
