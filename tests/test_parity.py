@@ -1,48 +1,31 @@
-"""Paridade numérica: hydrus_core (novo pacote) vs core legado.
+"""Invariantes físicos do hydrus_core (física revisada v4).
 
-física revisada v4 (Gradio legado): a paridade bit-a-bit com o legado foi
-deliberadamente quebrada pela nova física — Kc dual FAO-56 (Tp=Kcb·ET0,
-Ep=Ke·ET0 em vez de E=ET0−T), teto de absorção pela demanda da cultura,
-% sobre dose+residual e raiz variável no ciclo. Os números abaixo divergem
-de propósito (ex.: K coluna 30d retido 79.8% v4 vs 77.2% legado).
+Física revisada v4: Kc dual FAO-56 (Tp=Kcb·ET0, Ep=Ke·ET0 em vez de
+E=ET0−T), teto de absorção pela demanda da cultura, % sobre dose+residual
+e raiz variável no ciclo. Cada caso parametrizado roda o solver 1D do
+pacote e verifica os invariantes que valem em qualquer simulação:
 
-Cobertura de invariantes mantida (novo E legado): fechamento hídrico,
-fechamento de massa por nutriente, soma dos destinos ≈ 100% e faixas
-físicas dos %.
-
-Requer o checkout legado em HYDRUS_LEGACY_ROOT
-(default: ../Hydrus).
+- fechamento hídrico (|water_closure_pct| < 2%) e drenagem não-negativa;
+- fechamento de massa por nutriente (|mass_closure_pct| < 1%);
+- soma dos destinos ≈ 100% (±1): retido na raiz + abaixo da raiz +
+  fundo + absorvido + cápsula;
+- faixas físicas dos % de destino (0–100).
 """
-
-import os
-import sys
 
 import pytest
 
-LEGACY_ROOT = os.environ.get(
-    "HYDRUS_LEGACY_ROOT",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "Hydrus"),
-)
-
-needs_legacy = pytest.mark.skipif(
-    not os.path.isdir(os.path.join(LEGACY_ROOT, "core")),
-    reason="checkout legado ausente (HYDRUS_LEGACY_ROOT)",
-)
-
-if os.path.isdir(os.path.join(LEGACY_ROOT, "core")) and LEGACY_ROOT not in sys.path:
-    sys.path.append(LEGACY_ROOT)  # no fim: o `app.py` legado não pode ocultar o pacote `app` do backend
-
-from hydrus_core.crop import CROP_DATABASE as NEW_CROPS  # noqa: E402
-from hydrus_core.hydrus_solver import Hydrus1DSimulator as NewSim  # noqa: E402
-from hydrus_core.hydrus_solver import SimulationConfig as NewCfg  # noqa: E402
-from hydrus_core.soil_physics import SOIL_DATABASE as NEW_SOILS  # noqa: E402
+from hydrus_core.crop import CROP_DATABASE
+from hydrus_core.hydrus_solver import Hydrus1DSimulator, SimulationConfig
+from hydrus_core.soil_physics import SOIL_DATABASE
 
 
-def _run(sim_cls, cfg_cls, soils, crops, days, events, nutrients):
-    sim = sim_cls(
-        soil=soils["latossolo_medio"],
-        crop=crops["soja"],
-        config=cfg_cls(depth_cm=200.0, dz=1.0, total_days=float(days), target_depth_cm=35.0),
+def _run(days, events, nutrients):
+    sim = Hydrus1DSimulator(
+        soil=SOIL_DATABASE["latossolo_medio"],
+        crop=CROP_DATABASE["soja"],
+        config=SimulationConfig(
+            depth_cm=200.0, dz=1.0, total_days=float(days), target_depth_cm=35.0
+        ),
     )
     return sim.run(
         initial_moisture_pct=20.0,
@@ -54,20 +37,8 @@ def _run(sim_cls, cfg_cls, soils, crops, days, events, nutrients):
     )
 
 
-def _balances(res):
-    out = {}
-    for sym, d in (res.nutrient_results or {}).items():
-        out[sym] = (
-            float(d.get("retained_root_pct", 0.0) or 0.0),
-            float(d.get("leaching_ratio_pct", 0.0) or 0.0),
-            float(d.get("uptaken_pct", 0.0) or 0.0),
-            float(d.get("peak_depth_cm", 0.0) or 0.0),
-        )
-    return out
-
-
 def _assert_invariants(res, nutrients, label: str) -> None:
-    """Invariantes que valem no novo E no legado (física revisada v4)."""
+    """Invariantes garantidos pela física revisada v4."""
     # Fechamento hídrico.
     assert abs(float(res.water_closure_pct)) < 2.0, f"{label}: water_closure={res.water_closure_pct}"
     assert res.q_bottom_cum_cm >= 0.0, f"{label}: drenagem negativa"
@@ -116,21 +87,7 @@ CASES = [
 ]
 
 
-@needs_legacy
 @pytest.mark.parametrize("label,days,events,nutrients", CASES)
-def test_parity_with_legacy(label, days, events, nutrients):
-    # física revisada v4 (Gradio legado): sem paridade bit-a-bit — o legado
-    # roda como referência viva e ambos têm de fechar água e massa.
-    import core.crop as legacy_crop
-    import core.hydrus_solver as legacy_solver
-    import core.soil_physics as legacy_soil
-
-    new_res = _run(NewSim, NewCfg, NEW_SOILS, NEW_CROPS, days, events, nutrients)
-    old_res = _run(
-        legacy_solver.Hydrus1DSimulator, legacy_solver.SimulationConfig,
-        legacy_soil.SOIL_DATABASE, legacy_crop.CROP_DATABASE, days, events, nutrients,
-    )
-    new_bal, old_bal = _balances(new_res), _balances(old_res)
-    assert set(new_bal) == set(old_bal)
-    _assert_invariants(new_res, nutrients, f"v4 {label}")
-    _assert_invariants(old_res, nutrients, f"legado {label}")
+def test_invariants_hydrus_core(label, days, events, nutrients):
+    res = _run(days, events, nutrients)
+    _assert_invariants(res, nutrients, label)

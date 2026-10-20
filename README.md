@@ -1,7 +1,8 @@
 # Hydrus React — nova stack (FastAPI + Next.js)
 
 Rebuild da plataforma AgroHydrus com a física preservada e UI reativa.
-O app Gradio em `../Hydrus` segue como **referência/gabarito de paridade**.
+A física vive no pacote `hydrus_core` — fonte única de números para
+backend e frontend.
 
 ## Estrutura
 
@@ -48,6 +49,7 @@ casos curtos (séries anuais vão para fila + progresso na fase 2).
   tabela de solutos, lâmina uniforme ou série diária colável)
 - [x] Fase 2 — Plotly interativo, fertirrigação/liberação/ET0 na API,
   Excel + laudo por job, wizard de manejo (superfície/sulco/fertirrigação)
-- [x] Fase 3 — paridade numérica (`tests/test_parity.py` vs legado)
+- [x] Fase 3 — invariantes físicos (`tests/test_parity.py`: fechamento de
+  água/massa, soma dos destinos ≈ 100% e faixas dos %)
 - [ ] Fase 4 — deploy Fly.io gru (SP) + auth (pendentes: conta Fly, provedor de login)
   (PDF detalhado ficou de fora: laudo markdown + Excel cobrem o uso)
