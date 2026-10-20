@@ -109,8 +109,6 @@ type Props = {
   setZTop: (v: string) => void;
   zBottom: string;
   setZBottom: (v: string) => void;
-  c0: string;
-  setC0: (v: string) => void;
   pulse: string;
   setPulse: (v: string) => void;
   fertContinuous: boolean;
@@ -173,7 +171,7 @@ export default function StepNutrients(props: Props) {
     placement, setPlacement,
     appDay, setAppDay,
     zTop, setZTop, zBottom, setZBottom,
-    c0, setC0, pulse, setPulse,
+    pulse, setPulse,
     fertContinuous, setFertContinuous,
     releaseType, setReleaseType,
     releaseDays, setReleaseDays,
@@ -420,9 +418,16 @@ export default function StepNutrients(props: Props) {
             )}
             {placement === "fertigation" && (
               <>
-                <Field label="Concentração da Solução Injetada C₀ [mg/L]" helpKey="fert_c0">
-                  <input value={c0} onChange={(e) => setC0(e.target.value)} inputMode="decimal" />
-                </Field>
+                <div className="field fixed">
+                  <span className="field-label">
+                    <span className="field-label-row">
+                      C₀ calculado por nutriente
+                    </span>
+                  </span>
+                  <p className="hint-text" style={{ margin: "4px 0 0 0" }}>
+                    C₀ calculada por nutriente = dose ÷ lâmina no período de injeção.
+                  </p>
+                </div>
                 <Field label="Duração da Injeção [dias]" helpKey="fert_pulse">
                   <input value={pulse} onChange={(e) => setPulse(e.target.value)} inputMode="decimal" disabled={fertContinuous} />
                 </Field>

@@ -57,6 +57,9 @@ type Props = {
   setEt0: (v: string) => void;
   hasCrop: boolean;
   cropKc: string;
+  cropHeightM: string;
+  seasonalMoisture: string;
+  setSeasonalMoisture: (v: string) => void;
   advEt: boolean;
   setAdvEt: (v: boolean) => void;
   evap: string;
@@ -181,7 +184,7 @@ const SCENARIO_ICONS: Record<string, React.ReactNode> = {
 export default function StepWater(props: Props) {
   const {
     days, setDays, rainMode, setRainMode, rainMm, setRainMm, moisture, setMoisture, et0, setEt0,
-    hasCrop, cropKc, advEt, setAdvEt, evap, setEvap, transp, setTransp,
+    hasCrop, cropKc, cropHeightM, seasonalMoisture, setSeasonalMoisture, advEt, setAdvEt, evap, setEvap, transp, setTransp,
     climateRows, setClimateRows, hubKey, setHubKey, hubLabel, setHubLabel, hubScenario, setHubScenario,
     hubAppDay, setHubAppDay, uploadAppDay, setUploadAppDay,
     analysisStart, setAnalysisStart, analysisEnd, setAnalysisEnd, printDays, setPrintDays,
@@ -274,11 +277,21 @@ export default function StepWater(props: Props) {
   const isUniform = rainMode === "uniform";
   const isHub = rainMode === "hub";
 
-  // Repartição calculada de E/T (Gradio et_split_html): T = ET0·Kc, E = ET0 − T.
+  // Repartição Kc dual FAO-56 cap. 7 (mesmas fórmulas do solver):
+  // Tp = Kcb·ET0, Ep = Ke·ET0; Kcb = max(0,15; kc−0,05); Kc_max = max(1,2; Kcb+0,05);
+  // fc = ((Kcb−0,15)/(Kc_max−0,15))^(1+0,5h); Ke = min(Kc_max−Kcb, (1−fc)·Kc_max, 1,0).
   const et0Num = parseFloat(String(et0).replace(",", ".")) || 0;
   const kcNum = hasCrop ? (parseFloat(String(cropKc).replace(",", ".")) || 0) : 0;
-  const transpCalc = Math.max(0, et0Num * kcNum);
-  const evapCalc = Math.max(0, et0Num - transpCalc);
+  const hRaw = parseFloat(String(cropHeightM ?? "1").replace(",", "."));
+  const hNum = Number.isFinite(hRaw) ? hRaw : 1.0;
+  const kcbCalc = hasCrop ? Math.max(0.15, kcNum - 0.05) : 0;
+  const kcMaxCalc = Math.max(1.2, kcbCalc + 0.05);
+  const fcCalc = kcbCalc <= 0.15
+    ? 0
+    : Math.min(0.99, Math.max(0, Math.pow((kcbCalc - 0.15) / Math.max(kcMaxCalc - 0.15, 1e-12), 1 + 0.5 * hNum)));
+  const keCalc = hasCrop ? Math.min(kcMaxCalc - kcbCalc, (1 - fcCalc) * kcMaxCalc, 1.0) : 1.0;
+  const transpCalc = Math.max(0, et0Num * (hasCrop ? kcbCalc : 0));
+  const evapCalc = Math.max(0, et0Num * (hasCrop ? Math.min(1, Math.max(0, keCalc)) : 1));
 
   return (
     <>
@@ -323,7 +336,7 @@ export default function StepWater(props: Props) {
           {!advEt && (
             <div className="et-split-info">
               {hasCrop ? (
-                <><b>Transpiração (ET0·Kc)</b> = {transpCalc.toFixed(2)} mm/dia &nbsp;•&nbsp; <b>Evaporação do solo (ET0 − T)</b> = {evapCalc.toFixed(2)} mm/dia</>
+                <><b>Transpiração (Tp = Kcb·ET0)</b> = {transpCalc.toFixed(2)} mm/dia &nbsp;•&nbsp; <b>Evaporação do solo (Ep = Ke·ET0)</b> = {evapCalc.toFixed(2)} mm/dia</>
               ) : (
                 <><b>Evaporação do solo</b> = {evapCalc.toFixed(2)} mm/dia <span style={{ color: "#64748b" }}>(solo nu: 100% do ET0)</span></>
               )}
@@ -342,11 +355,11 @@ export default function StepWater(props: Props) {
           </div>
           {advEt && (
             <div className="form-row">
-              <Field label="Evaporação do solo [mm/dia] (0 = derivar de ET0)" helpKey="evap">
+              <Field label="Evaporação do solo [mm/dia] (0 = derivar de ET0 — Kc dual FAO-56)" helpKey="evap">
                 <input value={evap} onChange={(e) => setEvap(e.target.value)} inputMode="decimal" />
               </Field>
               {hasCrop && (
-                <Field label="Transpiração [mm/dia] (0 = ET0·Kc)" helpKey="transp">
+                <Field label="Transpiração [mm/dia] (0 = derivar de ET0 — Kc dual FAO-56)" helpKey="transp">
                   <input value={transp} onChange={(e) => setTransp(e.target.value)} inputMode="decimal" />
                 </Field>
               )}
@@ -436,6 +449,11 @@ export default function StepWater(props: Props) {
 
       {!isUniform && (
         <>
+          <div className="form-row" style={{ marginTop: 12 }}>
+            <Field label="Umidade inicial do perfil [% do intervalo residual→CC]" helpKey="seasonal_moisture">
+              <input value={seasonalMoisture} onChange={(e) => setSeasonalMoisture(e.target.value)} inputMode="decimal" />
+            </Field>
+          </div>
           <div className="form-row" style={{ marginTop: 12 }}>
             <Field label="Início da janela de análise [dia do ano]" helpKey="window_start">
               <input value={analysisStart} onChange={(e) => setAnalysisStart(e.target.value)} inputMode="decimal" />

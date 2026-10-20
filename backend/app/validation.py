@@ -157,7 +157,11 @@ def build_payload(req: SimulateRequest) -> dict:
         p["water_source"] = "Lâmina de chuva/irrigação"
         p["rain_mm"] = float(req.rain_mm)
         p["total_days"] = float(req.total_days)
-    p["initial_moisture_pct"] = float(req.initial_moisture_pct)
+    try:
+        _moist_v = float(req.seasonal_initial_moisture_pct) if req.rain_series else float(req.initial_moisture_pct)
+    except (TypeError, ValueError):
+        _moist_v = float(req.initial_moisture_pct)
+    p["initial_moisture_pct"] = _moist_v
     # ET avançada (Gradio adv_et_toggle): 0 = derivar de ET0.
     try:
         p["evap_mm_day"] = float(req.evap_mm_day)
@@ -356,5 +360,65 @@ def validate_request(req: SimulateRequest) -> list[dict]:
                     ),
                 })
     except (TypeError, ValueError):
+        pass
+    # F3) dia do plantio fora do intervalo [1, n_dias] (ciclo da cultura, modo série).
+    try:
+        if req.planting_day is not None:
+            _pd = int(req.planting_day)
+            _n_dias = len(req.rain_series) if req.rain_series else int(float(req.total_days or 0.0))
+            if _n_dias < 1:
+                _n_dias = 1
+            if not (1 <= _pd <= _n_dias):
+                out.append({
+                    "field": "planting_day",
+                    "message": (
+                        f"Dia do plantio ({_pd}) fora do intervalo [1, {_n_dias} dias]: "
+                        f"o plantio precisa cair dentro do período simulado."
+                    ),
+                })
+    except (TypeError, ValueError):
+        pass
+    # F4) fertirrigação sem água no período de injeção (C0 = dose ÷ 0 é impossível).
+    try:
+        _is_fert_v = str((req.placement.mode if req.placement else "") or "").strip().lower() == "fertigation"
+        if _is_fert_v and (req.solutes or []):
+            from .service import _effective_window as _eff_win_v
+            from .service import _fertigation_water_mm as _fert_w_mm_v
+
+            if req.rain_series:
+                _full_v = [max(0.0, float(v or 0.0)) for v in req.rain_series]
+                _sw_v, _ew_v = _eff_win_v(req, len(_full_v))
+                _series_v = _full_v[_sw_v - 1:_ew_v]
+                _evs_v = [(float(d), 1.0, float(v)) for d, v in enumerate(_series_v) if v > 0.0]
+                try:
+                    _app_raw_v = float(req.placement.application_day or 0.0)
+                except (TypeError, ValueError):
+                    _app_raw_v = 0.0
+                _app_eff_v = (_app_raw_v - _sw_v + 1) if _app_raw_v else 0.0
+            else:
+                try:
+                    _rain_v = float(req.rain_mm)
+                except (TypeError, ValueError):
+                    _rain_v = 0.0
+                _evs_v = [(0.5, 0.3, float(_rain_v))] if _rain_v > 0 else []
+                try:
+                    _app_eff_v = float(req.placement.application_day or 0.0)
+                except (TypeError, ValueError):
+                    _app_eff_v = 0.0
+            try:
+                _pulse_v = float(req.placement.fertigation_pulse_days or 0.0)
+            except (TypeError, ValueError):
+                _pulse_v = 0.0
+            _w_v = _fert_w_mm_v(_evs_v, _app_eff_v, _pulse_v)
+            if _w_v <= 0:
+                out.append({
+                    "field": "placement.fertigation_pulse_days",
+                    "message": (
+                        "Fertirrigação sem água no período de injeção: nenhuma lâmina irriga "
+                        "na janela [dia da aplicação, +pulso] — C₀ = dose ÷ 0 é impossível. "
+                        "Ajuste o dia da aplicação, a duração da injeção ou a série de chuva."
+                    ),
+                })
+    except Exception:
         pass
     return out

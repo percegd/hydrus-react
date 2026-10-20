@@ -16,12 +16,14 @@ from hydrus_core.literature_database import COMMERCIAL_FERTILIZERS
 # Rótulos do dropdown fert_choice do Gradio -> chave do COMMERCIAL_FERTILIZERS.
 # "Dose Direta do Elemento (Personalizado)" = dose elementar direta ("direto").
 FERTILIZER_CHOICES: dict[str, str] = {
-    "Polialita / Polissulfato (11.6% K, 19% S, 12% Ca, 3.6% Mg)": "polialita",
-    "Cloreto de Potássio - KCl (52.4% K)": "kcl",
-    "KCl + Gesso Agrícola (26.2% K, 10% Ca, 8% S)": "kcl_gesso",
+    "Polialita / Polissulfato (11.6% K, 19.2% S, 12.2% Ca, 3.6% Mg)": "polialita",
+    "Cloreto de Potássio - KCl 00-00-60 (49.8% K)": "kcl",
+    "KCl + Gesso Agrícola (24.9% K, 9% Ca, 7.5% S)": "kcl_gesso",
     "Ureia Convencional ou Protegida (45% N)": "ureia",
-    "K-Mag / Sulpomag (18% K, 11% Mg, 22% S)": "kmag",
-    "MAP - Fosfato Monoamônico (22.7% P + 11% N)": "map",
+    "K-Mag / Sulpomag (18.3% K, 10.8% Mg, 22% S)": "kmag",
+    "MAP - Fosfato Monoamônico 11-52-00 (22.7% P + 11% N)": "map",
+    "Superfosfato Simples - SSP 00-18-00 (7.9% P, 16% Ca, 10% S)": "ssp",
+    "Superfosfato Triplo - TSP 00-46-00 (20.1% P, 10% Ca)": "tsp",
     "Sulfato de Amônio (21% N + 24% S)": "sulfato_amonio",
     "Nitrato de Amônio (33% N)": "nitrato_amonio",
     "Dose Direta do Elemento (Personalizado)": "direto",

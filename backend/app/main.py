@@ -303,6 +303,9 @@ def crops() -> list[dict]:
             "h2": c.h2,
             "h3": c.h3,
             "h4": c.h4,
+            # Altura média da cultura [m] (FAO-56 Tab. 12; None = 1,0 m neutro):
+            # usada no Kc dual (Tp = Kcb·ET0, Ep = Ke·ET0, cap. 7).
+            "height_m": (float(c.height_m) if c.height_m is not None else None),
         }
         for k, c in CROP_DATABASE.items()
     ]
@@ -696,9 +699,9 @@ def field_help() -> list[HelpEntry]:
     theta_r, theta_s, alpha, n, ks, bulk_density, disp, domain_depth,
     obs_depths, crop_name, root_depth, kc, fed_h1..h4, dose_tab, kd_tab,
     disp_tab, res_tab, release_type, release_days, placement_mode, z_top,
-    z_bottom, fert_c0, fert_pulse, rain_mm, moisture, total_days, et0,
-    evap, transp, app_day, print_days, window_start, window_end,
-    water_source, water_series, water_upload.
+    z_bottom, fert_c0, fert_pulse, rain_mm, moisture, seasonal_moisture,
+    total_days, et0, evap, transp, app_day, print_days, window_start,
+    window_end, water_source, water_series, water_upload.
     """
     from hydrus_core.field_help import FIELD_HELP
 

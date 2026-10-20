@@ -15,7 +15,7 @@ def test_list_fertilizers_has_commercial_and_blends() -> None:
     for expected in ("kcl", "ureia", "map", "polialita", "kmag", "sulfato_amonio", "nitrato_amonio", "kcl_gesso", "direto"):
         assert expected in keys, f"faltando {expected}"
     kcl = next(f for f in body["commercial"] if f["key"] == "kcl")
-    assert kcl["nutrient_pcts"]["K"] == 52.4
+    assert kcl["nutrient_pcts"]["K"] == 49.8
     assert "Cloreto de Potássio" in kcl["label"]
     blend_keys = {b["key"] for b in body["blend_presets"]}
     assert set(BLEND_PRESETS) <= blend_keys
@@ -26,14 +26,14 @@ def test_dose_kcl_matches_gradio_math() -> None:
         r = client.post("/fertilizers/dose", json={"fert_key": "kcl", "gross_dose": 200})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["elemental_doses"]["K"] == 104.8
-    assert body["nutrient_pcts"]["K"] == 52.4
+    assert body["elemental_doses"]["K"] == 99.6
+    assert body["nutrient_pcts"]["K"] == 49.8
 
 
 def test_dose_single_nutrient_message_matches_gradio() -> None:
     dose, msg = calculate_effective_dose("kcl", 200, "K")
-    assert dose == 104.8 or abs(dose - 104.8) < 1e-9
-    assert "200 kg/ha" in msg and "104.8 kg/ha de K" in msg
+    assert dose == 99.6 or abs(dose - 99.6) < 1e-9
+    assert "200 kg/ha" in msg and "99.6 kg/ha de K" in msg
     with TestClient(app) as client:
         r = client.post("/fertilizers/dose", json={"fert_key": "kcl", "gross_dose": 200, "nutrient_symbol": "K"})
     assert r.status_code == 200, r.text

@@ -20,6 +20,9 @@ class PlacementInput(BaseModel):
     mode: str = Field(default="surface", examples=["surface"])
     z_top_cm: float = Field(default=0.0, ge=0)
     z_bottom_cm: float = Field(default=2.0, ge=0)
+    # LEGADO/compat: C0 agora é calculado por nutriente (dose ÷ lâmina no
+    # período de injeção); este campo é ignorado no cálculo e mantido no
+    # schema por compatibilidade com payloads antigos.
     fertigation_c0_mg_l: float = Field(default=20.0, ge=0)
     fertigation_pulse_days: float = Field(default=0.0, ge=0)
     application_day: float = Field(default=0.0, ge=0)
@@ -144,9 +147,17 @@ class SimulateRequest(BaseModel):
         default=None, description="Chuva diária em mm; se informada, define total_days"
     )
     initial_moisture_pct: float = Field(default=80.0, ge=0, le=100)
+    # Umidade inicial no modo série [% do intervalo θr→CC]; default 100%
+    # (perfil na capacidade de campo — prática usual sem medição).
+    # No modo Lâmina vale initial_moisture_pct.
+    seasonal_initial_moisture_pct: float = Field(default=100.0, ge=0, le=100)
+    # Dia do plantio na série (dia do ano, 1-based); None = dia da aplicação
+    # se > 0, senão dia 1. Só vale no modo série (ignorado na Lâmina).
+    planting_day: Optional[int] = Field(default=None)
     et0_mm_day: float = Field(default=4.0, ge=0)
     et0_series: Optional[list[float]] = Field(default=None, description="ET0 diária em mm")
-    # ET avançada (Gradio adv_et_toggle): 0 = derivar de ET0 (E = ET0 − T, T = ET0·Kc).
+    # ET avançada (Gradio adv_et_toggle): 0 = derivar de ET0 (Kc dual FAO-56:
+    # Tp = Kcb·ET0, Ep = Ke·ET0).
     evap_mm_day: float = Field(default=0.0, ge=0)
     transp_mm_day: float = Field(default=0.0, ge=0)
     placement: PlacementInput = Field(default_factory=PlacementInput)
@@ -192,6 +203,17 @@ class SoluteBalance(BaseModel):
     dose_input_kg_ha: float = 0.0
     is_fertigation: bool = False
     capsule_pct: float = 0.0
+    # Contabilidade sobre dose+residual (valores do solver; % sobre entradas).
+    input_kg_ha: float = 0.0
+    residual_kg_ha: float = 0.0
+    retained_kg_ha: float = 0.0
+    below_kg_ha: float = 0.0
+    bottom_kg_ha: float = 0.0
+    uptaken_kg_ha: float = 0.0
+    capsule_kg_ha: float = 0.0
+    uptake_cap_kg_ha: Optional[float] = None
+    uptake_capped: bool = False
+    fertigation_c0_mg_l: Optional[float] = None
 
 
 class WaterBalance(BaseModel):

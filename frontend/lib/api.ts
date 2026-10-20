@@ -1,5 +1,5 @@
 export type Soil = { key: string; name: string };
-export type Crop = { key: string; name: string; root_depth_cm: number; kc: number; h1: number; h2: number; h3: number; h4: number };
+export type Crop = { key: string; name: string; root_depth_cm: number; kc: number; h1: number; h2: number; h3: number; h4: number; height_m: number | null };
 export type SoluteBalance = {
   symbol: string;
   name: string;
@@ -12,6 +12,16 @@ export type SoluteBalance = {
   dose_input_kg_ha?: number;
   is_fertigation?: boolean;
   capsule_pct?: number;
+  input_kg_ha?: number;
+  residual_kg_ha?: number;
+  retained_kg_ha?: number;
+  below_kg_ha?: number;
+  bottom_kg_ha?: number;
+  uptaken_kg_ha?: number;
+  capsule_kg_ha?: number;
+  uptake_cap_kg_ha?: number | null;
+  uptake_capped?: boolean;
+  fertigation_c0_mg_l?: number | null;
 };
 export type WaterBalance = {
   applied_mm: number;

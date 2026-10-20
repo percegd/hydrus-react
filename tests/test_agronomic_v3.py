@@ -91,7 +91,7 @@ def test_d_sim_params_fertilizer():
     assert abs(float(p["gross_dose"]) - 30.0) < 1e-9
 
     req2 = _col_req(
-        solutes=[SoluteInput(symbol="K", name="Potássio", dose_kg_ha=104.8, kd=0.45)],
+        solutes=[SoluteInput(symbol="K", name="Potássio", dose_kg_ha=99.6, kd=0.45)],
         fertilizer={"fert_key": "kcl", "gross_dose": 200.0},
     )
     results2, soil2, crop2, rd2, tr2, td2 = svc._run_core(req2)
@@ -184,7 +184,7 @@ def test_i_finishing_texts_column():
 
     # (5b) fertilizante comercial do catálogo: mantém Garantia MAPA.
     reqk = _col_req(
-        solutes=[SoluteInput(symbol="K", name="Potássio", dose_kg_ha=104.8, kd=0.45)],
+        solutes=[SoluteInput(symbol="K", name="Potássio", dose_kg_ha=99.6, kd=0.45)],
         fertilizer={"fert_key": "kcl", "gross_dose": 200.0},
     )
     rk, soilk, cropk, rdk, trk, tdk = svc._run_core(reqk)

@@ -1,7 +1,16 @@
 """Paridade numérica: hydrus_core (novo pacote) vs core legado.
 
-Garante que a extração do pacote (renomeação de imports) não alterou
-a física. Requer o checkout legado em HYDRUS_LEGACY_ROOT
+física revisada v4 (Gradio legado): a paridade bit-a-bit com o legado foi
+deliberadamente quebrada pela nova física — Kc dual FAO-56 (Tp=Kcb·ET0,
+Ep=Ke·ET0 em vez de E=ET0−T), teto de absorção pela demanda da cultura,
+% sobre dose+residual e raiz variável no ciclo. Os números abaixo divergem
+de propósito (ex.: K coluna 30d retido 79.8% v4 vs 77.2% legado).
+
+Cobertura de invariantes mantida (novo E legado): fechamento hídrico,
+fechamento de massa por nutriente, soma dos destinos ≈ 100% e faixas
+físicas dos %.
+
+Requer o checkout legado em HYDRUS_LEGACY_ROOT
 (default: ../Hydrus).
 """
 
@@ -57,6 +66,32 @@ def _balances(res):
     return out
 
 
+def _assert_invariants(res, nutrients, label: str) -> None:
+    """Invariantes que valem no novo E no legado (física revisada v4)."""
+    # Fechamento hídrico.
+    assert abs(float(res.water_closure_pct)) < 2.0, f"{label}: water_closure={res.water_closure_pct}"
+    assert res.q_bottom_cum_cm >= 0.0, f"{label}: drenagem negativa"
+    for n in nutrients:
+        sym = n["symbol"]
+        d = res.nutrient_results[sym]
+        # Fechamento de massa por nutriente.
+        assert abs(float(d.get("mass_closure_pct", 0.0) or 0.0)) < 1.0, (
+            f"{label} {sym}: mass_closure={d.get('mass_closure_pct')}"
+        )
+        # Soma dos destinos fecha 100% (±1): retido + abaixo + fundo + absorvido + cápsula.
+        below = float(d.get("leaching_ratio_pct", 0.0) or 0.0) - float(d.get("leached_bottom_pct", 0.0) or 0.0)
+        total = (
+            float(d.get("retained_root_pct", 0.0) or 0.0) + below
+            + float(d.get("leached_bottom_pct", 0.0) or 0.0)
+            + float(d.get("uptaken_pct", 0.0) or 0.0)
+            + float(d.get("capsule_pct", 0.0) or 0.0)
+        )
+        assert abs(total - 100.0) <= 1.0, f"{label} {sym}: soma={total}"
+        for key in ("retained_root_pct", "leaching_ratio_pct", "uptaken_pct"):
+            v = float(d.get(key, 0.0) or 0.0)
+            assert 0.0 <= v <= 100.0, f"{label} {sym} {key}={v}"
+
+
 CASES = [
     (
         "K coluna 30d",
@@ -84,6 +119,8 @@ CASES = [
 @needs_legacy
 @pytest.mark.parametrize("label,days,events,nutrients", CASES)
 def test_parity_with_legacy(label, days, events, nutrients):
+    # física revisada v4 (Gradio legado): sem paridade bit-a-bit — o legado
+    # roda como referência viva e ambos têm de fechar água e massa.
     import core.crop as legacy_crop
     import core.hydrus_solver as legacy_solver
     import core.soil_physics as legacy_soil
@@ -95,7 +132,5 @@ def test_parity_with_legacy(label, days, events, nutrients):
     )
     new_bal, old_bal = _balances(new_res), _balances(old_res)
     assert set(new_bal) == set(old_bal)
-    for sym in new_bal:
-        for a, b in zip(new_bal[sym], old_bal[sym]):
-            assert abs(a - b) <= 1e-6 * max(1.0, abs(b)), f"{label} {sym}: {a} != {b}"
-    assert abs(float(new_res.q_bottom_cum_cm) - float(old_res.q_bottom_cum_cm)) <= 1e-9
+    _assert_invariants(new_res, nutrients, f"v4 {label}")
+    _assert_invariants(old_res, nutrients, f"legado {label}")

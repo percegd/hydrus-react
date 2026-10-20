@@ -33,6 +33,7 @@ const DEFAULTS = {
   crop: "soja",
   cropName: "Soja",
   cropKc: "1",
+  cropHeight: "1",
   cropH1: "-15",
   cropH2: "-30",
   cropH3: "-450",
@@ -43,6 +44,7 @@ const DEFAULTS = {
   rainMode: "hub" as RainMode,
   rainMm: "60",
   moisture: "80",
+  seasonalMoisture: "100",
   et0: "4.0",
   advEt: false,
   evap: "0",
@@ -159,6 +161,7 @@ export default function Home() {
   const [crop, setCrop] = useState(DEFAULTS.crop);
   const [cropName, setCropName] = useState(DEFAULTS.cropName);
   const [cropKc, setCropKc] = useState(DEFAULTS.cropKc);
+  const [cropHeight, setCropHeight] = useState(DEFAULTS.cropHeight);
   const [cropH1, setCropH1] = useState(DEFAULTS.cropH1);
   const [cropH2, setCropH2] = useState(DEFAULTS.cropH2);
   const [cropH3, setCropH3] = useState(DEFAULTS.cropH3);
@@ -169,6 +172,7 @@ export default function Home() {
   const [rainMode, setRainMode] = useState<RainMode>(DEFAULTS.rainMode);
   const [rainMm, setRainMm] = useState(DEFAULTS.rainMm);
   const [moisture, setMoisture] = useState(DEFAULTS.moisture);
+  const [seasonalMoisture, setSeasonalMoisture] = useState(DEFAULTS.seasonalMoisture);
   const [et0, setEt0] = useState(DEFAULTS.et0);
   const [advEt, setAdvEt] = useState(DEFAULTS.advEt);
   const [evap, setEvap] = useState(DEFAULTS.evap);
@@ -247,6 +251,7 @@ export default function Home() {
     setCropName(c.name);
     setRootDepthCm(String(c.root_depth_cm));
     setCropKc(String(c.kc));
+    setCropHeight(c.height_m !== null && c.height_m !== undefined ? String(c.height_m) : "1");
     setCropH1(String(c.h1));
     setCropH2(String(c.h2));
     setCropH3(String(c.h3));
@@ -540,6 +545,7 @@ export default function Home() {
         total_days,
         rain_mm: num(rainMm, 0), rain_series,
         initial_moisture_pct: num(moisture, 80),
+        seasonal_initial_moisture_pct: num(seasonalMoisture, 100),
         et0_mm_day: num(et0, 0), et0_series,
         evap_mm_day: rainMode === "uniform" && advEt ? num(evap, 0) : 0,
         transp_mm_day: rainMode === "uniform" && advEt && isCom ? num(transp, 0) : 0,
@@ -822,8 +828,6 @@ export default function Home() {
                 setZTop={setZTop}
                 zBottom={zBottom}
                 setZBottom={setZBottom}
-                c0={c0}
-                setC0={setC0}
                 pulse={pulse}
                 setPulse={setPulse}
                 fertContinuous={fertContinuous}
@@ -845,10 +849,13 @@ export default function Home() {
                 setRainMm={setRainMm}
                 moisture={moisture}
                 setMoisture={setMoisture}
+                seasonalMoisture={seasonalMoisture}
+                setSeasonalMoisture={setSeasonalMoisture}
                 et0={et0}
                 setEt0={setEt0}
                 hasCrop={isCom}
                 cropKc={cropKc}
+                cropHeightM={cropHeight}
                 advEt={advEt}
                 setAdvEt={setAdvEt}
                 evap={evap}

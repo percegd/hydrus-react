@@ -213,6 +213,7 @@ def _build_crop(req: SimulateRequest):
       senão "Personalizado" (mesma regra do Gradio).
     """
     from hydrus_core.crop import CROP_DATABASE, CropParameters
+    import dataclasses
 
     key = req.crop_key
     if not key:
@@ -240,6 +241,19 @@ def _build_crop(req: SimulateRequest):
         h2 = _ov(req.h2, base.h2)
         h3 = _ov(req.h3, base.h3)
         h4 = _ov(req.h4, base.h4)
+        # Preserva o ciclo FAO-56 / Kcb / demanda do banco (dataclasses.replace):
+        # sem isso o schedule sazonal e o teto de absorção perderiam a cultura-mãe.
+        return dataclasses.replace(
+            base,
+            name=_name,
+            stage=("Literatura (Feddes/FAO-56)" if _db_match else "Personalizado"),
+            root_depth_cm=root,
+            kc=kc,
+            h1=h1,
+            h2=h2,
+            h3=h3,
+            h4=h4,
+        )
     else:
         root = _ov(req.root_depth_cm, 35.0)
         kc = _ov(req.kc, 1.0)
@@ -259,6 +273,211 @@ def _build_crop(req: SimulateRequest):
     )
 
 
+def _planting_cal_day(req: SimulateRequest) -> float:
+    """Dia do plantio no calendário da série (None = dia da aplicação se > 0, senão dia 1)."""
+    if req.planting_day is not None:
+        try:
+            return float(req.planting_day)
+        except (TypeError, ValueError):
+            pass
+    try:
+        _a = float(req.placement.application_day or 0.0)
+    except (TypeError, ValueError):
+        _a = 0.0
+    return _a if _a > 0 else 1.0
+
+
+def _crop_demands(crop) -> dict:
+    """Demanda nutricional do ciclo (kg/ha por nutriente), via cultura ou mãe."""
+    try:
+        from hydrus_core import crop as _crop_mod
+
+        _cyc = _crop_mod._resolve_cycle(crop)
+    except Exception:
+        _cyc = None
+    for _src in (getattr(crop, "uptake_demand_kg_ha", None),
+                 getattr(_cyc, "uptake_demand_kg_ha", None) if _cyc is not None else None):
+        try:
+            if _src:
+                return {str(_k): float(_v) for _k, _v in dict(_src).items()}
+        except (TypeError, ValueError):
+            continue
+    return {}
+
+
+def _crop_citation(req: SimulateRequest, crop) -> str:
+    """Citação da cultura p/ laudo/passos (raiz crescente quando há ciclo)."""
+    if crop is None:
+        return "Sem cultura: apenas evaporação do solo."
+    _base = (f"Transpiração via Feddes (kc={float(crop.kc):.2f}) + Kc dual FAO-56 "
+             f"(Tp=Kcb·ET0, Ep=Ke·ET0; Allen et al., 1998).")
+    try:
+        from hydrus_core import crop as _crop_mod
+
+        _cyc = _crop_mod._resolve_cycle(crop)
+        _lengths = getattr(_cyc, "stage_lengths_days", None)
+        _per = bool(getattr(_cyc, "perennial", False))
+    except Exception:
+        _cyc, _lengths, _per = None, None, False
+    if _per:
+        _root_txt = f"raiz fixa em {float(crop.root_depth_cm):.0f} cm (cultura perene)"
+    elif _lengths and len(_lengths) == 4:
+        try:
+            _rmin = crop.root_depth_min_cm if crop.root_depth_min_cm is not None else getattr(_cyc, "root_depth_min_cm", None)
+            _rmin = float(_rmin)
+        except (TypeError, ValueError):
+            _rmin = float(crop.root_depth_cm)
+        _root_txt = f"raiz crescente de {_rmin:.0f} a {float(crop.root_depth_cm):.0f} cm no ciclo"
+    else:
+        _root_txt = f"raiz fixa em {float(crop.root_depth_cm):.0f} cm"
+    _cap_txt = (" Absorção limitada pela demanda nutricional do ciclo "
+                "(Raij et al. 1997, Boletim 100 IAC; Embrapa; Malavolta 2006).") if _crop_demands(crop) else ""
+    return f"{_base} {_root_txt}.{_cap_txt}"
+
+
+def _cycle_info(req: SimulateRequest, crop) -> dict:
+    """Plantio/colheita/estádios/Kcb + Kc dual + teto (p/ laudo, Excel e passos)."""
+    out = {"cycle_txt": "", "kc_dual_txt": "", "uptake_cap_txt": "",
+           "planting_day_cal": None, "harvest_day_cal": None}
+    if crop is None:
+        return out
+    out["kc_dual_txt"] = ("Kc dual FAO-56 (Allen et al., 1998, cap. 7): "
+                          "Tp = Kcb·ET0, Ep = Ke·ET0.")
+    _dem = _crop_demands(crop)
+    if _dem:
+        _parts = ", ".join(f"{_k} {float(_v):.0f}" for _k, _v in sorted(_dem.items()))
+        out["uptake_cap_txt"] = (
+            f"Demanda da cultura no ciclo ({_parts} kg/ha de elemento; Raij et al. 1997, "
+            f"Boletim 100 IAC; Embrapa; Malavolta 2006); absorção limitada pela demanda.")
+    if not _is_seasonal(req):
+        return out
+    try:
+        from hydrus_core import crop as _crop_mod
+
+        _cyc = _crop_mod._resolve_cycle(crop)
+    except Exception:
+        return out
+    _plant = _planting_cal_day(req)
+    out["planting_day_cal"] = _plant
+    _lengths = getattr(_cyc, "stage_lengths_days", None)
+    if bool(getattr(_cyc, "perennial", False)):
+        out["cycle_txt"] = (f"Cultura perene ({crop.name}): sem estádios — Kcb constante "
+                            f"e absorção distribuída ao longo do ano.")
+        return out
+    if _lengths and len(_lengths) == 4:
+        _L = float(sum(float(v) for v in _lengths))
+        _harv = _plant + _L - 1
+        out["harvest_day_cal"] = _harv
+        _ki = _cyc.kcb_ini if _cyc.kcb_ini is not None else getattr(crop, "kcb_ini", None)
+        _km = _cyc.kcb_mid if _cyc.kcb_mid is not None else getattr(crop, "kcb_mid", None)
+        _ke = _cyc.kcb_end if _cyc.kcb_end is not None else getattr(crop, "kcb_end", None)
+        try:
+            _kcb_txt = f"Kcb {float(_ki):.2f}/{float(_km):.2f}/{float(_ke):.2f}"
+        except (TypeError, ValueError):
+            _kcb_txt = "Kcb por estádio"
+        out["cycle_txt"] = (
+            f"Ciclo FAO-56 (Allen et al., 1998): plantio dia {_plant:.0f}, colheita dia {_harv:.0f} "
+            f"({_L:.0f} dias; estádios ini/des/med/fim {float(_lengths[0]):.0f}/{float(_lengths[1]):.0f}/"
+            f"{float(_lengths[2]):.0f}/{float(_lengths[3]):.0f} dias; {_kcb_txt}).")
+    else:
+        out["cycle_txt"] = ("Cultura personalizada (sem ciclo FAO-56 no banco): "
+                            "Kcb constante e sem teto de absorção.")
+    return out
+
+
+def _seasonal_schedule(req: SimulateRequest, crop, total_days: float, sw: int):
+    """Agenda do ciclo FAO-56 no modo série (None fora da série/sem cultura).
+
+    planting_day é o dia da série (calendário, 1-based); None = dia da
+    aplicação se > 0, senão dia 1. Convertido p/ relativo à janela como
+    app_day_eff. Se o usuário sobrescreveu kc, o Kcb do schedule é escalado
+    por req.kc/kc_banco (root_depth_cm override = profundidade máxima, já
+    aplicado em _build_crop).
+    """
+    if crop is None:
+        return None
+    from hydrus_core import crop as _crop_mod
+    from hydrus_core.crop import CROP_DATABASE as _CDB
+    from hydrus_core.crop import crop_schedule
+
+    try:
+        _app_cal = float(req.placement.application_day or 0.0)
+    except (TypeError, ValueError):
+        _app_cal = 0.0
+    _plant_cal = _planting_cal_day(req)
+    planting_rel = _plant_cal - float(sw) + 1.0
+    try:
+        sched = crop_schedule(crop, int(float(total_days)), planting_rel)
+    except Exception:
+        return None
+    # Escala Kcb pelo override de kc (req.kc ≠ banco).
+    try:
+        _base = _CDB.get(req.crop_key) if req.crop_key else None
+        _kc_base = float(_base.kc) if _base is not None else None
+    except (TypeError, ValueError):
+        _kc_base = None
+    try:
+        _kc_req = float(req.kc) if req.kc is not None else None
+    except (TypeError, ValueError):
+        _kc_req = None
+    if (
+        _kc_base is not None and _kc_req is not None and _kc_base > 0
+        and abs(_kc_req - _kc_base) > 1e-12
+    ):
+        try:
+            import numpy as _np
+
+            _f = _kc_req / _kc_base
+            _kcb = _np.asarray(sched["kcb"], dtype=float) * _f
+            sched["kcb"] = _kcb
+            try:
+                _cyc = _crop_mod._resolve_cycle(crop)
+                _h = _cyc.height_m if getattr(_cyc, "height_m", None) is not None else getattr(crop, "height_m", None)
+                _h = float(_h) if _h is not None else 1.0
+            except (TypeError, ValueError):
+                _h = 1.0
+            _few = _np.empty_like(_kcb)
+            _kmx = _np.empty_like(_kcb)
+            _kex = _np.empty_like(_kcb)
+            for _i, _kv in enumerate(_kcb):
+                _fw, _km, _ke = _crop_mod._dual_ke_few(float(_kv), _h)
+                _few[_i], _kmx[_i], _kex[_i] = _fw, _km, _ke
+            sched["few"], sched["kc_max"], sched["ke_max"] = _few, _kmx, _kex
+        except Exception:
+            pass
+    return sched
+
+
+def _fertigation_water_mm(water_events, app_day_eff: float, pulse_eff: float) -> float:
+    """Lâmina [mm] dos eventos de água na janela [app, app+pulso].
+
+    Pulso 0 = até o fim do ensaio; eventos parcialmente dentro da janela são
+    prorrateados (mesma convenção temporal do Concentration Flux BC do solver:
+    aplicação no fim do dia app, pulso contado a partir daí).
+    """
+    try:
+        _a = float(app_day_eff)
+    except (TypeError, ValueError):
+        _a = 0.0
+    try:
+        _p = float(pulse_eff)
+    except (TypeError, ValueError):
+        _p = 0.0
+    _end = (_a + _p) if _p > 0 else float("inf")
+    _w = 0.0
+    for _ev in (water_events or []):
+        try:
+            _s, _d, _m = float(_ev[0]), float(_ev[1]), float(_ev[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if _d <= 0 or _m <= 0:
+            continue
+        _ov = max(0.0, min(_s + _d, _end) - max(_s, _a))
+        if _ov > 0:
+            _w += _ov * (_m / _d)
+    return float(_w)
+
+
 def _run_core(req: SimulateRequest):
     """Executa o solver uma vez; retorna (results, soil, crop, root_depth, total_rain, total_days)."""
     soil = _resolve_soil(req)
@@ -272,18 +491,15 @@ def _run_core(req: SimulateRequest):
         _ztop, _zbot = 5.0, 10.0
     elif _pmode == "fertigation":
         _ztop, _zbot = 0.0, 0.0
-    # Paridade Gradio: fertigation_c0/pulse só valem no modo fertigation;
-    # nos demais posicionamentos o solver recebe 0.0 e 0.0 (sem injeção pela água).
+    # Fertigation: C0 é calculado por nutriente (dose ÷ lâmina no período de
+    # injeção) após a montagem dos eventos de água; o campo
+    # fertigation_c0_mg_l do request é ignorado (compat). Pulse só vale aqui;
+    # nos demais posicionamentos o solver recebe 0.0 e 0.0 (sem injeção).
     _is_fert = str(_pmode or "").lower() == "fertigation"
-    try:
-        _c0_req = float(req.placement.fertigation_c0_mg_l)
-    except (TypeError, ValueError):
-        _c0_req = 0.0
     try:
         _pulse_req = float(req.placement.fertigation_pulse_days)
     except (TypeError, ValueError):
         _pulse_req = 0.0
-    _c0_eff = float(_c0_req) if _is_fert else 0.0
     _pulse_eff = float(_pulse_req) if _is_fert else 0.0
     nutrients = [
         {
@@ -298,7 +514,7 @@ def _run_core(req: SimulateRequest):
             "placement_mode": _pmode,
             "z_app_top_cm": _ztop,
             "z_app_bottom_cm": _zbot,
-            "fertigation_c0_mg_l": _c0_eff,
+            "fertigation_c0_mg_l": 0.0,
             "fertigation_pulse_days": _pulse_eff,
         }
         for s in (req.solutes or [])
@@ -341,6 +557,21 @@ def _run_core(req: SimulateRequest):
         water_events = [(0.5, 0.3, float(_rain))] if _rain > 0 else []
         total_rain = float(req.rain_mm)
 
+    # C0 por nutriente a partir da dose: C0_i [mg/L] = dose_i[kg/ha]×100 / W_pulso[mm].
+    # W=0 é barrado na validação (422); aqui fallback defensivo (sem injeção).
+    if _is_fert:
+        _W = _fertigation_water_mm(water_events, app_day_eff, _pulse_eff)
+        for _n in nutrients:
+            try:
+                _nd = float(_n.get("dose_kg_ha", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                _nd = 0.0
+            _n["fertigation_c0_mg_l"] = float(_nd * 100.0 / _W) if _W > 0 else 0.0
+
+    # Ciclo da cultura só no modo série (coluna: Kc dual constante + teto
+    # pelo stage_offset, direto no solver).
+    _sched = _seasonal_schedule(req, crop, total_days, sw) if _is_seasonal(req) else None
+
     cfg = SimulationConfig(
         depth_cm=float(req.depth_cm),
         dz=1.0,
@@ -352,13 +583,14 @@ def _run_core(req: SimulateRequest):
     # nós de observação default do campo do Gradio [10, 20, 30, 50].
     _print_days_eff = _effective_print_days(req, total_days, sw, ew)
     _obs_depths = _effective_obs_depths(req, float(req.depth_cm))
-    # Paridade Gradio: no modo série diária (sazonal) a umidade inicial é
-    # fixa em 20.0% (o campo de umidade prévia só vale no modo Lâmina).
+    # Umidade inicial: no modo série, % do intervalo θr→CC informada em
+    # seasonal_initial_moisture_pct (default 100% = capacidade de campo,
+    # prática usual sem medição — Šimůnek et al. 2008); na Lâmina vale o campo atual.
     _seasonal = _is_seasonal(req)
     try:
-        _init_moist_eff = 20.0 if _seasonal else float(req.initial_moisture_pct)
+        _init_moist_eff = float(req.seasonal_initial_moisture_pct) if _seasonal else float(req.initial_moisture_pct)
     except (TypeError, ValueError):
-        _init_moist_eff = 20.0 if _seasonal else 80.0
+        _init_moist_eff = 100.0 if _seasonal else 80.0
     # ET avançada (Gradio adv_et_toggle, só no modo Lâmina): overrides manuais
     # evap_mm_day ("0 = derivar de ET0") / transp_mm_day ("0 = ET0·Kc").
     # No modo sazonal o Gradio ignora os campos (evap_cm_day=None); aqui igual.
@@ -386,11 +618,18 @@ def _run_core(req: SimulateRequest):
         water_only=water_only,
         evap_cm_day=_evap_arg,
         transpiration_mm_day=_transp_arg,
+        crop_schedule=_sched,
     )
     return results, soil, crop, root_depth, total_rain, total_days
 
 
 def _balances(req: SimulateRequest, results) -> list[SoluteBalance]:
+    def _f(_d: dict, _key: str, _fb: float = 0.0) -> float:
+        try:
+            return float((_d or {}).get(_key, _fb))
+        except (TypeError, ValueError):
+            return float(_fb)
+
     out: list[SoluteBalance] = []
     is_fert = _is_fertigation(req)
     for s in (req.solutes or []):
@@ -405,6 +644,20 @@ def _balances(req: SimulateRequest, results) -> list[SoluteBalance]:
             cap = float(d.get("capsule_pct", 0.0) or 0.0)
         except (TypeError, ValueError):
             cap = 0.0
+        _bottom_kg = _f(d, "leached_bottom_kg_ha", table_dose * bottom / 100.0)
+        _leach_kg = _f(d, "leached_kg_ha", table_dose * leach / 100.0)
+        _cap_kg = _f(d, "capsule_kg_ha", table_dose * cap / 100.0)
+        _up_pct = _f(d, "uptaken_pct")
+        try:
+            _cap_c0 = d.get("fertigation_c0_mg_l", None)
+            _cap_c0 = float(_cap_c0) if _cap_c0 is not None else None
+        except (TypeError, ValueError):
+            _cap_c0 = None
+        try:
+            _up_cap = d.get("uptake_cap_kg_ha", None)
+            _up_cap = float(_up_cap) if _up_cap is not None else None
+        except (TypeError, ValueError):
+            _up_cap = None
         out.append(
             SoluteBalance(
                 symbol=s.symbol,
@@ -413,11 +666,21 @@ def _balances(req: SimulateRequest, results) -> list[SoluteBalance]:
                 retained_root_pct=float(d.get("retained_root_pct", 0.0) or 0.0),
                 below_profile_pct=max(0.0, leach - bottom),
                 bottom_pct=bottom,
-                uptaken_pct=float(d.get("uptaken_pct", 0.0) or 0.0),
+                uptaken_pct=_up_pct,
                 peak_depth_cm=_peak_or_none(d.get("peak_depth_cm")),
                 dose_input_kg_ha=table_dose,
                 is_fertigation=is_fert,
                 capsule_pct=cap,
+                input_kg_ha=_f(d, "input_kg_ha", table_dose),
+                residual_kg_ha=_f(d, "residual_kg_ha"),
+                retained_kg_ha=_f(d, "retained_kg_ha", table_dose * float(d.get("retained_root_pct", 0.0) or 0.0) / 100.0),
+                below_kg_ha=max(0.0, _leach_kg - _bottom_kg),
+                bottom_kg_ha=_bottom_kg,
+                uptaken_kg_ha=_f(d, "uptaken_kg_ha", table_dose * _up_pct / 100.0),
+                capsule_kg_ha=_cap_kg,
+                uptake_cap_kg_ha=_up_cap,
+                uptake_capped=bool(d.get("uptake_capped", False)),
+                fertigation_c0_mg_l=(_cap_c0 if is_fert else None),
             )
         )
     return out
@@ -1105,7 +1368,7 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
                 _dose_note = f"{_gd:.0f} kg/ha de {_nm}"
     except Exception:
         pass
-    return {
+    params = {
         "sim_type": ("seasonal" if is_seasonal else "column"),
         "mode_label": (
             f"Simulação Série Hídrica ({_n_win} dias, janela {_win_txt})"
@@ -1132,10 +1395,7 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
         "kd_citation": "Referência para a textura (ajustável; não calibrado)",
         "dispersivity": float(first.dispersivity_cm) if first is not None else float(req.depth_cm) / 10.0,
         "crop_name": (crop.name if crop else "Perfil de solo nu (sem cultura)"),
-        "crop_citation": (
-            f"Transpiração via Feddes (kc={float(crop.kc):.2f}); raiz fixa em {float(crop.root_depth_cm):.0f} cm."
-            if crop else "Sem cultura: apenas evaporação do solo."
-        ),
+        "crop_citation": _crop_citation(req, crop),
         "root_depth_cm": float(root_depth),
         "h1": float(crop.h1 if crop else 0.0),
         "h2": float(crop.h2 if crop else 0.0),
@@ -1143,8 +1403,8 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
         "h4": float(crop.h4 if crop else 0.0),
         "rain_mm": float(total_rain),
         "total_days": float(total_days),
-        # Paridade Gradio: no sazonal a umidade efetiva é fixa em 20.0%.
-        "initial_moisture_pct": float(20.0 if is_seasonal else req.initial_moisture_pct),
+        # Umidade efetiva: série usa seasonal_initial_moisture_pct (default 100% = CC).
+        "initial_moisture_pct": float(req.seasonal_initial_moisture_pct if is_seasonal else req.initial_moisture_pct),
         "leaching_pct": float(prim.get("leaching_ratio_pct", 0.0) or 0.0),
         "retained_pct": float(prim.get("retained_root_pct", 0.0) or 0.0),
         "leaching_ratio_pct": float(prim.get("leaching_ratio_pct", 0.0) or 0.0),
@@ -1179,6 +1439,16 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
         "analysis_end_day": int(_ew),
         "window_label": _win_txt,
     }
+    # Ciclo da cultura / Kc dual / teto (laudo, Excel e passo a passo).
+    try:
+        _cyc_info = _cycle_info(req, crop)
+    except Exception:
+        _cyc_info = {}
+    for _k in ("cycle_txt", "kc_dual_txt", "uptake_cap_txt"):
+        params[_k] = str((_cyc_info or {}).get(_k, "") or "")
+    for _k in ("planting_day_cal", "harvest_day_cal"):
+        params[_k] = (_cyc_info or {}).get(_k)
+    return params
 
 
 def _seasonal_results_for_excel(req: SimulateRequest, results, soil, crop, root_depth: float,
@@ -1356,6 +1626,20 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
             crop_txt = f"{crop.name}"
     else:
         crop_txt = "Perfil de solo nu (sem cultura)"
+    try:
+        _cyc_rep = _cycle_info(req, crop)
+    except Exception:
+        _cyc_rep = {}
+    _cycle_line = str((_cyc_rep or {}).get("cycle_txt", "") or "")
+    _kc_dual_line = str((_cyc_rep or {}).get("kc_dual_txt", "") or "")
+    _cap_dem_line = str((_cyc_rep or {}).get("uptake_cap_txt", "") or "")
+    _cyc_block = ""
+    if _cycle_line:
+        _cyc_block += f"\n* **Ciclo da cultura:** {_cycle_line}"
+    if _kc_dual_line:
+        _cyc_block += f"\n* **Partição da ET:** {_kc_dual_line}"
+    if _cap_dem_line:
+        _cyc_block += f"\n* **Teto de absorção:** {_cap_dem_line}"
 
     _pm = str((req.placement.mode if req.placement else None) or "surface").lower()
     if _pm == "furrow":
@@ -1372,15 +1656,11 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
         placement_label = f"Profundidade Personalizada ({_ct:.0f} a {_cb:.0f} cm)"
     elif _pm == "fertigation":
         try:
-            _c0 = float(req.placement.fertigation_c0_mg_l or 0.0)
-        except (TypeError, ValueError):
-            _c0 = 0.0
-        try:
             _pu = float(req.placement.fertigation_pulse_days or 0.0)
         except (TypeError, ValueError):
             _pu = 0.0
         _pulse_txt = "contínuo" if _pu <= 0 else f"{_pu:.1f} d"
-        placement_label = f"Fertirrigação Líquida (C₀ = {_c0:.1f} mg/L, pulso = {_pulse_txt})"
+        placement_label = f"Fertirrigação Líquida (C₀ calculado por nutriente = dose ÷ lâmina no período de injeção, pulso = {_pulse_txt})"
     else:
         placement_label = "A lanço / Superfície (0 a 2 cm)"
 
@@ -1389,6 +1669,14 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
     except (TypeError, ValueError):
         _app_raw = 0.0
     _app_cal = int(round(_app_raw)) if _app_raw else 0
+
+    _nr = getattr(results, "nutrient_results", {}) or {}
+
+    def _kgf(_dd: dict, _key: str, _fb: float = 0.0) -> float:
+        try:
+            return float((_dd or {}).get(_key, _fb))
+        except (TypeError, ValueError):
+            return float(_fb)
 
     nutrients_list = [
         {
@@ -1400,29 +1688,30 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
         for s in (req.solutes or [])
     ]
     elemental_dose = float(sum(n["dose_kg_ha"] for n in nutrients_list)) if nutrients_list else 0.0
-    # B) nota de massa injetada em fertirrigação (C₀ × água infiltrada).
+    # Massa injetada via fertirrigação (C0 calculado por nutriente; aplicada ≈ dose).
     _fert_note_txt = ""
     if _is_fertigation(req) and nutrients_list:
-        try:
-            _c0n = float(req.placement.fertigation_c0_mg_l or 0.0)
-        except (TypeError, ValueError):
-            _c0n = 0.0
+        _c0_parts = []
+        for _n in nutrients_list:
+            try:
+                _c0v = float(((_nr.get(_n["symbol"]) or {}).get("fertigation_c0_mg_l", 0.0)) or 0.0)
+            except (TypeError, ValueError):
+                _c0v = 0.0
+            _c0_parts.append(f"{_n['symbol']} C₀ = {_c0v:.1f} mg/L")
         _fert_note_txt = (
             f"\n* **Massa injetada via fertirrigação:** **{elemental_dose:.1f} kg/ha** "
-            f"(C₀ = {_c0n:.1f} mg/L × água infiltrada no pulso; "
-            f"a dose da tabela não é usada neste modo)"
+            f"({'; '.join(_c0_parts)} — C₀ calculado por nutriente = dose ÷ lâmina no período de injeção; "
+            f"a massa injetada real ≈ dose, menos o que escoar)"
         )
     try:
         _root_seas = float(crop.root_depth_cm) if crop is not None else float(prof_depth)
     except (TypeError, ValueError):
         _root_seas = float(prof_depth)
-    _nr = getattr(results, "nutrient_results", {}) or {}
     is_multi_nutr = len(nutrients_list) > 1
 
     if is_multi_nutr:
         _sp_map = {"N": "NO₃⁻", "K": "K⁺", "S": "SO₄²⁻", "Ca": "Ca²⁺", "Mg": "Mg²⁺", "P": "H₂PO₄⁻"}
-        _sp_list = ", ".join(
-            f"{n['symbol']} como {_sp_map.get(n['symbol'], n['symbol'])}" for n in nutrients_list
+        _sp_list = ", ".join(            f"{n['symbol']} como {_sp_map.get(n['symbol'], n['symbol'])}" for n in nutrients_list
         )
         solutes_header_txt = (f"* **Formulação:** **{len(nutrients_list)} solutos** "
                               f"({', '.join(n['symbol'] for n in nutrients_list)}) | "
@@ -1446,10 +1735,25 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
                 _cp = float(_dd.get('capsule_pct', 0.0) or 0.0)
             except (TypeError, ValueError):
                 _cp = 0.0
-            _line = (f"* **{n['symbol']}** — dose {float(n['dose_kg_ha']):.1f} kg/ha | Kd {float(n['kd']):.4f} cm³/g | "
-                    f"retido {_rt:.1f}% | abaixo no perfil {_bw:.1f}% | fundo {_bt:.1f}%")
+            _inp = _kgf(_dd, 'input_kg_ha', float(n['dose_kg_ha']))
+            _res = _kgf(_dd, 'residual_kg_ha')
+            _dose_txt = (f"dose {float(n['dose_kg_ha']):.1f} + residual {_res:.1f} kg/ha"
+                         if _res > 0.005 else f"dose {float(n['dose_kg_ha']):.1f} kg/ha")
+            _line = (f"* **{n['symbol']}** — {_dose_txt} | Kd {float(n['kd']):.4f} cm³/g | "
+                    f"retido {_rt:.1f}% ({_kgf(_dd, 'retained_kg_ha', _inp * _rt / 100.0):.1f} kg/ha) | "
+                    f"abaixo no perfil {_bw:.1f}% | fundo {_bt:.1f}%")
             if _up > 0.05:
-                _line += f" | absorvido {_up:.1f}%"
+                _cap_txt = ""
+                if bool(_dd.get('uptake_capped')):
+                    _cap_txt = " (limitada pela marcha de absorção da cultura em parte do período"
+                    try:
+                        _capv = _dd.get('uptake_cap_kg_ha', None)
+                        if _capv is not None:
+                            _cap_txt += f"; teto no período: {float(_capv):.1f} kg/ha"
+                    except (TypeError, ValueError):
+                        pass
+                    _cap_txt += ")"
+                _line += f" | absorvido {_up:.1f}% ({_kgf(_dd, 'uptaken_kg_ha', _inp * _up / 100.0):.1f} kg/ha){_cap_txt}"
             if _cp > 0.05:
                 _line += f" | no grânulo {_cp:.1f}%"
             return _line
@@ -1461,10 +1765,13 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
         _dd0 = (_nr.get(nutr_sym) or {})
         ret_root_pct = float((_dd0.get("retained_root_pct", 0.0)) or 0.0)
         retained_pct = float(ret_root_pct)
-        retained_kg = float(elemental_dose * retained_pct / 100.0)
+        retained_kg = _kgf(_dd0, "retained_kg_ha", elemental_dose * retained_pct / 100.0)
         leached_pct = float((_dd0.get("leaching_ratio_pct", 0.0)) or 0.0)
         uptaken_pct = float((_dd0.get("uptaken_pct", 0.0)) or 0.0)
-        uptaken_kg = float(elemental_dose * uptaken_pct / 100.0)
+        uptaken_kg = _kgf(_dd0, "uptaken_kg_ha", elemental_dose * uptaken_pct / 100.0)
+        _res0 = _kgf(_dd0, "residual_kg_ha")
+        _dose0_txt = (f"**{elemental_dose:.0f} kg/ha** (dose {float(_n0.get('dose_kg_ha', elemental_dose)):.0f} + residual {_res0:.1f})"
+                      if _res0 > 0.005 else f"**{elemental_dose:.0f} kg/ha**")
         peak_cm = _dd0.get("peak_depth_cm", None)
         try:
             _ret_prof_s = float((_dd0.get("retained_profile_pct", float(getattr(results, "retained_profile_pct", 0.0)))) or 0.0)
@@ -1474,16 +1781,28 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
             except (TypeError, ValueError):
                 _ret_prof_s = 0.0
         ret_deep_pct = max(0.0, _ret_prof_s - ret_root_pct)
+        _ret_prof_kg = _kgf(_dd0, "retained_profile_kg_ha", elemental_dose * _ret_prof_s / 100.0)
+        _ret_deep_kg = max(0.0, _ret_prof_kg - retained_kg)
         if crop is not None and float(getattr(crop, "root_depth_cm", 0.0) or 0.0) < prof_depth and ret_root_pct > 0:
             ret_str = (
-                f"* **Retido na camada avaliada (0–{_root_seas:.0f} cm):** **{ret_root_pct:.1f}%** ({elemental_dose * ret_root_pct / 100.0:.1f} kg/ha)\n"
-                f"  * *Em subsuperfície ({_root_seas:.0f}–{prof_depth:.0f} cm):* **{ret_deep_pct:.1f}%** ({elemental_dose * ret_deep_pct / 100.0:.1f} kg/ha)"
+                f"* **Retido na camada avaliada (0–{_root_seas:.0f} cm):** **{ret_root_pct:.1f}%** ({retained_kg:.1f} kg/ha)\n"
+                f"  * *Em subsuperfície ({_root_seas:.0f}–{prof_depth:.0f} cm):* **{ret_deep_pct:.1f}%** ({_ret_deep_kg:.1f} kg/ha)"
             )
         else:
             ret_str = f"* **Retido no perfil (0–{prof_depth:.0f} cm):** **{retained_pct:.1f}%** ({retained_kg:.1f} kg/ha)"
         solutes_header_txt = (f"* **Nutriente avaliado:** {nutr_display_name} ({nutr_sym}) | "
-                              f"Dose: **{elemental_dose:.0f} kg/ha**")
-        _upt_line_s = (f"\n* **Absorvido (passivo, sem teto nutricional):** **{uptaken_pct:.1f}%** ({uptaken_kg:.1f} kg/ha)"
+                              f"Dose: {_dose0_txt}")
+        _capped_s0 = ""
+        if bool(_dd0.get("uptake_capped")):
+            _capped_s0 = " (limitada pela marcha de absorção da cultura em parte do período"
+            try:
+                _capv0 = _dd0.get("uptake_cap_kg_ha", None)
+                if _capv0 is not None:
+                    _capped_s0 += f"; teto no período: {float(_capv0):.1f} kg/ha"
+            except (TypeError, ValueError):
+                pass
+            _capped_s0 += ")"
+        _upt_line_s = (f"\n* **Absorvido pela cultura (limitado pela demanda):** **{uptaken_pct:.1f}%** ({uptaken_kg:.1f} kg/ha){_capped_s0}"
                        if float(uptaken_pct or 0.0) > 0.05 else "")
         try:
             _bot_s = float(((_nr.get(nutr_sym) or {}).get("leached_bottom_pct", 0.0)) or 0.0)
@@ -1509,11 +1828,13 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
             _cap_s = float(((_nr.get(nutr_sym) or {}).get("capsule_pct", 0.0)) or 0.0)
         except (TypeError, ValueError):
             _cap_s = 0.0
-        _cap_line_s = (f"\n* **Ainda no grânulo (não liberado):** **{_cap_s:.1f}%** ({elemental_dose * _cap_s / 100.0:.1f} kg/ha)"
+        _cap_line_s = (f"\n* **Ainda no grânulo (não liberado):** **{_cap_s:.1f}%** ({_kgf(_dd0, 'capsule_kg_ha', elemental_dose * _cap_s / 100.0):.1f} kg/ha)"
                        if float(_cap_s or 0.0) > 0.05 else "")
+        _below_kg_s = _kgf(_dd0, "leached_kg_ha", elemental_dose * leached_pct / 100.0) - _kgf(_dd0, "leached_bottom_kg_ha", elemental_dose * _bot_s / 100.0)
+        _bot_kg_s = _kgf(_dd0, "leached_bottom_kg_ha", elemental_dose * _bot_s / 100.0)
         solutes_block_txt = (f"{ret_str}\n"
-                             f"* **Abaixo da camada no perfil ({_root_seas:.0f}–{prof_depth:.0f} cm):** **{_below_s:.1f}%** ({elemental_dose * _below_s / 100.0:.1f} kg/ha)\n"
-                             f"* **Atravessou o fundo ({prof_depth:.0f} cm):** **{_bot_s:.1f}%** ({elemental_dose * _bot_s / 100.0:.1f} kg/ha)"
+                             f"* **Abaixo da camada no perfil ({_root_seas:.0f}–{prof_depth:.0f} cm):** **{_below_s:.1f}%** ({max(0.0, _below_kg_s):.1f} kg/ha)\n"
+                             f"* **Atravessou o fundo ({prof_depth:.0f} cm):** **{_bot_s:.1f}%** ({_bot_kg_s:.1f} kg/ha)"
                              f"{_upt_line_s}{_cap_line_s}\n"
                              f"* **Profundidade do pico máximo:** **{_peak_txt}**")
 
@@ -1534,15 +1855,15 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
         "\n\n> ℹ️ **Escopo e limites:** cada soluto representa uma **espécie química fixa** "
         "(N como NO₃⁻, K como K⁺, S como SO₄²⁻); o modelo **não simula transformações químicas**. "
         "Kd de **referência bibliográfica** para a textura do solo, ajustáveis — **não calibrados** "
-        "para este talhão. Absorção **passiva, sem teto nutricional**. Uso recomendado: "
-        "**comparação entre manejos/cenários**, não previsão garantida."
+        "para este talhão. Absorção **pela cultura (limitada pela demanda nutricional do ciclo)**. "
+        "Uso recomendado: **comparação entre manejos/cenários**, não previsão garantida."
     )
     report = f"""### Laudo de Simulação — Série Hídrica ({_n_win} dias, janela {_win_txt})
 
 #### 1. Cenário Hídrico
 * **Fonte da série:** {source_label}
 * **Precipitação no período:** **{float(total_rain):.1f} mm**
-* **Solo:** {soil.name} | **Cultura:** {crop_txt}
+* **Solo:** {soil.name} | **Cultura:** {crop_txt}{_cyc_block}
 {solutes_header_txt}{_fert_note_txt}
 * **Domínio do perfil:** **0 a {prof_depth:.0f} cm**
 
@@ -1666,12 +1987,20 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
     )
     if _is_fertigation(req):
         try:
-            _c0r = float(req.placement.fertigation_c0_mg_l or 0.0)
-        except (TypeError, ValueError):
-            _c0r = 0.0
+            _nr_rep_c0 = getattr(results, "nutrient_results", {}) or {}
+            _c0_parts_r = []
+            for _s in (req.solutes or []):
+                try:
+                    _c0v_r = float(((_nr_rep_c0.get(str(_s.symbol)) or {}).get("fertigation_c0_mg_l", 0.0)) or 0.0)
+                except (TypeError, ValueError):
+                    _c0v_r = 0.0
+                _c0_parts_r.append(f"{_s.symbol} C₀ = {_c0v_r:.1f} mg/L")
+            _c0_txt_r = "; ".join(_c0_parts_r) if _c0_parts_r else "C₀ calculado por nutriente"
+        except Exception:
+            _c0_txt_r = "C₀ calculado por nutriente"
         _fert_line = (f"\n* **Massa injetada via fertirrigação:** **{dose_total:.1f} kg/ha** "
-                      f"(C₀ = {_c0r:.1f} mg/L × água infiltrada no pulso; "
-                      f"a dose da tabela não é usada neste modo)")
+                      f"({_c0_txt_r} = dose ÷ lâmina no período de injeção; "
+                      f"a massa injetada real ≈ dose, menos o que escoar)")
         # Insere após a linha de Regime Hídrico quando presente.
         if "Regime Hídrico:" in _rep:
             _lines = _rep.splitlines()
@@ -1680,7 +2009,7 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
             for _ln in _lines:
                 _out_l.append(_ln)
                 if (not _done) and _ln.startswith("* **Regime Hídrico:"):
-                    _out_l.append(f"* **Massa injetada via fertirrigação:** **{dose_total:.1f} kg/ha** (C₀ = {_c0r:.1f} mg/L × água infiltrada no pulso; a dose da tabela não é usada neste modo)")
+                    _out_l.append(f"* **Massa injetada via fertirrigação:** **{dose_total:.1f} kg/ha** ({_c0_txt_r} = dose ÷ lâmina no período de injeção; a massa injetada real ≈ dose, menos o que escoar)")
                     _done = True
             _rep = "\n".join(_out_l)
         else:

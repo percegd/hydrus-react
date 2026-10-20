@@ -23,7 +23,8 @@ def test_gradio_parity_numbers_piracicaba_medio() -> None:
         depth_cm=200.0,
         rain_series=list(rain),
         et0_series=list(et0),
-        initial_moisture_pct=80.0,  # ignorado no sazonal (Gradio fixa 20.0)
+        initial_moisture_pct=80.0,  # só vale na Lâmina; na série vale seasonal_initial_moisture_pct
+        seasonal_initial_moisture_pct=100.0,  # física revisada v4 (Gradio legado fixava 20%): CC, sem ΔS artificial
         analysis_start_day=1,
         analysis_end_day=365,
         print_days=[55.0, 128.0, 237.0, 365.0],
@@ -31,7 +32,7 @@ def test_gradio_parity_numbers_piracicaba_medio() -> None:
             mode="surface",
             z_top_cm=0.0,
             z_bottom_cm=2.0,
-            fertigation_c0_mg_l=20.0,  # ignorado fora de fertigation (paridade Gradio)
+            fertigation_c0_mg_l=20.0,  # ignorado fora de fertigation (campo legado, mantido por compat)
             fertigation_pulse_days=7.0,
             application_day=30.0,
         ),
@@ -43,7 +44,10 @@ def test_gradio_parity_numbers_piracicaba_medio() -> None:
 
     resp = run_simulation(req, with_plot=False)
 
-    assert abs(float(resp.drainage_mm) - 288.2) <= 0.5, resp.drainage_mm
+    # física revisada v4 (Gradio legado): com o perfil partindo da capacidade de
+    # campo (100%, sem o início seco de 20% do Gradio), a drenagem sobe de 288.2
+    # para ~458.5 mm; a partição dos solutos (% sobre dose+residual) não muda.
+    assert abs(float(resp.drainage_mm) - 458.5) <= 0.5, resp.drainage_mm
     by_sym = {s.symbol: s for s in resp.solutes}
     assert abs(float(by_sym["N"].retained_root_pct) - 86.6) <= 0.5, by_sym["N"]
     assert abs(float(by_sym["K"].retained_root_pct) - 100.0) <= 0.5, by_sym["K"]
