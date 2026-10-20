@@ -284,3 +284,73 @@ def test_laudo_linear_sem_nota_logistica():
     txt = info["crop_start_txt"]
     assert "máx. no período" in txt and "máx. da cultura 40 cm" in txt, txt
     assert "tempo infinito" not in txt, txt
+
+
+def test_preview_cafe_perennial_usa_schedule():
+    from backend.app.main import app
+    with TestClient(app) as client:
+        r = client.post("/crops/preview", json={
+            "soil_key": "latossolo_medio", "crop_key": "cafe",
+            "depth_cm": 100.0, "total_days": 30, "rain_mm": 60.0,
+            "crop_start_mode": "perennial",
+            "solutes": [],
+        })
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["stage_day1"] == "perene", j
+    assert abs(float(j["kcb_day1"]) - 0.90) < 1e-9, j
+    assert j["ke_day1"] is not None, j
+    assert abs(float(j["root_day1_cm"]) - 70.0) < 1e-9, j
+    assert bool(j["active_day1"]) is True, j
+    assert (j["hydrus_equiv"] or {}).get("lRoot") is False, j
+    # teto linear: demanda anual × dias/365 (N 150 × 30/365)
+    exp_n = 150.0 * 30.0 / 365.0
+    assert abs(float(j["remaining_demand_kg_ha"]["N"]) - exp_n) < 1e-6, j
+    assert j["harvest_day_cal"] is None, j
+    assert j["dap_effective"] is None, j
+    assert j["mode"] == "perennial", j
+
+
+def test_preview_cana_perennial():
+    from backend.app.main import app
+    with TestClient(app) as client:
+        r = client.post("/crops/preview", json={
+            "soil_key": "latossolo_medio", "crop_key": "cana_de_acucar",
+            "depth_cm": 100.0, "total_days": 30, "rain_mm": 60.0,
+            "crop_start_mode": "perennial",
+            "solutes": [],
+        })
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["stage_day1"] == "perene", j
+    assert abs(float(j["kcb_day1"]) - 1.20) < 1e-9, j
+    assert j["ke_day1"] is not None, j
+    assert abs(float(j["root_day1_cm"]) - 80.0) < 1e-9, j
+    assert (j["hydrus_equiv"] or {}).get("lRoot") is False, j
+    exp_n = 140.0 * 30.0 / 365.0
+    assert abs(float(j["remaining_demand_kg_ha"]["N"]) - exp_n) < 1e-6, j
+    assert j["harvest_day_cal"] is None, j
+    assert j["dap_effective"] is None, j
+
+
+def test_preview_cana_established_repeat():
+    from backend.app.main import app
+    with TestClient(app) as client:
+        r = client.post("/crops/preview", json={
+            "soil_key": "latossolo_medio", "crop_key": "cana_de_acucar",
+            "depth_cm": 100.0, "total_days": 30, "rain_mm": 60.0,
+            "crop_start_mode": "established", "crop_age_dap": 150.0,
+            "solutes": [],
+        })
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["stage_day1"] == "médio", j
+    assert abs(float(j["kcb_day1"]) - 1.20) < 1e-9, j
+    assert bool(j["active_day1"]) is True, j
+    assert abs(float(j["root_day1_cm"]) - 80.0) < 1e-9, j
+    assert abs(float(j["dap_effective"]) - 150.0) < 1e-9, j
+    assert abs(float(j["harvest_day_cal"]) - 215.0) < 1e-9, j
+    assert (j["hydrus_equiv"] or {}).get("lRoot") is True, j
+    # teto logístico restante (0 < restante < demanda total N 140)
+    rem_n = float(j["remaining_demand_kg_ha"]["N"])
+    assert 0.0 < rem_n < 140.0, j

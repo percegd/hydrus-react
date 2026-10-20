@@ -393,7 +393,7 @@ def crops_preview(req: SimulateRequest) -> dict:
     try:
         if _sit.get("mode") == "established":
             _dap_eff = float(_sit.get("dap") or 0.0)
-        elif _sit.get("has_cycle"):
+        elif _sit.get("mode") != "perennial" and _sit.get("has_cycle"):
             _rel = float(sched.get("_plant_rel", 0.0))
             _dap_eff = max(0.0, -_rel)
     except Exception:

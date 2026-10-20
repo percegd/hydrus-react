@@ -403,8 +403,10 @@ def _schedule_for_request(req, crop, total_days: float, sw: int):
     _mode = _sit["mode"]
     if _mode is None:
         return None
-    if not _sit["has_cycle"]:
+    if not _sit["has_cycle"] and _mode != "perennial":
         # Custom sem ciclo: comportamento atual (Kc cte, sem teto).
+        # Perene (ex. café, sem stage_lengths) usa o MESMO crop_schedule da
+        # simulação: Kcb constante + teto linear (demanda anual × dias/365).
         return None
     try:
         _n = int(_mm.ceil(float(total_days))) + 1
