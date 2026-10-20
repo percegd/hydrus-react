@@ -623,6 +623,7 @@ def generate_column_report(
     evap_mm_day: float = None,
     transp_mm_day: float = None,
     et0_mm_day: float = None,
+    is_fertigation: bool = False,
 ) -> str:
     _bal = _mass_totals(results, fertilizer_dose_kg_ha, nutrient_symbol)
     pct = _bal["pct"]
@@ -705,6 +706,17 @@ def generate_column_report(
     except (TypeError, ValueError):
         _bot_col = 0.0
     _below_col = max(0.0, float(pct or 0.0) - _bot_col)
+    # C) massa ainda no grânulo (não liberada ao fim) por soluto.
+    def _cap_of(_d) -> float:
+        try:
+            return float((_d or {}).get("capsule_pct", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    def _dose_of(_d) -> float:
+        try:
+            return float((_d or {}).get("dose_kg_ha", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
     if _is_multi_c:
         _fundo_col_line = ""
         for _s, _d in _nr_c.items():
@@ -712,9 +724,16 @@ def generate_column_report(
                 _b = float((_d or {}).get("leached_bottom_pct", 0.0) or 0.0)
             except (TypeError, ValueError):
                 _b = 0.0
-            _fundo_col_line += f"\n* **Atravessou o fundo ({_s}):** **{_b:.1f}%** ({float((_d or {}).get('dose_kg_ha', 0.0) or 0.0) * _b / 100.0:.1f} kg/ha)"
+            _fundo_col_line += f"\n* **Atravessou o fundo ({_s}):** **{_b:.1f}%** ({_dose_of(_d) * _b / 100.0:.1f} kg/ha)"
+            _cc = _cap_of(_d)
+            if _cc > 0.05:
+                _fundo_col_line += f"\n* **Ainda no grânulo, não liberado ({_s}):** **{_cc:.1f}%** ({_dose_of(_d) * _cc / 100.0:.1f} kg/ha)"
     else:
         _fundo_col_line = f"\n* **Atravessou o fundo (coluna {column_height_cm:.0f} cm):** **{_bot_col:.1f}%** ({fertilizer_dose_kg_ha * _bot_col / 100.0:.1f} kg/ha)"
+        _cap_col = _cap_of(_prim_c)
+        if _cap_col > 0.05:
+            _fundo_col_line += (f"\n* **Ainda no grânulo (não liberado):** "
+                                f"**{_cap_col:.1f}%** ({fertilizer_dose_kg_ha * _cap_col / 100.0:.1f} kg/ha)")
     _scope_col = f"\n\n{SCOPE_NOTE}"
 
     # Drenagem em mm (+ RO/armazenamento/ET quando existirem — L11)
@@ -775,12 +794,20 @@ def generate_column_report(
     if is_multi:
         _n_sol = len(results.nutrient_results)
         _sol_list = ", ".join(f"{d['name']} ({s})" for s, d in results.nutrient_results.items())
-        solutes_header = (f"* **Formulação Multi-Soluto:** **{_n_sol} solutos independentes** "
-                          f"({_sol_list}) | **Dose Total Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**")
+        if is_fertigation:
+            solutes_header = (f"* **Formulação Multi-Soluto:** **{_n_sol} solutos independentes** "
+                              f"({_sol_list}) | **Dose Total Aplicada (injetada):** **{fertilizer_dose_kg_ha:.1f} kg/ha**")
+        else:
+            solutes_header = (f"* **Formulação Multi-Soluto:** **{_n_sol} solutos independentes** "
+                              f"({_sol_list}) | **Dose Total Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**")
         soluto_ref = "conjunto de solutos"
     else:
-        solutes_header = (f"* **Nutriente / Soluto:** {nutrient_name} ({nutrient_symbol}) | "
-                          f"**Dose Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**")
+        if is_fertigation:
+            solutes_header = (f"* **Nutriente / Soluto:** {nutrient_name} ({nutrient_symbol}) | "
+                              f"**Dose Aplicada (injetada):** **{fertilizer_dose_kg_ha:.1f} kg/ha**")
+        else:
+            solutes_header = (f"* **Nutriente / Soluto:** {nutrient_name} ({nutrient_symbol}) | "
+                              f"**Dose Aplicada:** **{fertilizer_dose_kg_ha:,.0f} kg/ha**")
         soluto_ref = nutrient_name
 
     try:
@@ -808,7 +835,7 @@ def generate_column_report(
 * **Altura Total da Coluna:** **{column_height_cm:.0f} cm** | **Camada de Avaliação:** **0 a {target_depth_cm:.0f} cm**
 * **Solo Utilizado:** {soil.name} (Densidade: {soil.bulk_density:.2f} g/cm³, θs: {soil.theta_s * 100:.1f}%, Ks: {soil.ks:.1f} cm/dia)
 {solutes_header}
-* **Regime Hídrico:** Lâmina de **{rain_mm:.0f} mm** ao longo de **{total_days:.0f} dias** de ensaio
+* **Regime Hídrico:** Lâmina de **{rain_mm:.0f} mm** aplicada no início do ensaio de **{total_days:.0f} dias**
 {_kd_col_line}
 * **Fator de Retardo Teórico ($R$):** **{r_factor:.2f}** *(R calculado = 1 + ρb·Kd/θ; R = 1 indica transporte conservativo; R > 1 indica retenção por adsorção/troca catiônica)*
 {tech_block}

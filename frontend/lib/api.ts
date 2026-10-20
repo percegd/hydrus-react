@@ -9,6 +9,9 @@ export type SoluteBalance = {
   bottom_pct: number;
   uptaken_pct: number;
   peak_depth_cm: number | null;
+  dose_input_kg_ha?: number;
+  is_fertigation?: boolean;
+  capsule_pct?: number;
 };
 export type WaterBalance = {
   applied_mm: number;

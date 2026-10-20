@@ -45,7 +45,7 @@ def column_water_only_report(
         f"α = {float(soil.alpha):.4f} 1/cm, n = {float(soil.n):.3f}, Ks = {float(soil.ks):.1f} cm/dia, "
         f"ρb = {float(soil.bulk_density):.2f} g/cm³)\n\n"
         "#### 2. Condições do Ensaio\n"
-        f"* **Lâmina de Chuva/Irrigação:** **{float(rain_mm):.0f} mm** ao longo de **{t_days:.0f} dias**\n"
+        f"* **Lâmina de Chuva/Irrigação:** **{float(rain_mm):.0f} mm** aplicada no início do ensaio de **{t_days:.0f} dias**\n"
         f"* **Umidade Prévia do Solo:** {float(initial_moisture_pct):.0f}% da capacidade de campo\n"
         f"* **Evaporação do solo (E):** {e_cm * 10:.2f} mm/dia\n"
         f"{transp_line}\n"

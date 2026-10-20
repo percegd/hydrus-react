@@ -158,12 +158,15 @@ export default function Results(props: Props) {
                   </div>
                   <div className="metric-value">{s.retained_root_pct.toFixed(1)}%</div>
                   <div className="metric-label">Retido na camada avaliada (0–{rootDepth.toFixed(0)} cm)</div>
-                  <div className="metric-sub">{(dose * s.retained_root_pct / 100).toFixed(1)} kg/ha de {dose.toFixed(0)} kg/ha aplicados</div>
+                  <div className="metric-sub">{s.is_fertigation ? `${(dose * s.retained_root_pct / 100).toFixed(1)} kg/ha de ${dose.toFixed(1)} kg/ha injetados (fertirrigação)` : `${(dose * s.retained_root_pct / 100).toFixed(1)} kg/ha de ${dose.toFixed(0)} kg/ha aplicados`}</div>
                   <div className="metric-nutr-rows">
                     <div className="metric-nutr-row"><span>Abaixo da camada (no perfil)</span><b>{s.below_profile_pct.toFixed(1)}% · {(dose * s.below_profile_pct / 100).toFixed(1)} kg/ha</b></div>
                     <div className="metric-nutr-row"><span>Atravessou o fundo ({zmax.toFixed(0)} cm)</span><b>{s.bottom_pct.toFixed(1)}% · {(dose * s.bottom_pct / 100).toFixed(1)} kg/ha</b></div>
                     {s.uptaken_pct > 0.05 && (
                       <div className="metric-nutr-row"><span>Absorvido (passivo, sem teto nutricional)</span><b>{s.uptaken_pct.toFixed(1)}% · {(dose * s.uptaken_pct / 100).toFixed(1)} kg/ha</b></div>
+                    )}
+                    {(s.capsule_pct ?? 0) > 0.05 && (
+                      <div className="metric-nutr-row"><span>Ainda no grânulo (não liberado)</span><b>{(s.capsule_pct ?? 0).toFixed(1)}% · {(dose * (s.capsule_pct ?? 0) / 100).toFixed(1)} kg/ha</b></div>
                     )}
                     <div className="metric-nutr-row"><span>Pico no perfil</span><b>{fmtPeak(s.peak_depth_cm)}</b></div>
                     {Number.isFinite(kdNum) && (

@@ -332,4 +332,29 @@ def validate_request(req: SimulateRequest) -> list[dict]:
                     break
     except Exception:
         pass
+    # F1) posicionamento desconhecido (antes caía silenciosamente em superfície).
+    try:
+        _mode_raw = str((req.placement.mode if req.placement else "") or "")
+        if _mode_raw.strip().lower() not in ("surface", "furrow", "custom", "fertigation"):
+            out.append({"field": "placement.mode", "message": f"Posicionamento desconhecido: {_mode_raw}."})
+    except Exception:
+        pass
+    # F2) modo Lâmina (sem rain_series) com dia da aplicação além do ensaio:
+    # nenhum adubo entra no perfil (todos os % viram 0).
+    try:
+        if not req.rain_series and (req.solutes or []) and not (
+            str((req.placement.mode if req.placement else "") or "").strip().lower() == "fertigation"
+        ):
+            _app = float(req.placement.application_day or 0.0)
+            _td = float(req.total_days or 0.0)
+            if _app >= _td:
+                out.append({
+                    "field": "placement.application_day",
+                    "message": (
+                        f"Dia da aplicação ({_app:g}) deve ser menor que a duração do ensaio "
+                        f"({int(_td)} dias); com o valor atual nenhum adubo entra no perfil."
+                    ),
+                })
+    except (TypeError, ValueError):
+        pass
     return out

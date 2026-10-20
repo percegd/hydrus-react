@@ -117,6 +117,11 @@ class KdResponse(BaseModel):
     entries: list[KdEntry]
 
 
+class FertilizerUsed(BaseModel):
+    fert_key: str = Field(examples=["kcl"])
+    gross_dose: float = Field(ge=0, examples=[200.0])
+
+
 class SimulateRequest(BaseModel):
     soil_key: Optional[str] = Field(default="latossolo_medio", examples=["latossolo_medio"])
     custom_soil: Optional[CustomSoilInput] = Field(default=None)
@@ -166,6 +171,9 @@ class SimulateRequest(BaseModel):
     series_source_label: Optional[str] = Field(
         default="Série climática do polo (NASA POWER)"
     )
+    # D) Etapa 1 do passo a passo: adubo comercial que originou as doses
+    # (enviado só quando a tabela não foi editada após o modal).
+    fertilizer: Optional[FertilizerUsed] = Field(default=None)
 
 
 class JobCreated(BaseModel):
@@ -181,6 +189,9 @@ class SoluteBalance(BaseModel):
     bottom_pct: float
     uptaken_pct: float
     peak_depth_cm: Optional[float]
+    dose_input_kg_ha: float = 0.0
+    is_fertigation: bool = False
+    capsule_pct: float = 0.0
 
 
 class WaterBalance(BaseModel):

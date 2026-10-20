@@ -44,6 +44,36 @@ def _is_seasonal(req: SimulateRequest) -> bool:
     return bool(req.rain_series)
 
 
+def _is_fertigation(req: SimulateRequest) -> bool:
+    """True quando o posicionamento é fertirrigação."""
+    try:
+        return str((req.placement.mode if req.placement else None) or "surface").lower() == "fertigation"
+    except Exception:
+        return False
+
+
+def _effective_dose(req: SimulateRequest, results, symbol: str, table_dose: float) -> float:
+    """Dose efetiva p/ exibição e kg/ha.
+
+    Em fertirrigação a massa realmente injetada é C₀ × água infiltrada
+    durante o pulso (o solver ignora a dose da tabela); os % do solver são
+    relativos a essa massa aplicada (nutrient_results[sym]["applied_kg_ha"]).
+    Nos demais modos, a dose da tabela.
+    """
+    if _is_fertigation(req):
+        try:
+            d = (getattr(results, "nutrient_results", {}) or {}).get(symbol) or {}
+            v = float(d.get("applied_kg_ha", table_dose))
+            if v >= 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    try:
+        return float(table_dose)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _default_print_days(total_days: float, seasonal: bool = False) -> list[float]:
     """Marcos de leitura padrão, iguais aos do Gradio (app_gradio.py).
 
@@ -302,8 +332,13 @@ def _run_core(req: SimulateRequest):
         et0_eff = ([max(0.0, float(v or 0.0)) for v in req.et0_series] if req.et0_series else float(req.et0_mm_day))
         app_day_eff = float(req.placement.application_day or 0.0)
         total_days = float(req.total_days)
-        per_day = float(req.rain_mm) / max(total_days, 1.0)
-        water_events = [(float(d) + 0.5, 1.0, per_day) for d in range(int(total_days))]
+        # Paridade Gradio (run_wizard_simulation, ramo is_column): UM único
+        # evento no início (0.5, 0.3, lâmina), não espalhado por dia.
+        try:
+            _rain = float(req.rain_mm)
+        except (TypeError, ValueError):
+            _rain = 0.0
+        water_events = [(0.5, 0.3, float(_rain))] if _rain > 0 else []
         total_rain = float(req.rain_mm)
 
     cfg = SimulationConfig(
@@ -357,20 +392,32 @@ def _run_core(req: SimulateRequest):
 
 def _balances(req: SimulateRequest, results) -> list[SoluteBalance]:
     out: list[SoluteBalance] = []
+    is_fert = _is_fertigation(req)
     for s in (req.solutes or []):
         d = (results.nutrient_results.get(s.symbol) or {})
         leach = float(d.get("leaching_ratio_pct", 0.0) or 0.0)
         bottom = float(d.get("leached_bottom_pct", 0.0) or 0.0)
+        try:
+            table_dose = float(s.dose_kg_ha)
+        except (TypeError, ValueError):
+            table_dose = 0.0
+        try:
+            cap = float(d.get("capsule_pct", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            cap = 0.0
         out.append(
             SoluteBalance(
                 symbol=s.symbol,
                 name=s.name,
-                dose_kg_ha=float(s.dose_kg_ha),
+                dose_kg_ha=_effective_dose(req, results, s.symbol, table_dose),
                 retained_root_pct=float(d.get("retained_root_pct", 0.0) or 0.0),
                 below_profile_pct=max(0.0, leach - bottom),
                 bottom_pct=bottom,
                 uptaken_pct=float(d.get("uptaken_pct", 0.0) or 0.0),
                 peak_depth_cm=_peak_or_none(d.get("peak_depth_cm")),
+                dose_input_kg_ha=table_dose,
+                is_fertigation=is_fert,
+                capsule_pct=cap,
             )
         )
     return out
@@ -962,9 +1009,27 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
     """
     water_only = bool(req.water_only)
     solutes = list(req.solutes or [])
-    dose_total = sum(float(s.dose_kg_ha) for s in solutes)
+    # B) dose efetiva: em fertirrigação, massa injetada (applied_kg_ha).
+    _nr_raw = getattr(results, "nutrient_results", {}) or {}
+    _eff_by_sym: dict[str, float] = {}
+    for s in solutes:
+        try:
+            _td = float(s.dose_kg_ha)
+        except (TypeError, ValueError):
+            _td = 0.0
+        _eff_by_sym[s.symbol] = _effective_dose(req, results, s.symbol, _td)
+    dose_total = float(sum(_eff_by_sym.values()))
     first = solutes[0] if solutes else None
-    nr = getattr(results, "nutrient_results", {}) or {}
+    # Cópia de nutrient_results com dose_kg_ha efetiva (não muta o solver).
+    nr: dict = {}
+    for _sym, _d in _nr_raw.items():
+        try:
+            _cp = dict(_d)
+        except Exception:
+            continue
+        if _sym in _eff_by_sym:
+            _cp["dose_kg_ha"] = float(_eff_by_sym[_sym])
+        nr[_sym] = _cp
     prim = (nr.get(first.symbol, {}) or {}) if first is not None else {}
     z = getattr(results, "z", [0.0])
     try:
@@ -1010,6 +1075,36 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
     rel_type = ((first.release_type if first is not None else None) or "immediate")
     _nutr_name = first.name if first is not None else "Somente Água"
     _nutr_sym = first.symbol if first is not None else "water_only"
+    # D) Etapa 1 do passo a passo: nome/garantia só do catálogo quando o
+    # modal originou as doses; senão "Dose Direta do Elemento" (100%).
+    try:
+        _first_eff = float(_eff_by_sym.get(first.symbol, dose_total)) if first is not None else 0.0
+    except (TypeError, ValueError):
+        _first_eff = float(dose_total)
+    _fert_name, _fert_label, _gross, _dose_note = (
+        "Dose Direta do Elemento", "Dose Direta do Elemento", _first_eff,
+        f"{_first_eff:.1f} kg/ha de {_nutr_name}" if first is not None else "—",
+    )
+    try:
+        _freq = getattr(req, "fertilizer", None)
+        if (
+            _freq is not None and first is not None
+            and not _is_fertigation(req) and not water_only
+        ):
+            from hydrus_core.literature_database import COMMERCIAL_FERTILIZERS as _COMM
+            from .fertilizers import fertilizer_nutrient_pcts as _pcts_fn
+
+            _fk = str(_freq.fert_key or "")
+            _gd = float(_freq.gross_dose or 0.0)
+            _cat = _COMM.get(_fk) if _fk else None
+            _pcts = _pcts_fn(_fk) if _fk else {}
+            _teor = float((_pcts or {}).get(first.symbol, 0.0) or 0.0)
+            if _cat and _teor > 0:
+                _nm = str(_cat.get("name", _fk) or _fk)
+                _fert_name, _fert_label, _gross = _nm, _nm, _gd
+                _dose_note = f"{_gd:.0f} kg/ha de {_nm}"
+    except Exception:
+        pass
     return {
         "sim_type": ("seasonal" if is_seasonal else "column"),
         "mode_label": (
@@ -1021,9 +1116,9 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
             else ("Formulação Multi-Nutriente" if is_multi else _nutr_name)
         ),
         "nutrient_symbol": _nutr_sym,
-        "fertilizer_label": _nutr_name,
-        "fertilizer_name": _nutr_name,
-        "gross_dose": dose_total,
+        "fertilizer_label": _fert_label,
+        "fertilizer_name": _fert_name,
+        "gross_dose": _gross,
         "elemental_dose": dose_total,
         "soil_name": soil.name,
         "soil_citation": f"Solo {soil.name}",
@@ -1060,7 +1155,7 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
         "active_depth_cm": float(_pbot - _ptop) if _pbot > _ptop else 0.0,
         "placement_top_cm": float(_ptop),
         "placement_bottom_cm": float(_pbot),
-        "dose_note": f"{dose_total:.0f} kg/ha de {_nutr_name}",
+        "dose_note": _dose_note,
         "release_type": rel_type,
         "release_days": float((first.release_days if first is not None else None) or 60.0),
         "release_label": (
@@ -1299,12 +1394,24 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
         {
             "symbol": str(s.symbol),
             "name": str(s.name),
-            "dose_kg_ha": float(s.dose_kg_ha),
+            "dose_kg_ha": _effective_dose(req, results, str(s.symbol), float(s.dose_kg_ha)),
             "kd": float(s.kd),
         }
         for s in (req.solutes or [])
     ]
     elemental_dose = float(sum(n["dose_kg_ha"] for n in nutrients_list)) if nutrients_list else 0.0
+    # B) nota de massa injetada em fertirrigação (C₀ × água infiltrada).
+    _fert_note_txt = ""
+    if _is_fertigation(req) and nutrients_list:
+        try:
+            _c0n = float(req.placement.fertigation_c0_mg_l or 0.0)
+        except (TypeError, ValueError):
+            _c0n = 0.0
+        _fert_note_txt = (
+            f"\n* **Massa injetada via fertirrigação:** **{elemental_dose:.1f} kg/ha** "
+            f"(C₀ = {_c0n:.1f} mg/L × água infiltrada no pulso; "
+            f"a dose da tabela não é usada neste modo)"
+        )
     try:
         _root_seas = float(crop.root_depth_cm) if crop is not None else float(prof_depth)
     except (TypeError, ValueError):
@@ -1331,8 +1438,21 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
             except (TypeError, ValueError):
                 _bt = 0.0
             _bw = max(0.0, _lq - _bt)
-            return (f"* **{n['symbol']}** — dose {float(n['dose_kg_ha']):.1f} kg/ha | Kd {float(n['kd']):.4f} cm³/g | "
+            try:
+                _up = float(_dd.get('uptaken_pct', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                _up = 0.0
+            try:
+                _cp = float(_dd.get('capsule_pct', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                _cp = 0.0
+            _line = (f"* **{n['symbol']}** — dose {float(n['dose_kg_ha']):.1f} kg/ha | Kd {float(n['kd']):.4f} cm³/g | "
                     f"retido {_rt:.1f}% | abaixo no perfil {_bw:.1f}% | fundo {_bt:.1f}%")
+            if _up > 0.05:
+                _line += f" | absorvido {_up:.1f}%"
+            if _cp > 0.05:
+                _line += f" | no grânulo {_cp:.1f}%"
+            return _line
         solutes_block_txt = "\n".join(_bloco_soluto(n) for n in nutrients_list)
     else:
         _n0 = nutrients_list[0] if nutrients_list else {"symbol": "", "name": "", "dose_kg_ha": 0.0, "kd": 0.0}
@@ -1385,10 +1505,16 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
                 _peak_txt = 'indefinido'
         except (TypeError, ValueError):
             _peak_txt = 'indefinido'
+        try:
+            _cap_s = float(((_nr.get(nutr_sym) or {}).get("capsule_pct", 0.0)) or 0.0)
+        except (TypeError, ValueError):
+            _cap_s = 0.0
+        _cap_line_s = (f"\n* **Ainda no grânulo (não liberado):** **{_cap_s:.1f}%** ({elemental_dose * _cap_s / 100.0:.1f} kg/ha)"
+                       if float(_cap_s or 0.0) > 0.05 else "")
         solutes_block_txt = (f"{ret_str}\n"
                              f"* **Abaixo da camada no perfil ({_root_seas:.0f}–{prof_depth:.0f} cm):** **{_below_s:.1f}%** ({elemental_dose * _below_s / 100.0:.1f} kg/ha)\n"
                              f"* **Atravessou o fundo ({prof_depth:.0f} cm):** **{_bot_s:.1f}%** ({elemental_dose * _bot_s / 100.0:.1f} kg/ha)"
-                             f"{_upt_line_s}\n"
+                             f"{_upt_line_s}{_cap_line_s}\n"
                              f"* **Profundidade do pico máximo:** **{_peak_txt}**")
 
     try:
@@ -1417,7 +1543,7 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
 * **Fonte da série:** {source_label}
 * **Precipitação no período:** **{float(total_rain):.1f} mm**
 * **Solo:** {soil.name} | **Cultura:** {crop_txt}
-{solutes_header_txt}
+{solutes_header_txt}{_fert_note_txt}
 * **Domínio do perfil:** **0 a {prof_depth:.0f} cm**
 
 #### 2. Balanço de Massa ao Longo de {_n_win} Dias
@@ -1483,7 +1609,14 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
         return f"{base}\n\n---\n\n{step_md}"
 
     first = (req.solutes or [None])[0]
-    dose_total = sum(float(s.dose_kg_ha) for s in (req.solutes or []))
+    # B) dose efetiva em fertirrigação; resultados copiados com dose efetiva.
+    _eff_total = 0.0
+    for s in (req.solutes or []):
+        try:
+            _eff_total += float(_effective_dose(req, results, str(s.symbol), float(s.dose_kg_ha)))
+        except (TypeError, ValueError):
+            continue
+    dose_total = float(_eff_total)
     active_depth = _report_active_depth(req)
     if _is_seasonal(req):
         # Paridade Gradio: laudo sazonal com solutos é o bloco literal do
@@ -1495,8 +1628,28 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
     except Exception:
         prof_depth = float(req.depth_cm)
     storage, runoff, evap_day, transp_day, et0_mean = _report_hydro(req, results, total_days)
-    return generate_column_report(
-        results=results, soil=soil, rain_mm=float(total_rain),
+    # Cópia com doses efetivas p/ o laudo de coluna (não muta o solver).
+    import copy as _copy
+    try:
+        res_rep = _copy.copy(results)
+        _nr_rep = {}
+        for _sym, _d in ((getattr(results, "nutrient_results", {}) or {}).items()):
+            try:
+                _cd = dict(_d)
+            except Exception:
+                continue
+            for s in (req.solutes or []):
+                if str(s.symbol) == str(_sym):
+                    try:
+                        _cd["dose_kg_ha"] = float(_effective_dose(req, results, str(_sym), float(s.dose_kg_ha)))
+                    except (TypeError, ValueError):
+                        pass
+            _nr_rep[_sym] = _cd
+        res_rep.nutrient_results = _nr_rep
+    except Exception:
+        res_rep = results
+    _rep = generate_column_report(
+        results=res_rep, soil=soil, rain_mm=float(total_rain),
         fertilizer_dose_kg_ha=dose_total, target_depth_cm=float(root_depth),
         column_height_cm=float(prof_depth), nutrient_symbol=first.symbol,
         nutrient_name=first.name, kd_used=float(first.kd),
@@ -1509,4 +1662,27 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
         evap_mm_day=float(evap_day),
         transp_mm_day=float(transp_day),
         et0_mm_day=float(et0_mean),
+        is_fertigation=bool(_is_fertigation(req)),
     )
+    if _is_fertigation(req):
+        try:
+            _c0r = float(req.placement.fertigation_c0_mg_l or 0.0)
+        except (TypeError, ValueError):
+            _c0r = 0.0
+        _fert_line = (f"\n* **Massa injetada via fertirrigação:** **{dose_total:.1f} kg/ha** "
+                      f"(C₀ = {_c0r:.1f} mg/L × água infiltrada no pulso; "
+                      f"a dose da tabela não é usada neste modo)")
+        # Insere após a linha de Regime Hídrico quando presente.
+        if "Regime Hídrico:" in _rep:
+            _lines = _rep.splitlines()
+            _out_l = []
+            _done = False
+            for _ln in _lines:
+                _out_l.append(_ln)
+                if (not _done) and _ln.startswith("* **Regime Hídrico:"):
+                    _out_l.append(f"* **Massa injetada via fertirrigação:** **{dose_total:.1f} kg/ha** (C₀ = {_c0r:.1f} mg/L × água infiltrada no pulso; a dose da tabela não é usada neste modo)")
+                    _done = True
+            _rep = "\n".join(_out_l)
+        else:
+            _rep = f"{_rep}{_fert_line}"
+    return _rep

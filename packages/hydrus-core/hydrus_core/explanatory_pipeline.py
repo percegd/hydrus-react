@@ -476,6 +476,23 @@ $$
         md_content = md_content.replace(placeholder, str(v))
         html_content = html_content.replace(placeholder, str(v))
 
+    # Paridade Gradio (coluna): lâmina aplicada como evento único no início;
+    # no sazonal (série diária) o texto "ao longo de / em N dias" fica como está.
+    try:
+        _is_seas_wo = str(p.get("sim_type", "") or "").lower() == "seasonal"
+    except Exception:
+        _is_seas_wo = False
+    if not _is_seas_wo:
+        md_content = md_content.replace("mm** ao longo de **", "mm** aplicada no início do ensaio de **")
+        # Etapa 3 (valores já substituídos).
+        import re as _re_wo
+        md_content = _re_wo.sub(
+            r"Lâmina = \*\*(.+?) mm\*\* em \*\*(\d+ dias)\*\*",
+            r"Lâmina = **\1 mm** aplicada no início do ensaio de **\2**",
+            md_content,
+        )
+        html_content = html_content.replace("mm</b> em <b>", "mm</b> aplicada no início do ensaio de <b>")
+
     return md_content, html_content
 
 
@@ -748,7 +765,7 @@ def generate_simulation_step_by_step(params: Optional[Dict[str, Any]] = None) ->
         )
         etapa6_origin = (
             f"**Origem & Rastreabilidade:** Todo nutriente transportado além de **{root_depth:.0f} cm** "
-            f"é classificado como perda por lixiviação para esta cultura, conforme calibrado em: {crop_cit}."
+            f"é classificado como perda por lixiviação para esta cultura, conforme calibrado em: {crop_cit.rstrip('.')}."
         )
         mass_lhs = "M_{\\text{rizosfera}}"
         retido_local = "retido na rizosfera"
@@ -759,7 +776,7 @@ def generate_simulation_step_by_step(params: Optional[Dict[str, Any]] = None) ->
         )
         etapa6_html_origin = (
             f"<b>Origem & Rastreabilidade:</b> Todo nutriente transportado além de <b>{root_depth:.0f} cm</b> "
-            f"é classificado como perda por lixiviação para esta cultura, conforme calibrado em: {crop_cit}."
+            f"é classificado como perda por lixiviação para esta cultura, conforme calibrado em: {crop_cit.rstrip('.')}."
         )
     else:
         feddes_detail = "Sem cultura: $S(h, z) = 0$ (sem absorção radicular; apenas evaporação do solo)."
@@ -769,7 +786,7 @@ def generate_simulation_step_by_step(params: Optional[Dict[str, Any]] = None) ->
         )
         etapa6_origin = (
             f"**Origem & Rastreabilidade:** Todo nutriente transportado além de **{root_depth:.0f} cm** "
-            f"é classificado como perda por lixiviação para além desta camada, conforme calibrado em: {crop_cit}."
+            f"é classificado como perda por lixiviação para além desta camada, conforme calibrado em: {crop_cit.rstrip('.')}."
         )
         mass_lhs = "M_{\\text{camada}}"
         retido_local = "retido na camada avaliada"
@@ -779,7 +796,7 @@ def generate_simulation_step_by_step(params: Optional[Dict[str, Any]] = None) ->
         )
         etapa6_html_origin = (
             f"<b>Origem & Rastreabilidade:</b> Todo nutriente transportado além de <b>{root_depth:.0f} cm</b> "
-            f"é classificado como perda por lixiviação para além desta camada, conforme calibrado em: {crop_cit}."
+            f"é classificado como perda por lixiviação para além desta camada, conforme calibrado em: {crop_cit.rstrip('.')}."
         )
 
     # Seção Unificada: Gráficos, Laudo e Download
@@ -833,8 +850,27 @@ def generate_simulation_step_by_step(params: Optional[Dict[str, Any]] = None) ->
     # O gerador de arquivos segue em `core/hydrus_io.py` para reativação futura.
     download_section = ""
 
+    # Etapa 1: dose direta (sem fertilizante comercial) vs. adubo comercial.
+    # Direta: sem conversão por garantia; rótulo da tabela 1 vira elementar.
+    _is_direct_dose = (str(fert_name).strip() == "Dose Direta do Elemento")
+    if _is_direct_dose:
+        _dose_table_label = "Dose Informada (elementar)"
+        _etapa1_origem_md = ("dose elementar informada diretamente na tabela de nutrientes "
+                             "(sem conversão por garantia comercial; teor = 100%).")
+        _etapa1_origem_html = ("dose elementar informada diretamente na tabela de nutrientes "
+                               "(sem conversão por garantia comercial; teor = 100%).")
+    else:
+        _dose_table_label = "Dose Comercial Bruta"
+        _etapa1_origem_md = (f"Estequiometria do adubo comercial com garantia de "
+                             f"**{pct_gross:.1f}% de {nutr_sym}** (Garantia MAPA / Rótulo Comercial).")
+        _etapa1_origem_html = (f"Estequiometria do adubo comercial com garantia de "
+                               f"<b>{pct_gross:.1f}% de {nutr_sym}</b> (Garantia MAPA / Rótulo Comercial).")
+
     # Contexto para substituição de placeholders
     ctx = {
+        "dose_table_label": _dose_table_label,
+        "etapa1_origem_md": _etapa1_origem_md,
+        "etapa1_origem_html": _etapa1_origem_html,
         "graph_section": graph_section,
         "report_section": report_section,
         "download_section": download_section,
@@ -922,7 +958,7 @@ def generate_simulation_step_by_step(params: Optional[Dict[str, Any]] = None) ->
 | Parâmetro de Entrada | Símbolo | Valor Adotado | Unidade | Significado na Simulação |
 | :--- | :---: | :---: | :---: | :--- |
 | **Fertilizante Selecionado** | - | **{{fert_name}}** | - | Fonte de adubo informada |
-| **Dose Comercial Bruta** | $D_{\text{adubo}}$ | **{{gross_dose}}** | kg/ha | Quantidade aplicada na superfície |
+| **{{dose_table_label}}** | $D_{\text{adubo}}$ | **{{gross_dose}}** | kg/ha | Quantidade aplicada na superfície |
 | **Nutriente Avaliado** | - | **{{nutr_name}} ({{nutr_sym}})** | - | Elemento monitorado no solo |
 | **Dose Elementar Líquida** | $M_{\text{líq}}$ | **{{elem_dose}}** | kg/ha | Fração pura ativa do elemento |
 | **Solo Utilizado** | - | **{{soil_name}}** | - | Matriz física do perfil |
@@ -944,7 +980,7 @@ def generate_simulation_step_by_step(params: Optional[Dict[str, Any]] = None) ->
 
 ### Etapa 1: Carga Elementar Inicial na Superfície ($z = 0$)
 > **Parâmetro de Entrada:** Fertilizante comercial = **{{fert_name}}** com Dose Bruta = **{{gross_dose}} kg/ha**  
-> **Origem & Rastreabilidade:** Estequiometria do adubo comercial com garantia de **{{pct_gross}}% de {{nutr_sym}}** (Garantia MAPA / Rótulo Comercial).
+> **Origem & Rastreabilidade:** {{etapa1_origem_md}}
 
 O simulador converte a dose bruta de adubo comercial na carga líquida elementar:
 $$
@@ -1037,7 +1073,7 @@ $$
 v_s = \frac{v}{R} = \frac{{{v_pore}}\text{ cm/dia}}{{{R}}} \approx \mathbf{{{v_solute}}\text{ cm/dia}}
 $$
 
-* **Profundidade final do pico observada nesta simulação:** **$z_{\text{pico}} = {{peak_depth}}\text{ cm}$**
+* **Profundidade final do pico observada nesta simulação:** **$z_{\text{pico}} = {{peak_depth}}$**
 
 ---
 
@@ -1388,7 +1424,7 @@ $$
             <table class="table-custom">
                 <tr><th>Parâmetro</th><th>Símbolo</th><th>Valor Adotado</th><th>Significado</th></tr>
                 <tr><td>Fertilizante</td><td>-</td><td><b>{{fert_name}}</b></td><td>Fonte selecionada pelo usuário</td></tr>
-                <tr><td>Dose Comercial</td><td>$D_{\text{adubo}}$</td><td><b>{{gross_dose}} kg/ha</b></td><td>Dose total aplicada</td></tr>
+                <tr><td>{{dose_table_label}}</td><td>$D_{\text{adubo}}$</td><td><b>{{gross_dose}} kg/ha</b></td><td>Dose total aplicada</td></tr>
                 <tr><td>Nutriente</td><td>-</td><td><b>{{nutr_name}} ({{nutr_sym}})</b></td><td>Elemento simulado</td></tr>
                 <tr><td>Dose Elementar Líquida</td><td>$M_{\text{líq}}$</td><td><b>{{elem_dose}} kg/ha</b> ({{elem_mg_cm2}} mg/cm²)</td><td>Quantidade pura do nutriente</td></tr>
                 <tr><td>Solo</td><td>-</td><td><b>{{soil_name}}</b></td><td>Parâmetros físicos da matriz</td></tr>
@@ -1420,7 +1456,7 @@ $$
             <div class="step-body">
                 <div class="info-box">
                     <b>Parâmetro de Entrada:</b> Fertilizante comercial = <b>{{fert_name}}</b> com Dose Bruta = <b>{{gross_dose}} kg/ha</b><br/>
-                    <b>Origem & Rastreabilidade:</b> Estequiometria do adubo comercial com garantia de <b>{{pct_gross}}% de {{nutr_sym}}</b> (Garantia MAPA / Rótulo Comercial).
+                    <b>Origem & Rastreabilidade:</b> {{etapa1_origem_html}}
                 </div>
                 <p>O simulador converte a dose bruta de adubo comercial na carga líquida elementar:</p>
                 <div class="math-block">
@@ -1522,7 +1558,7 @@ $$
                 </div>
                 <p>Dispersão calculada: $D = \lambda |v| + D_0 = {{disp}} \times {{v_pore}} + {{D0}} = \mathbf{{{D}}\text{ cm}^2/\text{dia}}$.</p>
                 <p>Velocidade aparente do pico: $v_s = v / R = \mathbf{{{v_solute}}\text{ cm/dia}}$.</p>
-                <p><b>Profundidade final do pico na simulação:</b> <b>$z_{\text{pico}} = {{peak_depth}}\text{ cm}$</b>.</p>
+                <p><b>Profundidade final do pico na simulação:</b> <b>$z_{\text{pico}} = {{peak_depth}}$</b>.</p>
             </div>
         </div>
 
