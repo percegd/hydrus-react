@@ -6,6 +6,7 @@ Regras de domínio (as mesmas do app legado):
 """
 
 import base64
+import logging
 import math
 import os
 import tempfile
@@ -454,6 +455,162 @@ def _release_info(req: SimulateRequest) -> tuple[str, float]:
     return rel_type, rel_days
 
 
+def build_screen_images(req: SimulateRequest, results, soil, crop, root_depth: float,
+                        total_rain: float, out_dir: str) -> dict:
+    """Gera as imagens estáticas da tela de Resultados (iguais às do Gradio).
+
+    Grava os PNGs em ``<out_dir>/tela`` com nomes fixos (``perfil.png``,
+    ``btc.png``, ``evolucao.png``, ``galeria_<SIMBOLO_SEGURO>.png``) usando
+    as mesmas chamadas do ``run_wizard_simulation`` do Gradio (caminho
+    sazonal e coluna). Cada gráfico roda num try/except isolado (falha de
+    um não derruba os outros). Retorna ``{"perfil": "perfil" | None, "btc":
+    ..., "evolucao": ..., "galeria": [{"symbol", "name", "key"}]}``.
+    """
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+    try:
+        from .graphs import _safe_sym
+    except Exception:  # fallback sem import circular
+        import re as _re
+
+        def _safe_sym(s: str) -> str:
+            return _re.sub(r"[^A-Za-z0-9_-]", "_", str(s))
+
+    tela_dir = os.path.join(out_dir, "tela")
+    try:
+        os.makedirs(tela_dir, exist_ok=True)
+    except OSError as exc:
+        _log.warning("screen: não foi possível criar diretório tela: %s", exc)
+        return {"perfil": None, "btc": None, "evolucao": None, "galeria": []}
+
+    water_only = bool(getattr(req, "water_only", False))
+    solutes = list(getattr(req, "solutes", None) or [])
+    try:
+        dose_total = float(sum(float(s.dose_kg_ha) for s in solutes))
+    except (TypeError, ValueError):
+        dose_total = 0.0
+    rel_type, rel_days = _release_info(req)
+    first_sym = solutes[0].symbol if solutes else None
+    first_name = solutes[0].name if solutes else "Água"
+    try:
+        x_max = _common_xmax(results)
+    except Exception:
+        x_max = None
+
+    perfil_key: str | None = None
+    btc_key: str | None = None
+    evolucao_key: str | None = None
+    galeria: list[dict] = []
+
+    # 1) Perfil principal — seção "Distribuição em Profundidade C(z)".
+    try:
+        p = os.path.join(tela_dir, "perfil.png")
+        if water_only:
+            from hydrus_core.visualizer import plot_water_profile
+
+            plot_water_profile(
+                results=results,
+                output_path=p,
+                soil=soil,
+                root_depth_cm=(float(crop.root_depth_cm) if crop else None),
+                crop=crop,
+            )
+        else:
+            plot_nutrient_profile(
+                results=results,
+                soil=soil,
+                crop=crop,
+                rain_mm=float(total_rain),
+                fertilizer_kg_ha=float(dose_total),
+                nutrient_symbol=first_sym,
+                nutrient_name=first_name,
+                output_path=p,
+                release_type=rel_type,
+                release_days=float(rel_days),
+                target_depth_cm=float(root_depth),
+            )
+        if os.path.isfile(p):
+            perfil_key = "perfil"
+    except Exception as exc:
+        _log.warning("screen: falha ao gerar perfil.png: %s", exc)
+
+    # 2) Séries temporais — seção "Séries Temporais nos Nós de Observação".
+    try:
+        from hydrus_core.visualizer import plot_breakthrough_curves
+
+        p = os.path.join(tela_dir, "btc.png")
+        plot_breakthrough_curves(
+            results=results,
+            nutrient_symbol=(first_sym if not water_only else None),
+            output_path=p,
+            crop=crop,
+        )
+        if os.path.isfile(p):
+            btc_key = "btc"
+    except Exception as exc:
+        _log.warning("screen: falha ao gerar btc.png: %s", exc)
+
+    # 3) Evolução temporal — seção "Evolução Temporal do Perfil".
+    try:
+        if getattr(results, "print_profiles", None):
+            from hydrus_core.visualizer import plot_profiles_at_days
+
+            p = os.path.join(tela_dir, "evolucao.png")
+            plot_profiles_at_days(
+                results=results,
+                soil=soil,
+                nutrient_symbol=(first_sym if not water_only else None),
+                nutrient_name=(first_name if not water_only else "Água"),
+                output_path=p,
+            )
+            if os.path.isfile(p):
+                evolucao_key = "evolucao"
+    except Exception as exc:
+        _log.warning("screen: falha ao gerar evolucao.png: %s", exc)
+
+    # 4) Galeria "Por Soluto" — só quando há mais de 1 soluto.
+    try:
+        if not water_only and len(solutes) > 1:
+            for s in solutes:
+                try:
+                    sym = str(s.symbol)
+                    name = str(s.name)
+                    key = f"galeria_{_safe_sym(sym)}"
+                    p = os.path.join(tela_dir, f"{key}.png")
+                    plot_nutrient_profile(
+                        results=results,
+                        soil=soil,
+                        crop=crop,
+                        rain_mm=float(total_rain),
+                        fertilizer_kg_ha=float(dose_total),
+                        nutrient_symbol=sym,
+                        nutrient_name=name,
+                        output_path=p,
+                        release_type=rel_type,
+                        release_days=float(rel_days),
+                        target_depth_cm=float(root_depth),
+                        solute_filter=sym,
+                        include_moisture=False,
+                        banner=False,
+                        x_max=x_max,
+                    )
+                    if os.path.isfile(p):
+                        galeria.append({"symbol": sym, "name": name, "key": key})
+                except Exception as exc:
+                    _log.warning("screen: falha na galeria %s: %s", s, exc)
+    except Exception as exc:
+        _log.warning("screen: falha ao gerar galeria por-soluto: %s", exc)
+
+    try:
+        import matplotlib.pyplot as _plt
+
+        _plt.close("all")
+    except Exception:
+        pass
+    return {"perfil": perfil_key, "btc": btc_key, "evolucao": evolucao_key, "galeria": galeria}
+
+
 def build_extra_plots(req: SimulateRequest, results, soil, crop, root_depth: float,
                        total_rain: float, out_dir: str) -> tuple[list[dict], list[dict]]:
     """Gráficos extras (1 PNG por painel) como o Gradio; retorna (encoded, files)."""
@@ -645,22 +802,19 @@ def execute_job_fast(
     _jid = job_id or os.path.basename(job_dir)
     results, soil, crop, root_depth, total_rain, total_days = _run_core(req)
     water_only = bool(req.water_only)
-    if water_only:
-        plots_b64: dict[str, str] = {}
-        plot_b64 = _water_plot_b64(
-            results, soil, crop, root_depth, os.path.join(job_dir, "perfil_agua.png")
-        )
-    else:
-        plots_b64 = _plots_b64(req, results, soil, crop, root_depth, total_rain, job_dir)
-        plot_b64 = plots_b64.get(req.solutes[0].symbol)
-    # Compat: mantém perfil.png como o do primeiro soluto (ou o perfil de água).
+    # Imagens estáticas da tela de Resultados (iguais às do Gradio).
+    try:
+        screen_files = build_screen_images(req, results, soil, crop, root_depth, total_rain, job_dir)
+    except Exception:
+        screen_files = {"perfil": None, "btc": None, "evolucao": None, "galeria": []}
+    # Caminho rápido: sem base64 por-soluto legado (compat: campos vazios).
+    plots_b64: dict[str, str] = {}
+    plot_b64: str | None = None
+    # Compat: mantém perfil.png na raiz do job copiando tela/perfil.png.
     try:
         import shutil
 
-        if water_only:
-            src_png = os.path.join(job_dir, "perfil_agua.png")
-        else:
-            src_png = os.path.join(job_dir, f"perfil_{req.solutes[0].symbol}.png")
+        src_png = os.path.join(job_dir, "tela", "perfil.png")
         if os.path.exists(src_png):
             shutil.copyfile(src_png, os.path.join(job_dir, "perfil.png"))
     except Exception:
@@ -670,6 +824,32 @@ def execute_job_fast(
     except Exception:
         descriptors = []
     extra = _extra_plots_with_urls(descriptors, _jid)
+    from .schemas import ScreenGalleryItem, ScreenImages
+
+    def _screen_url(name: str | None) -> str | None:
+        return f"/jobs/{_jid}/tela/{name}.png" if name else None
+
+    try:
+        _gal = []
+        for g in (screen_files.get("galeria") or []):
+            try:
+                _gal.append(
+                    ScreenGalleryItem(
+                        symbol=str(g.get("symbol")),
+                        name=str(g.get("name")),
+                        url=f"/jobs/{_jid}/tela/{str(g.get('key'))}.png",
+                    )
+                )
+            except Exception:
+                continue
+        screen = ScreenImages(
+            perfil=_screen_url(screen_files.get("perfil")),
+            btc=_screen_url(screen_files.get("btc")),
+            evolucao=_screen_url(screen_files.get("evolucao")),
+            galeria=_gal,
+        )
+    except Exception:
+        screen = None
     resp = SimulateResponse(
         drainage_mm=float(results.q_bottom_cum_cm) * 10.0,
         solutes=_balances(req, results),
@@ -679,6 +859,7 @@ def execute_job_fast(
         profiles=_profiles_payload(results),
         water_only=water_only,
         water_balance=_water_balance(req, results, total_rain, total_days),
+        screen=screen,
     )
     excel_path = build_excel(req, results, soil, crop, root_depth, total_rain, total_days, job_dir)
     report_md = build_report(req, results, soil, crop, root_depth, total_rain, total_days)

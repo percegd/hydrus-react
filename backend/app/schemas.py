@@ -203,6 +203,27 @@ class ExtraPlot(BaseModel):
     url: Optional[str] = None
 
 
+class ScreenGalleryItem(BaseModel):
+    """Item da galeria Por Soluto da tela de resultados (mesmo gráfico do Gradio)."""
+
+    symbol: str
+    name: str
+    url: str
+
+
+class ScreenImages(BaseModel):
+    """Imagens estáticas da tela de Resultados (matplotlib, iguais às do Gradio).
+
+    Cada campo guarda a URL relativa do PNG servido pelo backend
+    (/jobs/{job_id}/tela/{nome}.png); None = o gráfico não foi gerado.
+    """
+
+    perfil: Optional[str] = None
+    btc: Optional[str] = None
+    evolucao: Optional[str] = None
+    galeria: list[ScreenGalleryItem] = Field(default_factory=list)
+
+
 class SimulateResponse(BaseModel):
     drainage_mm: float
     solutes: list[SoluteBalance]
@@ -212,6 +233,7 @@ class SimulateResponse(BaseModel):
     profiles: Optional[dict] = None
     water_only: bool = False
     water_balance: Optional[WaterBalance] = None
+    screen: Optional[ScreenImages] = None
 
 
 class StepsResponse(BaseModel):

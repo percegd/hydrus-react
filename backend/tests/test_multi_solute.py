@@ -33,10 +33,12 @@ def _assert_png_base64(value: str) -> None:
 
 
 def _assert_multi_solute_outputs(response, report: str) -> None:
-    plots = response.plots_png_base64 or {}
-    assert set(plots) == {"N", "K", "S"}
-    for encoded in plots.values():
-        _assert_png_base64(encoded)
+    # Novo comportamento do caminho rápido (execute_job/execute_job_fast):
+    # sem base64 por-soluto legado (plots vazios por compatibilidade); as
+    # imagens da tela de Resultados vão para screen + arquivos em tela/.
+    assert (response.plots_png_base64 or {}) == {}
+    assert response.plot_png_base64 is None
+    assert response.screen is not None and response.screen.perfil is not None
     for solute in SOLUTES:
         assert solute["name"] in report or f"({solute['symbol']})" in report
 

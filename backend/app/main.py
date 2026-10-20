@@ -766,6 +766,41 @@ def job_plot(job_id: str, key: str):
     raise HTTPException(status_code=404, detail="gráfico indisponível")
 
 
+@app.get("/jobs/{job_id}/tela/{name}.png")
+def job_screen_image(job_id: str, name: str):
+    """PNG estático da tela de Resultados (mesmo gráfico do Gradio)."""
+    import os
+    import re as _re
+
+    from fastapi.responses import FileResponse
+
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
+    _cleanup_jobs()
+    snapshot, _ev = _get_job_for_read(job_id)
+    if snapshot is None:
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    if snapshot.get("status") != "done":
+        raise HTTPException(status_code=404, detail="imagem indisponível")
+    if not _re.fullmatch(r"[A-Za-z0-9_\-]+", name or ""):
+        raise HTTPException(status_code=404, detail="imagem desconhecida")
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is not None and job.get("status") == "done":
+            job["t_end"] = time.time()
+    if not _job_still_done(job_id):
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    cand = os.path.join(_jobs_root, job_id, "tela", f"{name}.png")
+    if not os.path.isfile(cand):
+        raise HTTPException(status_code=404, detail="imagem indisponível")
+    return FileResponse(
+        cand,
+        media_type="image/png",
+        filename=f"{name}.png",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
 @app.get("/jobs/{job_id}/steps", response_model=StepsResponse)
 def job_steps(job_id: str) -> StepsResponse:
     """Passo a passo da simulação (memória de cálculo), como o Gradio monta (lazy)."""
