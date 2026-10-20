@@ -243,17 +243,24 @@ def _build_crop(req: SimulateRequest):
         h4 = _ov(req.h4, base.h4)
         # Preserva o ciclo FAO-56 / Kcb / demanda do banco (dataclasses.replace):
         # sem isso o schedule sazonal e o teto de absorção perderiam a cultura-mãe.
-        return dataclasses.replace(
-            base,
-            name=_name,
-            stage=("Literatura (Feddes/FAO-56)" if _db_match else "Personalizado"),
-            root_depth_cm=root,
-            kc=kc,
-            h1=h1,
-            h2=h2,
-            h3=h3,
-            h4=h4,
-        )
+        _kw = dict(name=_name,
+             stage=("Literatura (Feddes/FAO-56)" if _db_match else "Personalizado"),
+             root_depth_cm=root, kc=kc, h1=h1, h2=h2, h3=h3, h4=h4)
+        # Overrides v5 (substituem o banco quando fornecidos).
+        try:
+            _sl = getattr(req, "stage_lengths_days", None)
+            if _sl is not None and len(list(_sl)) == 4:
+                _kw["stage_lengths_days"] = tuple(float(v) for v in _sl)
+        except Exception:
+            pass
+        for _a in ("kcb_ini", "kcb_mid", "kcb_end"):
+            try:
+                _v = getattr(req, _a, None)
+                if _v is not None:
+                    _kw[_a] = float(_v)
+            except (TypeError, ValueError):
+                pass
+        return dataclasses.replace(base, **_kw)
     else:
         root = _ov(req.root_depth_cm, 35.0)
         kc = _ov(req.kc, 1.0)
@@ -285,6 +292,197 @@ def _planting_cal_day(req: SimulateRequest) -> float:
     except (TypeError, ValueError):
         _a = 0.0
     return _a if _a > 0 else 1.0
+
+
+_DAP_DEFAULTS = {"milho": 50.0, "soja": 60.0, "hortalicas": 60.0, "cana_de_acucar": 150.0}
+
+
+def _resolve_crop_situation(req, crop, is_seasonal: bool) -> dict:
+    """Defaults v5 da situação inicial (usado pelo service e pelo preview).
+
+    - modo: café => perennial; demais => série: planting, Lâmina: established.
+    - DAP default: milho 50, soja 60, hortalicas 60, cana 150; entradas de
+      estádio usam o stage_offset_days delas (12/50/15/70).
+    - after_harvest default: cana => repeat, demais => bare.
+    - planting_day default = dia da aplicação (série) ou 1 (coluna).
+    """
+    from hydrus_core import crop as _cm
+    _key = str(getattr(req, "crop_key", "") or "")
+    _cyc = None
+    try:
+        _cyc = _cm._resolve_cycle(crop) if crop is not None else None
+    except Exception:
+        _cyc = None
+    _lengths = getattr(_cyc, "stage_lengths_days", None) if _cyc is not None else None
+    _has_cycle = bool(_lengths and len(_lengths) == 4)
+    _is_cafe = (_key == "cafe") or bool(getattr(_cyc, "perennial", False))
+    _is_cana = ("cana" in _key) or (getattr(_cyc, "cycle_key", "") == "cana_de_acucar")
+    _mode_req = str(getattr(req, "crop_start_mode", None) or "").strip().lower() or None
+    if _mode_req not in ("planting", "established", "perennial", None):
+        _mode_req = None
+    if _mode_req is None:
+        if crop is None:
+            mode = None
+        elif _is_cafe:
+            mode = "perennial"
+        elif is_seasonal:
+            mode = "planting"
+        else:
+            mode = "established"
+    else:
+        mode = _mode_req
+    # Perennial sem dados no banco: aceita usando kc-0.05 (validação não barra).
+    _L = float(sum(float(v) for v in _lengths)) if _has_cycle else 0.0
+    _dap_req = getattr(req, "crop_age_dap", None)
+    try:
+        _dap_req_f = float(_dap_req) if _dap_req is not None else None
+    except (TypeError, ValueError):
+        _dap_req_f = None
+    if mode == "established" and _has_cycle:
+        if _dap_req_f is None:
+            if _key in _DAP_DEFAULTS:
+                dap = float(_DAP_DEFAULTS[_key])
+            else:
+                try:
+                    dap = float(getattr(crop, "stage_offset_days", 0.0) or 0.0) or 0.0
+                except (TypeError, ValueError):
+                    dap = 0.0
+                if not (dap > 0):
+                    dap = min(50.0, _L / 2.0) if _L > 0 else 0.0
+        else:
+            dap = float(_dap_req_f)
+    elif mode == "established":
+        dap = float(_dap_req_f) if _dap_req_f is not None else 0.0
+    else:
+        dap = None
+    _ah_req = str(getattr(req, "after_harvest", None) or "").strip().lower() or None
+    if _ah_req not in ("bare", "repeat", None):
+        _ah_req = None
+    after_harvest = _ah_req or ("repeat" if _is_cana else "bare")
+    _rg = str(getattr(req, "root_growth_model", "linear") or "linear").strip().lower()
+    if _rg not in ("linear", "logistic"):
+        _rg = "linear"
+    try:
+        _meas = float(getattr(req, "measured_root_depth_cm", None)) if getattr(req, "measured_root_depth_cm", None) is not None else None
+    except (TypeError, ValueError):
+        _meas = None
+    try:
+        _sl = getattr(req, "stage_lengths_days", None)
+        _sl_t = tuple(float(v) for v in _sl) if _sl is not None else None
+        if _sl_t is not None and len(_sl_t) != 4:
+            _sl_t = None
+    except (TypeError, ValueError):
+        _sl_t = None
+    _kcb = []
+    for _a in ("kcb_ini", "kcb_mid", "kcb_end"):
+        try:
+            _v = getattr(req, _a, None)
+            _kcb.append(float(_v) if _v is not None else None)
+        except (TypeError, ValueError):
+            _kcb.append(None)
+    _kcb_t = tuple(_kcb) if any(v is not None for v in _kcb) else None
+    # planting_rel (0-based): planting => planting_day - dia_inicial; established => -DAP.
+    try:
+        _plant_cal = float(_planting_cal_day(req))
+    except Exception:
+        _plant_cal = 1.0
+    return {"mode": mode, "dap": dap, "after_harvest": after_harvest,
+            "root_growth": _rg, "measured": _meas, "stage_lengths": _sl_t,
+            "kcb": _kcb_t, "plant_cal": _plant_cal, "cycle_len": _L,
+            "has_cycle": _has_cycle, "is_cafe": _is_cafe, "is_cana": _is_cana}
+
+
+def _schedule_for_request(req, crop, total_days: float, sw: int):
+    """Agenda v5 nos DOIS modos (série e Lâmina); None sem cultura/sem ciclo."""
+    if crop is None:
+        return None
+    from hydrus_core.crop import crop_schedule as _cs
+    import math as _mm
+    _is_seas = _is_seasonal(req)
+    _sit = _resolve_crop_situation(req, crop, _is_seas)
+    _mode = _sit["mode"]
+    if _mode is None:
+        return None
+    if not _sit["has_cycle"]:
+        # Custom sem ciclo: comportamento atual (Kc cte, sem teto).
+        return None
+    try:
+        _n = int(_mm.ceil(float(total_days))) + 1
+    except (TypeError, ValueError):
+        _n = int(float(total_days)) + 1
+    _n = max(_n, 1)
+    if _mode == "established":
+        _dap = float(_sit["dap"] or 0.0)
+        _rel = -_dap
+    elif _mode == "perennial":
+        _rel = 0.0
+    else:
+        try:
+            _plant_cal = float(_sit["plant_cal"])
+        except (TypeError, ValueError):
+            _plant_cal = 1.0
+        if _is_seas:
+            _rel = _plant_cal - float(sw) + 1.0
+        else:
+            # Lâmina: planting_day é dia do ensaio (1-based) — relativo 0-based.
+            try:
+                _pd_req = float(req.planting_day) if req.planting_day is not None else 1.0
+            except (TypeError, ValueError):
+                _pd_req = 1.0
+            _rel = _pd_req - 1.0
+    # Kcb override parcial: completa com o banco.
+    _kcb_arg = None
+    if _sit["kcb"] is not None:
+        try:
+            from hydrus_core import crop as _cmm
+            _cc = _cmm._resolve_cycle(crop)
+            _fb = [(_cc.kcb_ini if _cc.kcb_ini is not None else crop.kcb_ini),
+                   (_cc.kcb_mid if _cc.kcb_mid is not None else crop.kcb_mid),
+                   (_cc.kcb_end if _cc.kcb_end is not None else crop.kcb_end)]
+            _kcb_arg = tuple(float(_sit["kcb"][i]) if _sit["kcb"][i] is not None else float(_fb[i]) for i in range(3))
+        except Exception:
+            _kcb_arg = None
+    try:
+        sched = _cs(crop, _n, _rel, mode=_mode, after_harvest=_sit["after_harvest"],
+                    root_growth=_sit["root_growth"], measured_root_cm=_sit["measured"],
+                    stage_lengths=_sit["stage_lengths"], kcb=_kcb_arg)
+    except Exception:
+        return None
+    # Escala Kcb pelo override de kc (req.kc ≠ banco).
+    try:
+        from hydrus_core.crop import CROP_DATABASE as _CDB
+        from hydrus_core import crop as _cmod
+        _base = _CDB.get(req.crop_key) if req.crop_key else None
+        _kc_base = float(_base.kc) if _base is not None else None
+    except (TypeError, ValueError):
+        _kc_base = None
+    try:
+        _kc_req = float(req.kc) if req.kc is not None else None
+    except (TypeError, ValueError):
+        _kc_req = None
+    if (_kc_base is not None and _kc_req is not None and _kc_base > 0
+            and abs(_kc_req - _kc_base) > 1e-12):
+        try:
+            import numpy as _np
+            _f = _kc_req / _kc_base
+            _kcb_arr = _np.asarray(sched["kcb"], dtype=float) * _f
+            sched["kcb"] = _kcb_arr
+            try:
+                _cyc2 = _cmod._resolve_cycle(crop)
+                _h2 = _cyc2.height_m if getattr(_cyc2, "height_m", None) is not None else getattr(crop, "height_m", None)
+                _h2 = float(_h2) if _h2 is not None else 1.0
+            except (TypeError, ValueError):
+                _h2 = 1.0
+            _few = _np.empty_like(_kcb_arr); _kmx = _np.empty_like(_kcb_arr); _kex = _np.empty_like(_kcb_arr)
+            for _i, _kv in enumerate(_kcb_arr):
+                _fw, _km, _ke = _cmod._dual_ke_few(float(_kv), _h2)
+                _few[_i], _kmx[_i], _kex[_i] = _fw, _km, _ke
+            sched["few"], sched["kc_max"], sched["ke_max"] = _few, _kmx, _kex
+        except Exception:
+            pass
+    sched["_situation"] = _sit
+    sched["_plant_rel"] = float(_rel)
+    return sched
 
 
 def _crop_demands(crop) -> dict:
@@ -331,14 +529,16 @@ def _crop_citation(req: SimulateRequest, crop) -> str:
     else:
         _root_txt = f"raiz fixa em {float(crop.root_depth_cm):.0f} cm"
     _cap_txt = (" Absorção limitada pela demanda nutricional do ciclo "
-                "(Raij et al. 1997, Boletim 100 IAC; Embrapa; Malavolta 2006).") if _crop_demands(crop) else ""
+                "(Raij et al. 1997, Boletim 100 IAC; Embrapa; Malavolta 2006; teto pela demanda restante: "
+                "extensão agronômica, não existe no HYDRUS-1D).") if _crop_demands(crop) else ""
     return f"{_base} {_root_txt}.{_cap_txt}"
 
 
 def _cycle_info(req: SimulateRequest, crop) -> dict:
-    """Plantio/colheita/estádios/Kcb + Kc dual + teto (p/ laudo, Excel e passos)."""
+    """Plantio/colheita/estádios/Kcb + Kc dual + teto + situação inicial + HYDRUS-1D (laudo/Excel/passos)."""
     out = {"cycle_txt": "", "kc_dual_txt": "", "uptake_cap_txt": "",
-           "planting_day_cal": None, "harvest_day_cal": None}
+           "planting_day_cal": None, "harvest_day_cal": None,
+           "crop_start_txt": "", "hydrus_txt": ""}
     if crop is None:
         return out
     out["kc_dual_txt"] = ("Kc dual FAO-56 (Allen et al., 1998, cap. 7): "
@@ -346,32 +546,94 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
     _dem = _crop_demands(crop)
     if _dem:
         _parts = ", ".join(f"{_k} {float(_v):.0f}" for _k, _v in sorted(_dem.items()))
+        _cap_on = bool(getattr(req, "uptake_cap", True))
+        _cap_extra = ("absorção limitada pela demanda (teto pela demanda restante; extensão agronômica, "
+                      "não existe no HYDRUS-1D)") if _cap_on else "teto de absorção DESLIGADO pelo usuário"
         out["uptake_cap_txt"] = (
             f"Demanda da cultura no ciclo ({_parts} kg/ha de elemento; Raij et al. 1997, "
-            f"Boletim 100 IAC; Embrapa; Malavolta 2006); absorção limitada pela demanda.")
-    if not _is_seasonal(req):
-        return out
+            f"Boletim 100 IAC; Embrapa; Malavolta 2006); {_cap_extra}.")
+    else:
+        if getattr(req, "crop_start_mode", None) or getattr(req, "crop_age_dap", None):
+            out["crop_start_txt"] = ("Cultura personalizada (sem ciclo FAO-56 no banco): Kcb constante "
+                                     "e sem teto de absorção; campos de situação ignorados.")
+            return out
     try:
         from hydrus_core import crop as _crop_mod
-
         _cyc = _crop_mod._resolve_cycle(crop)
     except Exception:
         return out
-    _plant = _planting_cal_day(req)
-    out["planting_day_cal"] = _plant
+    _is_seas = _is_seasonal(req)
+    try:
+        _sit = _resolve_crop_situation(req, crop, _is_seas)
+    except Exception:
+        _sit = {"mode": None}
+    _mode = _sit.get("mode")
     _lengths = getattr(_cyc, "stage_lengths_days", None)
-    if bool(getattr(_cyc, "perennial", False)):
+    try:
+        _sl_ov = getattr(req, "stage_lengths_days", None)
+        if _sl_ov is not None and len(list(_sl_ov)) == 4:
+            _lengths = tuple(float(v) for v in _sl_ov)
+    except Exception:
+        pass
+    _has_cyc = bool(_lengths and len(_lengths) == 4)
+    # Situação no início (dia 1) via schedule.
+    _stage1, _kcb1, _root1, _rootmax, _dap_eff, _harv_txt = "", "", "", "", "", ""
+    _hyd_txt = ""
+    try:
+        _sw0 = 1
+        if req.rain_series:
+            _sw0, _ew0 = _effective_window(req, len(req.rain_series))
+            _td0 = float(len(req.rain_series[_sw0 - 1:_ew0]))
+        else:
+            _td0 = float(req.total_days or 0.0)
+        _sched0 = _schedule_for_request(req, crop, max(_td0, 1.0), _sw0)
+        if _sched0 is not None:
+            _stage1 = str((_sched0.get("stage") or [""])[0])
+            _kcb1 = f"{float(_sched0['kcb'][0]):.2f}"
+            _root1 = f"{float(_sched0['root_depth_cm'][0]):.0f}"
+            try:
+                import numpy as _npx
+                _rootmax = f"{float(_npx.max(_npx.asarray(_sched0['root_depth_cm'], dtype=float))):.0f}"
+            except Exception:
+                _rootmax = f"{float(crop.root_depth_cm):.0f}"
+            _he = _sched0.get("hydrus_equiv") or {}
+            def _f(_v):
+                try:
+                    return f"{float(_v):.2f}"
+                except (TypeError, ValueError):
+                    return "—"
+            _hyd_txt = (f"lRoot={bool(_he.get('lRoot'))}, iRootIn={_he.get('iRootIn')}, "
+                        f"tRMin={_f(_he.get('tRMin'))}, tRHarv={_f(_he.get('tRHarv'))}, "
+                        f"xRMin={_f(_he.get('xRMin'))}, xRMax={_f(_he.get('xRMax'))}, "
+                        f"iRFak={_he.get('iRFak')}, tRMed={_f(_he.get('tRMed'))}, "
+                        f"xRMed={_f(_he.get('xRMed'))}, tRPeriod={_f(_he.get('tRPeriod'))}, "
+                        f"r={_f(_he.get('r'))} 1/d; hCritA usado pelo solver; "
+                        f"Feddes h1..h4=({float(crop.h1):.0f},{float(crop.h2):.0f},{float(crop.h3):.0f},{float(crop.h4):.0f}) cm; "
+                        f"cRootMax = ∞ (absorção passiva total); teto de absorção pela demanda: "
+                        f"extensão agronômica, não existe no HYDRUS-1D. "
+                        f"Fonte: Šimůnek et al. (2013) HYDRUS-1D v4.17, eq. 2.21-2.22, Tab. 12.4; FAO-56.")
+    except Exception:
+        pass
+    if _mode == "perennial" or (bool(getattr(_cyc, "perennial", False)) and not _has_cyc):
         out["cycle_txt"] = (f"Cultura perene ({crop.name}): sem estádios — Kcb constante "
                             f"e absorção distribuída ao longo do ano.")
+        out["crop_start_txt"] = (f"modo perene adulta; raiz no dia 1 {_root1 or f'{float(crop.root_depth_cm):.0f}'} cm "
+                                 f"(fixa); Kcb no dia 1 {_kcb1 or '—'}.")
+        out["hydrus_txt"] = _hyd_txt if _hyd_txt else ""
         return out
-    if _lengths and len(_lengths) == 4:
+    if _has_cyc:
         _L = float(sum(float(v) for v in _lengths))
+        _plant = _planting_cal_day(req)
+        out["planting_day_cal"] = _plant
         _harv = _plant + _L - 1
         out["harvest_day_cal"] = _harv
         _ki = _cyc.kcb_ini if _cyc.kcb_ini is not None else getattr(crop, "kcb_ini", None)
         _km = _cyc.kcb_mid if _cyc.kcb_mid is not None else getattr(crop, "kcb_mid", None)
         _ke = _cyc.kcb_end if _cyc.kcb_end is not None else getattr(crop, "kcb_end", None)
         try:
+            if getattr(req, "kcb_ini", None) is not None: _ki = float(req.kcb_ini)
+            if getattr(req, "kcb_mid", None) is not None: _km = float(req.kcb_mid)
+            if getattr(req, "kcb_end", None) is not None: _ke = float(req.kcb_end)
             _kcb_txt = f"Kcb {float(_ki):.2f}/{float(_km):.2f}/{float(_ke):.2f}"
         except (TypeError, ValueError):
             _kcb_txt = "Kcb por estádio"
@@ -379,73 +641,47 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
             f"Ciclo FAO-56 (Allen et al., 1998): plantio dia {_plant:.0f}, colheita dia {_harv:.0f} "
             f"({_L:.0f} dias; estádios ini/des/med/fim {float(_lengths[0]):.0f}/{float(_lengths[1]):.0f}/"
             f"{float(_lengths[2]):.0f}/{float(_lengths[3]):.0f} dias; {_kcb_txt}).")
+        # Bloco v5.
+        if _mode == "established":
+            _dap = _sit.get("dap")
+            try:
+                _dap_s = f"{float(_dap):.0f}"
+            except (TypeError, ValueError):
+                _dap_s = "—"
+            _rg_lbl = "Logístico Verhulst-Pearl (HYDRUS-1D)" if str(_sit.get("root_growth")) == "logistic" else "Linear (FAO-56)"
+            _ah_lbl = "repetir o ciclo" if str(_sit.get("after_harvest")) == "repeat" else "solo nu"
+            out["crop_start_txt"] = (f"estabelecida com {_dap_s} DAP; estádio no dia 1 {_stage1 or '—'} "
+                                     f"(Kcb {_kcb1 or '—'}); raiz no dia 1 {_root1 or '—'} cm (máx {_rootmax or '—'} cm); "
+                                     f"crescimento {_rg_lbl}; após a colheita: {_ah_lbl}.")
+        elif _mode == "planting":
+            try:
+                _pd_s = f"{float(_sit.get('plant_cal')):.0f}"
+            except (TypeError, ValueError):
+                _pd_s = "—"
+            _rg_lbl = "Logístico Verhulst-Pearl (HYDRUS-1D)" if str(_sit.get("root_growth")) == "logistic" else "Linear (FAO-56)"
+            _ah_lbl = "repetir o ciclo" if str(_sit.get("after_harvest")) == "repeat" else "solo nu"
+            out["crop_start_txt"] = (f"plantio durante a simulação (dia {_pd_s}; solo nu antes); "
+                                     f"estádio no dia 1 {_stage1 or '—'} (Kcb {_kcb1 or '—'}); raiz no dia 1 {_root1 or '—'} cm "
+                                     f"(máx {_rootmax or '—'} cm); crescimento {_rg_lbl}; após a colheita: {_ah_lbl}.")
+        elif _mode == "perennial":
+            out["crop_start_txt"] = (f"perene adulta; raiz no dia 1 {_root1 or '—'} cm (fixa); Kcb {_kcb1 or '—'}.")
+        if _hyd_txt:
+            out["hydrus_txt"] = _hyd_txt
     else:
         out["cycle_txt"] = ("Cultura personalizada (sem ciclo FAO-56 no banco): "
                             "Kcb constante e sem teto de absorção.")
+        if _mode:
+            out["crop_start_txt"] = ("Cultura personalizada (sem ciclo FAO-56 no banco): Kcb constante "
+                                     "e sem teto de absorção; campos de situação ignorados.")
     return out
 
 
 def _seasonal_schedule(req: SimulateRequest, crop, total_days: float, sw: int):
-    """Agenda do ciclo FAO-56 no modo série (None fora da série/sem cultura).
-
-    planting_day é o dia da série (calendário, 1-based); None = dia da
-    aplicação se > 0, senão dia 1. Convertido p/ relativo à janela como
-    app_day_eff. Se o usuário sobrescreveu kc, o Kcb do schedule é escalado
-    por req.kc/kc_banco (root_depth_cm override = profundidade máxima, já
-    aplicado em _build_crop).
-    """
-    if crop is None:
-        return None
-    from hydrus_core import crop as _crop_mod
-    from hydrus_core.crop import CROP_DATABASE as _CDB
-    from hydrus_core.crop import crop_schedule
-
+    """Compat: agenda v5 (série). Mantida p/ chamadas antigas; usa _schedule_for_request."""
     try:
-        _app_cal = float(req.placement.application_day or 0.0)
-    except (TypeError, ValueError):
-        _app_cal = 0.0
-    _plant_cal = _planting_cal_day(req)
-    planting_rel = _plant_cal - float(sw) + 1.0
-    try:
-        sched = crop_schedule(crop, int(float(total_days)), planting_rel)
+        return _schedule_for_request(req, crop, total_days, sw)
     except Exception:
         return None
-    # Escala Kcb pelo override de kc (req.kc ≠ banco).
-    try:
-        _base = _CDB.get(req.crop_key) if req.crop_key else None
-        _kc_base = float(_base.kc) if _base is not None else None
-    except (TypeError, ValueError):
-        _kc_base = None
-    try:
-        _kc_req = float(req.kc) if req.kc is not None else None
-    except (TypeError, ValueError):
-        _kc_req = None
-    if (
-        _kc_base is not None and _kc_req is not None and _kc_base > 0
-        and abs(_kc_req - _kc_base) > 1e-12
-    ):
-        try:
-            import numpy as _np
-
-            _f = _kc_req / _kc_base
-            _kcb = _np.asarray(sched["kcb"], dtype=float) * _f
-            sched["kcb"] = _kcb
-            try:
-                _cyc = _crop_mod._resolve_cycle(crop)
-                _h = _cyc.height_m if getattr(_cyc, "height_m", None) is not None else getattr(crop, "height_m", None)
-                _h = float(_h) if _h is not None else 1.0
-            except (TypeError, ValueError):
-                _h = 1.0
-            _few = _np.empty_like(_kcb)
-            _kmx = _np.empty_like(_kcb)
-            _kex = _np.empty_like(_kcb)
-            for _i, _kv in enumerate(_kcb):
-                _fw, _km, _ke = _crop_mod._dual_ke_few(float(_kv), _h)
-                _few[_i], _kmx[_i], _kex[_i] = _fw, _km, _ke
-            sched["few"], sched["kc_max"], sched["ke_max"] = _few, _kmx, _kex
-        except Exception:
-            pass
-    return sched
 
 
 def _fertigation_water_mm(water_events, app_day_eff: float, pulse_eff: float) -> float:
@@ -568,9 +804,9 @@ def _run_core(req: SimulateRequest):
                 _nd = 0.0
             _n["fertigation_c0_mg_l"] = float(_nd * 100.0 / _W) if _W > 0 else 0.0
 
-    # Ciclo da cultura só no modo série (coluna: Kc dual constante + teto
-    # pelo stage_offset, direto no solver).
-    _sched = _seasonal_schedule(req, crop, total_days, sw) if _is_seasonal(req) else None
+    # v5: agenda do ciclo nos DOIS modos (série e Lâmina) quando há ciclo;
+    # sem ciclo (custom) o solver usa Kc dual constante + sem teto (compat).
+    _sched = _schedule_for_request(req, crop, total_days, sw)
 
     cfg = SimulationConfig(
         depth_cm=float(req.depth_cm),
@@ -619,6 +855,7 @@ def _run_core(req: SimulateRequest):
         evap_cm_day=_evap_arg,
         transpiration_mm_day=_transp_arg,
         crop_schedule=_sched,
+        uptake_cap=bool(getattr(req, "uptake_cap", True)),
     )
     return results, soil, crop, root_depth, total_rain, total_days
 
@@ -1444,7 +1681,7 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
         _cyc_info = _cycle_info(req, crop)
     except Exception:
         _cyc_info = {}
-    for _k in ("cycle_txt", "kc_dual_txt", "uptake_cap_txt"):
+    for _k in ("cycle_txt", "kc_dual_txt", "uptake_cap_txt", "crop_start_txt", "hydrus_txt"):
         params[_k] = str((_cyc_info or {}).get(_k, "") or "")
     for _k in ("planting_day_cal", "harvest_day_cal"):
         params[_k] = (_cyc_info or {}).get(_k)
@@ -1633,6 +1870,8 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
     _cycle_line = str((_cyc_rep or {}).get("cycle_txt", "") or "")
     _kc_dual_line = str((_cyc_rep or {}).get("kc_dual_txt", "") or "")
     _cap_dem_line = str((_cyc_rep or {}).get("uptake_cap_txt", "") or "")
+    _start_line = str((_cyc_rep or {}).get("crop_start_txt", "") or "")
+    _hyd_line = str((_cyc_rep or {}).get("hydrus_txt", "") or "")
     _cyc_block = ""
     if _cycle_line:
         _cyc_block += f"\n* **Ciclo da cultura:** {_cycle_line}"
@@ -1640,6 +1879,10 @@ def _seasonal_solute_report(req: SimulateRequest, results, soil, crop, root_dept
         _cyc_block += f"\n* **Partição da ET:** {_kc_dual_line}"
     if _cap_dem_line:
         _cyc_block += f"\n* **Teto de absorção:** {_cap_dem_line}"
+    if _start_line:
+        _cyc_block += f"\n* **Cultura no início:** {_start_line}"
+    if _hyd_line:
+        _cyc_block += f"\n* **Parâmetros equivalentes no HYDRUS-1D:** {_hyd_line}"
 
     _pm = str((req.placement.mode if req.placement else None) or "surface").lower()
     if _pm == "furrow":
@@ -2014,4 +2257,15 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
             _rep = "\n".join(_out_l)
         else:
             _rep = f"{_rep}{_fert_line}"
+    try:
+        _ci = _cycle_info(req, crop)
+    except Exception:
+        _ci = {}
+    _extra = ""
+    if str((_ci or {}).get("crop_start_txt", "") or ""):
+        _extra += f"\n* **Cultura no início:** {str((_ci or {}).get('crop_start_txt', ''))}"
+    if str((_ci or {}).get("hydrus_txt", "") or ""):
+        _extra += f"\n* **Parâmetros equivalentes no HYDRUS-1D:** {str((_ci or {}).get('hydrus_txt', ''))}"
+    if _extra:
+        _rep = f"{_rep}\n{_extra}"
     return _rep

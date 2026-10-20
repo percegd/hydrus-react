@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import HelpIcon from "./HelpIcon";
+import { postCropPreview } from "../lib/api";
 import type { Crop, Soil } from "../lib/api";
 
 type Props = {
@@ -48,6 +49,30 @@ type Props = {
   bulk: string;
   setBulk: (v: string) => void;
   rosettaNote: string;
+  cropStartMode: string;
+  setCropStartMode: (v: string) => void;
+  cropAgeDap: string;
+  setCropAgeDap: (v: string) => void;
+  plantingDay: string;
+  setPlantingDay: (v: string) => void;
+  afterHarvest: string;
+  setAfterHarvest: (v: string) => void;
+  rootGrowth: string;
+  setRootGrowth: (v: string) => void;
+  measuredRoot: string;
+  setMeasuredRoot: (v: string) => void;
+  stageLengths: string[];
+  setStageLengths: (v: string[]) => void;
+  kcbIni: string;
+  setKcbIni: (v: string) => void;
+  kcbMid: string;
+  setKcbMid: (v: string) => void;
+  kcbEnd: string;
+  setKcbEnd: (v: string) => void;
+  uptakeCap: boolean;
+  setUptakeCap: (v: boolean) => void;
+  rainIsSeries: boolean;
+  previewBody: Record<string, unknown>;
 };
 
 function SoilLayersIcon() {
@@ -129,9 +154,47 @@ export default function StepSoil({
   bulk,
   setBulk,
   rosettaNote,
+  cropStartMode,
+  setCropStartMode,
+  cropAgeDap,
+  setCropAgeDap,
+  plantingDay,
+  setPlantingDay,
+  afterHarvest,
+  setAfterHarvest,
+  rootGrowth,
+  setRootGrowth,
+  measuredRoot,
+  setMeasuredRoot,
+  stageLengths,
+  setStageLengths,
+  kcbIni,
+  setKcbIni,
+  kcbMid,
+  setKcbMid,
+  kcbEnd,
+  setKcbEnd,
+  uptakeCap,
+  setUptakeCap,
+  rainIsSeries,
+  previewBody,
 }: Props) {
   const comCultura = cropMode === "com";
   const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [preview, setPreview] = useState<string>("");
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!comCultura) { setPreview(""); return; }
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    previewTimer.current = setTimeout(() => {
+      postCropPreview(previewBody).then((r) => {
+        const w = r.harvest_day_cal != null ? ` · colheita no dia ${Math.round(Number(r.harvest_day_cal))}` : "";
+        setPreview(`Dia 1: estádio ${r.stage_day1} · Kcb ${r.kcb_day1 != null ? Number(r.kcb_day1).toFixed(2) : "—"} · raiz ${r.root_day1_cm != null ? Number(r.root_day1_cm).toFixed(0) : "—"} cm${w}`);
+      }).catch(() => setPreview(""));
+    }, 300);
+    return () => { if (previewTimer.current) clearTimeout(previewTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comCultura, JSON.stringify(previewBody)]);
 
   function parsePct(v: string): number {
     return parseFloat(String(v).replace(",", "."));
@@ -405,6 +468,89 @@ export default function StepSoil({
                 step="any"
               />
             </Field>
+          </div>
+
+          <div style={{ marginTop: 18 }}>
+            <span className="step-section-title-inline">Situação da cultura no início da simulação</span>
+            <div className="choice-cards" role="radiogroup" aria-label="Situação inicial">
+              {(["planting", "established", "perennial"] as const).map((m) => {
+                const isPer = m === "perennial";
+                const canPer = crop === "cafe" || crop === "cana_de_acucar";
+                const dis = isPer && !canPer;
+                const label = m === "planting" ? "Plantio durante a simulação" : m === "established" ? "Cultura já estabelecida" : "Perene adulta";
+                return (
+                  <label key={m} className={`choice-card${cropStartMode === m ? " selected" : ""}${dis ? " is-disabled" : ""}`} title={dis ? "Perene adulta só para café e cana" : undefined}>
+                    <input type="radio" name="crop-start-mode" value={m} checked={cropStartMode === m} disabled={dis} onChange={() => setCropStartMode(m)} />
+                    {label}
+                  </label>
+                );
+              })}
+            </div>
+            {cropStartMode === "planting" && (
+              <>
+                <div className="form-row" style={{ marginTop: 10 }}>
+                  <Field label="Dia do plantio" helpKey="crop_start_mode">
+                    <input value={plantingDay} onChange={(e) => setPlantingDay(e.target.value)} inputMode="numeric" type="number" min={1} placeholder={rainIsSeries ? "dia da série (vazio = dia da aplicação)" : "dia do ensaio (vazio = 1)"} />
+                  </Field>
+                </div>
+                <p className="field-hint">Solo nu antes do plantio.</p>
+              </>
+            )}
+            {cropStartMode === "established" && (
+              <div className="form-row" style={{ marginTop: 10 }}>
+                <Field label="Idade no início [dias após plantio/brotação]" helpKey="crop_age_dap">
+                  <input value={cropAgeDap} onChange={(e) => setCropAgeDap(e.target.value)} inputMode="decimal" type="number" min={0} placeholder="ex.: 50" />
+                </Field>
+              </div>
+            )}
+            {cropStartMode === "perennial" && (
+              <p className="field-hint">Perene adulta: Kcb constante e raiz fixa (HYDRUS-1D lRoot=.false.).</p>
+            )}
+            <div className="form-row" style={{ marginTop: 10 }}>
+              <Field label="Após a colheita" helpKey="after_harvest">
+                <select value={afterHarvest} onChange={(e) => setAfterHarvest(e.target.value)}>
+                  <option value="bare">Solo nu</option>
+                  <option value="repeat">Repetir o ciclo</option>
+                </select>
+              </Field>
+            </div>
+            {preview && <p className="field-hint" aria-live="polite">{preview}</p>}
+            <details style={{ marginTop: 10 }}>
+              <summary>Avançado</summary>
+              <div className="form-row" style={{ marginTop: 8 }}>
+                <Field label="Profundidade atual medida da raiz [cm]" helpKey="measured_root">
+                  <input value={measuredRoot} onChange={(e) => setMeasuredRoot(e.target.value)} inputMode="decimal" type="number" min={0} disabled={cropStartMode !== "established"} placeholder={cropStartMode !== "established" ? "só estabelecida" : "ex.: 30"} />
+                </Field>
+                <Field label="Crescimento da raiz" helpKey="root_growth_model">
+                  <select value={rootGrowth} onChange={(e) => setRootGrowth(e.target.value)}>
+                    <option value="linear">Linear (FAO-56)</option>
+                    <option value="logistic">Logístico Verhulst-Pearl (HYDRUS-1D)</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="form-row">
+                {["Lini", "Ldev", "Lmid", "Lfim"].map((lbl, i) => (
+                  <Field key={lbl} label={`${lbl} [dias]`} helpKey="stage_lengths">
+                    <input value={stageLengths[i] || ""} onChange={(e) => { const v = [...stageLengths]; v[i] = e.target.value; setStageLengths(v); }} inputMode="decimal" type="number" min={0} placeholder="banco" />
+                  </Field>
+                ))}
+              </div>
+              <div className="form-row">
+                <Field label="Kcb ini" helpKey="kcb_values">
+                  <input value={kcbIni} onChange={(e) => setKcbIni(e.target.value)} inputMode="decimal" type="number" step="any" placeholder="banco" />
+                </Field>
+                <Field label="Kcb méd" helpKey="kcb_values">
+                  <input value={kcbMid} onChange={(e) => setKcbMid(e.target.value)} inputMode="decimal" type="number" step="any" placeholder="banco" />
+                </Field>
+                <Field label="Kcb fim" helpKey="kcb_values">
+                  <input value={kcbEnd} onChange={(e) => setKcbEnd(e.target.value)} inputMode="decimal" type="number" step="any" placeholder="banco" />
+                </Field>
+              </div>
+              <label className="custom-toggle-chk">
+                <input type="checkbox" className="switch" checked={uptakeCap} onChange={(e) => setUptakeCap(e.target.checked)} />
+                Limitar absorção à demanda da cultura (extensão agronômica; o HYDRUS-1D não limita)
+              </label>
+            </details>
           </div>
         </div>
       )}

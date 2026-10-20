@@ -270,33 +270,139 @@ def _resolve_cycle(crop: CropParameters) -> CropParameters:
     return crop
 
 
-def crop_schedule(crop: CropParameters, n_days: int, planting_day: float = 0.0):
-    """Agenda diária do ciclo (FAO-56): Kcb, few/Ke, raiz e fração acumulada de absorção.
+def _verhulst_root(tau: float, L0: float, Lm: float, r: float) -> float:
+    """Raiz Verhulst-Pearl (HYDRUS-1D eq. 2.21-2.22): L(tau)=Lm*f_r, f_r=L0/(L0+(Lm-L0)e^{-r tau}).
 
-    - Kcb por estádio (Cap. 6 eq. 66 / Fig. 34); raiz linear até fim de Ldev e cte após (Cap. 8).
-    - Fora do ciclo: inativa (solo nu, sem transpiração/absorção). Cana 365 d reinicia (soca);
-      perene sempre ativa com Kcb cte e F linear (demanda anual/365 por dia).
-    - F logística normalizada (marcha sigmoidal). Custom/sem dados: sem ciclo (cte) e sem teto.
+    TODO: distribuição vertical Hoffman & van Genuchten (1983) eq. 2.17 — hoje
+    usamos a triangular `root_distribution` (máximo na superfície, 0 na base).
+    """
+    import math as _m
+    if Lm <= 0:
+        return 0.0
+    if tau <= 0:
+        return float(L0)
+    try:
+        _e = _m.exp(-float(r) * float(tau))
+    except OverflowError:
+        _e = 0.0
+    _den = float(L0) + (float(Lm) - float(L0)) * _e
+    if _den <= 1e-12:
+        return float(Lm)
+    return float(float(Lm) * float(L0) / _den)
+
+
+def _r_logistic_iRFak1(L0: float, Lm: float, L: float) -> float:
+    """r pelo critério iRFak=1: 50% de (Lm+L0) no meio do ciclo.
+
+    Com Lm*f_r(L/2)=(Lm+L0)/2 e f_r=L0/(L0+(Lm-L0)e^{-r L/2)}:
+    e^{-r L/2}=L0/(Lm+L0) => r=ln((Lm+L0)/L0)/(L/2).
+    """
+    import math as _m
+    if L <= 0 or L0 <= 0 or Lm <= L0:
+        return 0.0
+    return float(_m.log((float(Lm) + float(L0)) / float(L0)) / (float(L) / 2.0))
+
+
+def _r_logistic_iRFak0(L0: float, Lm: float, tau0: float, x: float):
+    """r calibrado pelo ponto medido (iRFak=0): curva passa por x em tau0.
+
+    x=Lm*L0/(L0+(Lm-L0)e^{-r tau0}) => e^{-r tau0}=L0*(Lm-x)/(x*(Lm-L0))
+    => r=-ln(L0*(Lm-x)/(x*(Lm-L0)))/tau0.
+    Retorna None quando o ponto é inválido (x>=Lm, x<=L0, tau0<=0) — o
+    chamador cai para linear/constante (documentado).
+    """
+    import math as _m
+    try:
+        _t = float(tau0)
+        _x = float(x)
+    except (TypeError, ValueError):
+        return None
+    if _t <= 0 or not (float(L0) < _x < float(Lm)):
+        return None
+    try:
+        _arg = float(L0) * (float(Lm) - _x) / (max(_x, 1e-12) * max(float(Lm) - float(L0), 1e-12))
+    except ZeroDivisionError:
+        return None
+    if _arg <= 0:
+        return None
+    return float(-_m.log(_arg) / _t)
+
+
+def crop_schedule(crop: CropParameters, n_days: int, planting_day: float = 0.0, *,
+                  mode: str = "planting", after_harvest: str = "bare",
+                  root_growth: str = "linear", measured_root_cm=None,
+                  stage_lengths=None, kcb=None):
+    """Agenda diária do ciclo (FAO-56 como pré-processador de Tp/Ep; HYDRUS-1D §10 p.146).
+
+    ``planting_day`` é RELATIVO ao índice 0 da simulação e pode ser NEGATIVO:
+    cultura estabelecida com idade DAP => ``planting_day = -DAP`` (tau no dia 0
+    = DAP). Equivale a ``tRMin < 0`` no HYDRUS-1D (Tab. 12.4 Block D).
+
+    Modos:
+    - ``planting``: inativo (solo nu) antes do plantio; após a colheita
+      (tau >= L): ``after_harvest="bare"`` => solo nu; ``"repeat"`` => novo
+      ciclo (tau mod L, raiz reinicia em root_min; fração acumula ciclos) —
+      equivalente a tRPeriod.
+    - ``established``: igual ao planting com ``planting_day=-DAP``.
+    - ``perennial``: sempre ativo, Kcb=kcb_mid constante, raiz fixa
+      (=root_depth_cm ou measured), uptake_frac_cum linear = dias/365
+      (demanda anual espalhada). Equivalente HYDRUS: lRoot=.false.
+
+    Crescimento radicular:
+    - ``linear`` (FAO-56 cap. 8): root_min→root_max até o fim de Ldev.
+    - ``logistic``: Verhulst-Pearl eq. 2.21-2.22 com L0=root_min, Lm=root_max.
+
+    ``measured_root_cm`` (raiz atual medida, só faz sentido em established;
+    ignorado em planting): linear => raiz=measured no dia 0 e cresce
+    linearmente até root_max no fim de Ldev (se ainda antes do fim), senão
+    constante = measured; logistic => iRFak=0 (r calibrado do ponto conhecido).
     """
     import numpy as _np
+    import math as _m
     n = max(int(n_days), 0)
     try:
         pd = float(planting_day)
     except (TypeError, ValueError):
         pd = 0.0
+    _mode = str(mode or "planting").strip().lower()
+    if _mode not in ("planting", "established", "perennial"):
+        _mode = "planting"
+    _ah = str(after_harvest or "bare").strip().lower()
+    if _ah not in ("bare", "repeat"):
+        _ah = "bare"
+    _rg = str(root_growth or "linear").strip().lower()
+    if _rg not in ("linear", "logistic"):
+        _rg = "linear"
     cyc = _resolve_cycle(crop)
-    lengths = cyc.stage_lengths_days
-    perennial = bool(getattr(cyc, "perennial", False) or getattr(crop, "perennial", False))
-    # Kcb do ciclo (mãe) com fallback p/ kc da cultura
-    kcb_ini = cyc.kcb_ini if cyc.kcb_ini is not None else crop.kcb_ini
-    kcb_mid = cyc.kcb_mid if cyc.kcb_mid is not None else crop.kcb_mid
-    kcb_end = cyc.kcb_end if cyc.kcb_end is not None else crop.kcb_end
-    if kcb_ini is None:
-        kcb_ini = max(0.15, float(crop.kc) - 0.05)
-    if kcb_mid is None:
-        kcb_mid = max(0.15, float(crop.kc) - 0.05)
-    if kcb_end is None:
-        kcb_end = float(kcb_mid)
+    _lengths = None
+    if stage_lengths is not None:
+        try:
+            _lengths = tuple(float(v) for v in stage_lengths)
+        except (TypeError, ValueError):
+            _lengths = None
+    if not _lengths or len(_lengths) != 4:
+        _lengths = cyc.stage_lengths_days
+    lengths = _lengths
+    _kcb_ov = None
+    if kcb is not None:
+        try:
+            _kcb_ov = tuple(float(v) for v in kcb)
+            if len(_kcb_ov) != 3:
+                _kcb_ov = None
+        except (TypeError, ValueError):
+            _kcb_ov = None
+    if _kcb_ov is not None:
+        kcb_ini, kcb_mid, kcb_end = _kcb_ov
+    else:
+        kcb_ini = cyc.kcb_ini if cyc.kcb_ini is not None else crop.kcb_ini
+        kcb_mid = cyc.kcb_mid if cyc.kcb_mid is not None else crop.kcb_mid
+        kcb_end = cyc.kcb_end if cyc.kcb_end is not None else crop.kcb_end
+        if kcb_ini is None:
+            kcb_ini = max(0.15, float(crop.kc) - 0.05)
+        if kcb_mid is None:
+            kcb_mid = max(0.15, float(crop.kc) - 0.05)
+        if kcb_end is None:
+            kcb_end = float(kcb_mid)
     # Altura (custom sem dado: 1,0 m neutro)
     h = cyc.height_m if getattr(cyc, "height_m", None) is not None else crop.height_m
     if h is None:
@@ -316,6 +422,14 @@ def crop_schedule(crop: CropParameters, n_days: int, planting_day: float = 0.0):
     except (TypeError, ValueError):
         root_min = float(root_max)
     root_min = min(root_min, root_max)
+    _meas = None
+    if _mode in ("established", "perennial"):
+        try:
+            _meas = float(measured_root_cm) if measured_root_cm is not None else None
+        except (TypeError, ValueError):
+            _meas = None
+        if _meas is not None and not (_meas > 0):
+            _meas = None
 
     active = _np.zeros(n, dtype=bool)
     kcb = _np.zeros(n, dtype=float)
@@ -324,19 +438,33 @@ def crop_schedule(crop: CropParameters, n_days: int, planting_day: float = 0.0):
     ke_max = _np.ones(n, dtype=float)
     root = _np.full(n, float(root_max), dtype=float)
     frac = _np.zeros(n, dtype=float)
+    stage = ["fora do ciclo"] * n
 
-    if perennial:
-        # Perene: sempre ativa, Kcb cte, raiz fixa, F linear anual
+    def _set_dual(i, _kval, _act):
+        try:
+            _fw, _km, _ke = _dual_ke_few(float(_kval) if _act else 0.0, h)
+        except Exception:
+            _fw, _km, _ke = 1.0, 1.2, 1.0
+        few[i], kc_max[i], ke_max[i] = _fw, _km, _ke
+
+    _is_perennial_mode = (_mode == "perennial") or bool(getattr(cyc, "perennial", False) or getattr(crop, "perennial", False))
+    if _mode == "planting" and bool(getattr(cyc, "perennial", False)) and lengths is None:
+        _is_perennial_mode = True
+    if _is_perennial_mode:
+        _r_fix = float(_meas) if _meas is not None else float(root_max)
         for i in range(n):
             active[i] = True
             kcb[i] = float(kcb_mid)
-            fw, km, ke = _dual_ke_few(float(kcb[i]), h)
-            few[i], kc_max[i], ke_max[i] = fw, km, ke
-            root[i] = float(root_max)
-            tau = float(i) - pd
-            frac[i] = max(0.0, tau) / 365.0
+            _set_dual(i, float(kcb[i]), True)
+            root[i] = float(_r_fix)
+            frac[i] = float(i) / 365.0
+            stage[i] = "perene"
+        _hyd = {"lRoot": False, "iRootIn": None, "tRMin": float(pd),
+                "tRHarv": None, "xRMin": float(_r_fix), "xRMax": float(_r_fix),
+                "iRFak": None, "tRMed": None, "xRMed": None, "tRPeriod": None, "r": None}
         return {"active": active, "kcb": kcb, "few": few, "kc_max": kc_max,
-                "ke_max": ke_max, "root_depth_cm": root, "uptake_frac_cum": frac}
+                "ke_max": ke_max, "root_depth_cm": root, "uptake_frac_cum": frac,
+                "stage": stage, "hydrus_equiv": _hyd}
 
     if not lengths or len(lengths) != 4:
         # Custom/sem dados: sem ciclo (cte) e sem teto (fração zerada; solver não limita sem demanda)
@@ -344,16 +472,75 @@ def crop_schedule(crop: CropParameters, n_days: int, planting_day: float = 0.0):
         for i in range(n):
             active[i] = True
             kcb[i] = float(base_kcb)
-            fw, km, ke = _dual_ke_few(float(kcb[i]), h)
-            few[i], kc_max[i], ke_max[i] = fw, km, ke
+            _set_dual(i, float(kcb[i]), True)
             root[i] = float(root_max)
             frac[i] = 0.0
+            stage[i] = "fora do ciclo"
+        _hyd = {"lRoot": False, "iRootIn": None, "tRMin": float(pd),
+                "tRHarv": None, "xRMin": float(root_min), "xRMax": float(root_max),
+                "iRFak": None, "tRMed": None, "xRMed": None, "tRPeriod": None, "r": None}
         return {"active": active, "kcb": kcb, "few": few, "kc_max": kc_max,
-                "ke_max": ke_max, "root_depth_cm": root, "uptake_frac_cum": frac}
+                "ke_max": ke_max, "root_depth_cm": root, "uptake_frac_cum": frac,
+                "stage": stage, "hydrus_equiv": _hyd}
 
     Lini, Ldev, Lmid, Llate = (float(v) for v in lengths)
     L = float(Lini + Ldev + Lmid + Llate)
-    is_sugarcane = (getattr(cyc, "cycle_key", "") == "cana_de_acucar") or (getattr(crop, "cycle_key", "") == "cana_de_acucar")
+    _r_val = None
+    _iRFak = 1
+    if _rg == "logistic":
+        if _meas is not None and _mode == "established":
+            _tau0 = max(0.0, -float(pd))
+            _r_val = _r_logistic_iRFak0(float(root_min), float(root_max), _tau0, float(_meas))
+            _iRFak = 0 if _r_val is not None else 0
+            if _r_val is None:
+                _r_val = None
+            else:
+                _iRFak = 0
+        else:
+            _r_val = _r_logistic_iRFak1(float(root_min), float(root_max), float(L))
+            _iRFak = 1
+    _tau0_lin = max(0.0, -float(pd)) if _mode == "established" else 0.0
+    _lin_has_ramp = False
+    _lin_slope = 0.0
+    if _rg == "linear" and _meas is not None and _mode == "established":
+        _t_end_grow = float(Lini + Ldev)
+        if _tau0_lin < _t_end_grow and float(root_max) > float(_meas):
+            _den = max(_t_end_grow - _tau0_lin, 1e-12)
+            _lin_slope = (float(root_max) - float(_meas)) / _den
+            _lin_has_ramp = True
+
+    def _root_at(tau_v):
+        if _rg == "logistic" and _r_val is not None:
+            return float(_verhulst_root(float(tau_v), float(root_min), float(root_max), float(_r_val)))
+        if _lin_has_ramp:
+            if float(tau_v) <= _tau0_lin:
+                return float(_meas)
+            if float(tau_v) >= float(Lini + Ldev):
+                return float(root_max)
+            return float(float(_meas) + (float(tau_v) - _tau0_lin) * _lin_slope)
+        if _meas is not None and _mode == "established" and _rg == "linear" and not _lin_has_ramp:
+            return float(_meas)
+        if float(tau_v) <= 0:
+            return float(root_min)
+        if float(tau_v) >= float(Lini + Ldev):
+            return float(root_max)
+        froot = float(tau_v) / max(float(Lini + Ldev), 1e-12)
+        return float(float(root_min) + froot * (float(root_max) - float(root_min)))
+
+    def _stage_name(tau_v, _tin_v=None):
+        _t = float(_tin_v) if _tin_v is not None else float(tau_v)
+        if _t < 0 or _t >= L:
+            return "fora do ciclo"
+        if _t < Lini:
+            return "inicial"
+        if _t < Lini + Ldev:
+            return "desenvolvimento"
+        if _t < Lini + Ldev + Lmid:
+            return "médio"
+        return "final"
+
+    _is_cane = (getattr(cyc, "cycle_key", "") == "cana_de_acucar") or (getattr(crop, "cycle_key", "") == "cana_de_acucar")
+    _repeat = (_ah == "repeat") or bool(_is_cane)
     for i in range(n):
         tau = float(i) - pd
         if tau < 0:
@@ -361,47 +548,52 @@ def crop_schedule(crop: CropParameters, n_days: int, planting_day: float = 0.0):
             kcb[i] = 0.0
             root[i] = float(root_min)
             frac[i] = 0.0
-            fw, km, ke = _dual_ke_few(0.0, h)
-            few[i], kc_max[i], ke_max[i] = fw, km, ke
+            _set_dual(i, 0.0, False)
+            stage[i] = "fora do ciclo"
             continue
-        if is_sugarcane:
-            # Soca: ciclo de 365 d reinicia; raiz cresce só no 1º ciclo
+        if _repeat:
             ncyc = int(tau // L) if L > 0 else 0
             tin = tau - ncyc * L
             active[i] = True
             kcb[i] = _kcb_from_stage(tin, Lini, Ldev, Lmid, Llate, kcb_ini, kcb_mid, kcb_end)
-            if tau <= (Lini + Ldev):
-                froot = tau / max(Lini + Ldev, 1e-12)
-                root[i] = float(root_min + froot * (root_max - root_min))
-            else:
-                root[i] = float(root_max)
+            root[i] = float(_root_at(tin))
             frac[i] = float(ncyc) + _logistic_f(tin, L)
+            _set_dual(i, float(kcb[i]), True)
+            stage[i] = _stage_name(tau, tin)
+            continue
+        if tau >= L:
+            active[i] = False  # após a colheita = solo nu
+            kcb[i] = 0.0
+            root[i] = float(root_max)
+            frac[i] = 1.0
+            _set_dual(i, 0.0, False)
+            stage[i] = "fora do ciclo"
+            continue
+        active[i] = True
+        kcb[i] = _kcb_from_stage(tau, Lini, Ldev, Lmid, Llate, kcb_ini, kcb_mid, kcb_end)
+        root[i] = float(_root_at(tau))
+        frac[i] = _logistic_f(tau, L)
+        _set_dual(i, float(kcb[i]), True)
+        stage[i] = _stage_name(tau)
+    if _rg == "logistic" and _r_val is not None:
+        _iRootIn = 2
+        if _iRFak == 0:
+            _tRMed, _xRMed = float(_tau0_lin), float(_meas)
         else:
-            if tau >= L:
-                active[i] = False  # após a colheita = solo nu
-                kcb[i] = 0.0
-                root[i] = float(root_max)
-                frac[i] = 1.0
-                fw, km, ke = _dual_ke_few(0.0, h)
-                few[i], kc_max[i], ke_max[i] = fw, km, ke
-                continue
-            active[i] = True
-            kcb[i] = _kcb_from_stage(tau, Lini, Ldev, Lmid, Llate, kcb_ini, kcb_mid, kcb_end)
-            if tau <= (Lini + Ldev):
-                froot = tau / max(Lini + Ldev, 1e-12)
-                root[i] = float(root_min + froot * (root_max - root_min))
-            else:
-                root[i] = float(root_max)
-            frac[i] = _logistic_f(tau, L)
-        fw, km, ke = _dual_ke_few(float(kcb[i]) if active[i] else 0.0, h)
-        # p/ dias ativos usa Kcb do estádio; inativos Kcb=0 -> Ke=1 (Ep=ET0)
-        if active[i]:
-            fw2, km2, ke2 = _dual_ke_few(float(kcb[i]), h)
-            few[i], kc_max[i], ke_max[i] = fw2, km2, ke2
-        else:
-            few[i], kc_max[i], ke_max[i] = fw, km, ke
+            _tRMed, _xRMed = float(L) / 2.0, (float(root_max) + float(root_min)) / 2.0
+        _r_out = float(_r_val)
+    else:
+        _iRootIn = 1
+        _tRMed, _xRMed, _r_out = None, None, None
+    _hyd = {"lRoot": True, "iRootIn": _iRootIn, "tRMin": float(pd),
+            "tRHarv": (float(pd) + float(L)) if L > 0 else None,
+            "xRMin": float(root_min), "xRMax": float(root_max),
+            "iRFak": int(_iRFak) if _rg == "logistic" else 1,
+            "tRMed": _tRMed, "xRMed": _xRMed,
+            "tRPeriod": (float(L) if _repeat else None), "r": _r_out}
     return {"active": active, "kcb": kcb, "few": few, "kc_max": kc_max,
-            "ke_max": ke_max, "root_depth_cm": root, "uptake_frac_cum": frac}
+            "ke_max": ke_max, "root_depth_cm": root, "uptake_frac_cum": frac,
+            "stage": stage, "hydrus_equiv": _hyd}
 
 def feddes_water_stress(h: np.ndarray, crop: CropParameters) -> np.ndarray:
     """
@@ -433,6 +625,8 @@ def root_distribution(z: np.ndarray, root_depth_cm: float) -> np.ndarray:
     Normalized root distribution b(z) such that integral b(z) dz = 1 over root zone.
     z is depth positive downwards [cm].
     Linear decreasing distribution: maximum at surface, 0 at root_depth_cm.
+    TODO: distribuição Hoffman & van Genuchten (1983) eq. 2.17 como alternativa
+    (não trocar o default triangular atual sem validação).
 
     Note: The analytical integral of the continuous triangular function equals 1,
     but discrete grid sampling introduces a small overestimate (~1-5% depending on

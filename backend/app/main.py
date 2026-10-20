@@ -311,6 +311,85 @@ def crops() -> list[dict]:
     ]
 
 
+@app.post("/crops/preview")
+def crops_preview(req: SimulateRequest) -> dict:
+    """Prévia da cultura no DIA 1 (estádio, Kcb/Ke, raiz, colheita, DAP, demanda restante, HYDRUS)."""
+    from .service import _build_crop, _resolve_crop_situation, _schedule_for_request, _crop_demands, _effective_window
+    crop = _build_crop(req)
+    if crop is None:
+        raise HTTPException(status_code=422, detail=[{"field": "crop_key", "message": "Informe a cultura para a prévia."}])
+    _is_seas = bool(req.rain_series)
+    try:
+        _sit = _resolve_crop_situation(req, crop, _is_seas)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=[{"field": "crop", "message": str(exc)}])
+    if req.rain_series:
+        _sw, _ew = _effective_window(req, len(req.rain_series))
+        _td = float(len(req.rain_series[_sw - 1:_ew]))
+    else:
+        _sw = 1
+        try:
+            _td = float(req.total_days or 0.0)
+        except (TypeError, ValueError):
+            _td = 7.0
+    if _td <= 0:
+        _td = 7.0
+    sched = _schedule_for_request(req, crop, _td, _sw)
+    if sched is None:
+        return {"has_cycle": False, "active_day1": True, "stage_day1": "fora do ciclo",
+                "kcb_day1": None, "ke_day1": None, "root_day1_cm": float(crop.root_depth_cm),
+                "harvest_day_cal": None, "dap_effective": None, "remaining_demand_kg_ha": {},
+                "hydrus_equiv": {"lRoot": False, "iRootIn": None}}
+    try:
+        _stage1 = str((sched.get("stage") or [""])[0])
+        _kcb1 = float(sched["kcb"][0])
+        _ke1 = float(sched["ke_max"][0])
+        _root1 = float(sched["root_depth_cm"][0])
+        _act1 = bool(sched["active"][0])
+        _fr = sched.get("uptake_frac_cum", [])
+        _fr0 = float(_fr[0]) if len(_fr) else 0.0
+        _fr_end = float(_fr[min(len(_fr) - 1, max(int(_td), 0))]) if len(_fr) else 0.0
+    except Exception:
+        raise HTTPException(status_code=422, detail=[{"field": "crop", "message": "Falha ao montar a prévia."}])
+    _he = sched.get("hydrus_equiv") or {}
+    # Colheita prevista (dia do calendário na série; dia do ensaio na Lâmina).
+    _harv = None
+    try:
+        if _sit.get("mode") == "perennial":
+            _harv = None
+        elif _sit.get("has_cycle"):
+            _L = float(_sit.get("cycle_len") or 0.0)
+            if _sit.get("mode") == "established":
+                _dap = float(_sit.get("dap") or 0.0)
+                _harv = (_L - _dap) if _L > 0 else None
+            else:
+                _tRHarv = (_he or {}).get("tRHarv")
+                _harv = float(_tRHarv) + float(_sw) if _tRHarv is not None and _is_seas else _tRHarv
+    except Exception:
+        _harv = None
+    _dem = _crop_demands(crop)
+    _rem = {}
+    for _k, _v in _dem.items():
+        try:
+            _rem[_k] = max(0.0, float(_v) * max(0.0, _fr_end - _fr0))
+        except (TypeError, ValueError):
+            continue
+    _dap_eff = None
+    try:
+        if _sit.get("mode") == "established":
+            _dap_eff = float(_sit.get("dap") or 0.0)
+        elif _sit.get("has_cycle"):
+            _rel = float(sched.get("_plant_rel", 0.0))
+            _dap_eff = max(0.0, -_rel)
+    except Exception:
+        pass
+    return {"has_cycle": True, "active_day1": _act1, "stage_day1": _stage1,
+            "kcb_day1": _kcb1, "ke_day1": _ke1, "root_day1_cm": _root1,
+            "harvest_day_cal": _harv, "dap_effective": _dap_eff,
+            "remaining_demand_kg_ha": _rem, "hydrus_equiv": _he,
+            "mode": _sit.get("mode"), "after_harvest": _sit.get("after_harvest")}
+
+
 @app.get("/fertilizers")
 def fertilizers() -> dict:
     """Catálogo de fertilizantes comerciais + presets de mistura (Gradio).

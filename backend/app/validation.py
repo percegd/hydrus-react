@@ -421,4 +421,88 @@ def validate_request(req: SimulateRequest) -> list[dict]:
                 })
     except Exception:
         pass
+    # v5 — Situação da cultura no início.
+    try:
+        from hydrus_core.crop import CROP_DATABASE as _CDB_v5
+        _ck = str(getattr(req, "crop_key", "") or "")
+        _crop_v5 = _CDB_v5.get(_ck) if _ck and _ck != "custom" else None
+        _has_crop_v5 = bool(_ck and (_crop_v5 is not None or _ck == "custom"))
+        if _has_crop_v5 and _ck != "custom":
+            from hydrus_core import crop as _cm_v5
+            try:
+                _cyc_v5 = _cm_v5._resolve_cycle(_crop_v5)
+                _len_v5 = getattr(_cyc_v5, "stage_lengths_days", None)
+                _L_v5 = float(sum(float(v) for v in _len_v5)) if (_len_v5 and len(_len_v5) == 4) else 0.0
+            except Exception:
+                _L_v5 = 0.0
+            _mode_v5 = str(getattr(req, "crop_start_mode", "") or "").strip().lower() or None
+            if _mode_v5 not in (None, "", "planting", "established", "perennial"):
+                out.append({"field": "crop_start_mode", "message": f"Modo de início desconhecido: {getattr(req, 'crop_start_mode')}."})
+            _dap_v5 = getattr(req, "crop_age_dap", None)
+            if _dap_v5 is not None:
+                try:
+                    _d = float(_dap_v5)
+                except (TypeError, ValueError):
+                    out.append({"field": "crop_age_dap", "message": "Idade no início (DAP) deve ser numérica."})
+                    _d = None
+                if _d is not None:
+                    if _d < 0:
+                        out.append({"field": "crop_age_dap", "message": f"DAP ({_d:g}) não pode ser negativo."})
+                    elif _L_v5 > 0:
+                        _ah_v5 = str(getattr(req, "after_harvest", "") or "").strip().lower()
+                        _repeat_v5 = (_ah_v5 == "repeat") or ("cana" in _ck)
+                        if not _repeat_v5 and _d > _L_v5:
+                            out.append({"field": "crop_age_dap", "message": f"DAP ({_d:g}) além da duração do ciclo ({_L_v5:.0f} dias)."})
+            _meas_v5 = getattr(req, "measured_root_depth_cm", None)
+            if _meas_v5 is not None:
+                try:
+                    _m = float(_meas_v5)
+                except (TypeError, ValueError):
+                    out.append({"field": "measured_root_depth_cm", "message": "Raiz medida deve ser numérica."})
+                    _m = None
+                if _m is not None:
+                    try:
+                        _prof = float(req.depth_cm)
+                    except (TypeError, ValueError):
+                        _prof = 0.0
+                    if not (_m > 0):
+                        out.append({"field": "measured_root_depth_cm", "message": f"Raiz medida ({_m:g} cm) deve ser > 0."})
+                    elif _prof > 0 and _m > _prof:
+                        out.append({"field": "measured_root_depth_cm", "message": f"Raiz medida ({_m:g} cm) além da profundidade do perfil ({_prof:g} cm)."})
+            _sl_v5 = getattr(req, "stage_lengths_days", None)
+            if _sl_v5 is not None:
+                try:
+                    _lst = list(_sl_v5)
+                except TypeError:
+                    _lst = None
+                if _lst is None or len(_lst) != 4:
+                    out.append({"field": "stage_lengths_days", "message": "Durações dos estádios: informe 4 valores."})
+                else:
+                    for _v in _lst:
+                        try:
+                            _f = float(_v)
+                        except (TypeError, ValueError):
+                            out.append({"field": "stage_lengths_days", "message": "Durações dos estádios devem ser numéricas."})
+                            break
+                        if not (_f > 0):
+                            out.append({"field": "stage_lengths_days", "message": f"Duração de estádio ({_v}) deve ser > 0."})
+                            break
+            for _fa, _fl in (("kcb_ini", "Kcb inicial"), ("kcb_mid", "Kcb médio"), ("kcb_end", "Kcb final")):
+                _kv = getattr(req, _fa, None)
+                if _kv is not None:
+                    try:
+                        _kf = float(_kv)
+                    except (TypeError, ValueError):
+                        out.append({"field": _fa, "message": f"{_fl} deve ser numérico."})
+                        continue
+                    if not (0 <= _kf <= 1.5):
+                        out.append({"field": _fa, "message": f"{_fl} ({_kf:g}) fora de [0, 1.5]."})
+            _rg_v5 = str(getattr(req, "root_growth_model", "linear") or "linear").strip().lower()
+            if _rg_v5 not in ("linear", "logistic"):
+                out.append({"field": "root_growth_model", "message": f"Crescimento da raiz desconhecido: {_rg_v5}."})
+            _ah2 = str(getattr(req, "after_harvest", "") or "").strip().lower() or None
+            if _ah2 not in (None, "", "bare", "repeat"):
+                out.append({"field": "after_harvest", "message": f"Após a colheita desconhecido: {_ah2}."})
+    except Exception:
+        pass
     return out

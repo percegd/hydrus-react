@@ -166,6 +166,17 @@ export default function Home() {
   const [cropH2, setCropH2] = useState(DEFAULTS.cropH2);
   const [cropH3, setCropH3] = useState(DEFAULTS.cropH3);
   const [cropH4, setCropH4] = useState(DEFAULTS.cropH4);
+  const [cropStartMode, setCropStartMode] = useState("planting");
+  const [cropAgeDap, setCropAgeDap] = useState("");
+  const [plantingDay, setPlantingDay] = useState("");
+  const [afterHarvest, setAfterHarvest] = useState("bare");
+  const [rootGrowth, setRootGrowth] = useState("linear");
+  const [measuredRoot, setMeasuredRoot] = useState("");
+  const [stageLengths, setStageLengths] = useState<string[]>(["", "", "", ""]);
+  const [kcbIni, setKcbIni] = useState("");
+  const [kcbMid, setKcbMid] = useState("");
+  const [kcbEnd, setKcbEnd] = useState("");
+  const [uptakeCap, setUptakeCap] = useState(true);
   const [depthCm, setDepthCm] = useState(DEFAULTS.depthCm);
   const [rootDepthCm, setRootDepthCm] = useState(DEFAULTS.rootDepthCm);
   const [days, setDays] = useState(DEFAULTS.days);
@@ -258,6 +269,12 @@ export default function Home() {
     setCropH4(String(c.h4));
   }
 
+  const DAP_DEFAULTS: Record<string, string> = { milho: "50", soja: "60", hortalicas: "60", cana_de_acucar: "150", milho_inicial: "12", milho_desenvolvimento: "50", soja_inicial: "15", soja_desenvolvimento: "70" };
+  function defaultStartMode(key: string, series: boolean) {
+    if (key === "cafe") return "perennial";
+    return series ? "planting" : "established";
+  }
+
   function setCropMode(mode: string) {
     setCropModeState(mode);
     if (mode === "com") {
@@ -265,6 +282,12 @@ export default function Home() {
       if (found) fillCropParams(found);
     }
   }
+
+  useEffect(() => {
+    const series = rainMode === "hub" || rainMode === "upload";
+    setCropStartMode((m) => (crop === "cafe" ? "perennial" : series ? "planting" : "established"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rainMode]);
 
   // Solo personalizado: areia/argila -> Rosetta preenche θr θs α n Ks ρb (Gradio).
   useEffect(() => {
@@ -355,6 +378,14 @@ export default function Home() {
     setCrop(key);
     const found = crops.find((c) => c.key === key);
     if (found) fillCropParams(found);
+    const series = rainMode === "hub" || rainMode === "upload";
+    setCropStartMode(defaultStartMode(key, series));
+    setCropAgeDap(DAP_DEFAULTS[key] || "");
+    setPlantingDay("");
+    setAfterHarvest(key === "cana_de_acucar" ? "repeat" : "bare");
+    setMeasuredRoot("");
+    setStageLengths(["", "", "", ""]);
+    setKcbIni(""); setKcbMid(""); setKcbEnd("");
   }
 
   function openValidation(issues: string[]) {
@@ -521,6 +552,7 @@ export default function Home() {
       if (ok) fertilizer = { fert_key: lastFert.fert_key, gross_dose: lastFert.gross_dose };
     }
     try {
+      const stageArr = isCom ? stageLengths.map((s) => numOrNull(s)).filter((v): v is number => v !== null) : [];
       const body = {
         soil_key: soil,
         custom_soil: isCustomSoil ? {
@@ -540,6 +572,19 @@ export default function Home() {
         h2: isCom ? numOrNull(cropH2) : null,
         h3: isCom ? numOrNull(cropH3) : null,
         h4: isCom ? numOrNull(cropH4) : null,
+        ...(isCom ? {
+          crop_start_mode: cropStartMode || null,
+          crop_age_dap: cropAgeDap.trim() === "" ? null : num(cropAgeDap, 0),
+          planting_day: plantingDay.trim() === "" ? null : Math.round(num(plantingDay, 0)),
+          after_harvest: afterHarvest || null,
+          root_growth_model: rootGrowth || "linear",
+          measured_root_depth_cm: measuredRoot.trim() === "" ? null : num(measuredRoot, 0),
+          stage_lengths_days: stageArr.length === 4 ? stageArr : null,
+          kcb_ini: kcbIni.trim() === "" ? null : num(kcbIni, 0),
+          kcb_mid: kcbMid.trim() === "" ? null : num(kcbMid, 0),
+          kcb_end: kcbEnd.trim() === "" ? null : num(kcbEnd, 0),
+          uptake_cap: uptakeCap,
+        } : { uptake_cap: true }),
         depth_cm: depthVal,
         root_depth_cm: isCom ? num(rootDepthCm, rootFallback) : null,
         total_days,
@@ -737,6 +782,23 @@ export default function Home() {
     const sym = r.custom ? String(r.name).trim() : r.symbol;
     return [sym, { kd: r.kd, residual: r.res }];
   }));
+  const previewStageArr = stageLengths.map((s) => { const v = parseFloat(String(s).replace(",", ".")); return Number.isFinite(v) ? v : null; }).filter((v): v is number => v !== null);
+  const previewBody: Record<string, unknown> = {
+    soil_key: soil, crop_key: isCom ? crop : null, crop_name: isCom ? (cropName.trim() || null) : null,
+    kc: isCom ? numOrNull(cropKc) : null, root_depth_cm: isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : null,
+    depth_cm: num(depthCm, 200), total_days: num(days, 7),
+    crop_start_mode: isCom ? cropStartMode || null : null,
+    crop_age_dap: isCom && cropAgeDap.trim() !== "" ? num(cropAgeDap, 0) : null,
+    planting_day: isCom && plantingDay.trim() !== "" ? Math.round(num(plantingDay, 0)) : null,
+    after_harvest: isCom ? afterHarvest || null : null,
+    root_growth_model: rootGrowth || "linear",
+    measured_root_depth_cm: isCom && measuredRoot.trim() !== "" ? num(measuredRoot, 0) : null,
+    stage_lengths_days: previewStageArr.length === 4 ? previewStageArr : null,
+    kcb_ini: kcbIni.trim() !== "" ? num(kcbIni, 0) : null,
+    kcb_mid: kcbMid.trim() !== "" ? num(kcbMid, 0) : null,
+    kcb_end: kcbEnd.trim() !== "" ? num(kcbEnd, 0) : null,
+    uptake_cap: uptakeCap,
+  };
 
   return (
     <div className="hydrus-container">
@@ -807,6 +869,30 @@ export default function Home() {
                 bulk={bulk}
                 setBulk={setBulk}
                 rosettaNote={rosettaNote}
+                cropStartMode={cropStartMode}
+                setCropStartMode={setCropStartMode}
+                cropAgeDap={cropAgeDap}
+                setCropAgeDap={setCropAgeDap}
+                plantingDay={plantingDay}
+                setPlantingDay={setPlantingDay}
+                afterHarvest={afterHarvest}
+                setAfterHarvest={setAfterHarvest}
+                rootGrowth={rootGrowth}
+                setRootGrowth={setRootGrowth}
+                measuredRoot={measuredRoot}
+                setMeasuredRoot={setMeasuredRoot}
+                stageLengths={stageLengths}
+                setStageLengths={setStageLengths}
+                kcbIni={kcbIni}
+                setKcbIni={setKcbIni}
+                kcbMid={kcbMid}
+                setKcbMid={setKcbMid}
+                kcbEnd={kcbEnd}
+                setKcbEnd={setKcbEnd}
+                uptakeCap={uptakeCap}
+                setUptakeCap={setUptakeCap}
+                rainIsSeries={rainMode === "hub" || rainMode === "upload"}
+                previewBody={previewBody}
               />
             )}
 

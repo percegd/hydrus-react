@@ -165,6 +165,7 @@ export const parseClimateFile = async (file: File): Promise<ClimateParseResult> 
   return r.json() as Promise<ClimateParseResult>;
 };
 export const getCrops = () => req<Crop[]>("/crops");
+export const postCropPreview = (body: unknown) => req<{ has_cycle: boolean; active_day1: boolean; stage_day1: string; kcb_day1: number | null; ke_day1: number | null; root_day1_cm: number | null; harvest_day_cal: number | null; dap_effective: number | null; remaining_demand_kg_ha: Record<string, number>; hydrus_equiv: Record<string, unknown>; mode?: string | null; after_harvest?: string | null }>("/crops/preview", { method: "POST", body: JSON.stringify(body) });
 export const postSimulate = (body: unknown) => req<SimulateResponse>("/simulate", { method: "POST", body: JSON.stringify(body) });
 export type JobCreated = { job_id: string };
 export type JobStatus = { job_id: string; status: string; elapsed_s: number; result: SimulateResponse | null; error: string | null; has_excel?: boolean; has_report?: boolean; has_graphs?: boolean; has_steps?: boolean };

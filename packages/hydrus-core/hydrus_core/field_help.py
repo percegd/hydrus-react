@@ -251,6 +251,60 @@ FIELD_HELP = {
         "Sua própria planilha de chuva (e ET0 opcional) no lugar da série do polo.",
         "Mesma mecânica da série climática, mas com os dados da sua fazenda/estação.",
     ),
+    "crop_start_mode": (
+        "Situação da cultura no início",
+        "",
+        "Se o plantio ocorre durante a simulação, se a cultura já está estabelecida ou se é perene adulta.",
+        "Define a condição inicial como no HYDRUS-1D (Šimůnek et al. 2013, Tab. 12.4): planting = tRMin ≥ 0 (solo nu antes); established = planting_day = −DAP (equivale a tRMin < 0); perennial = lRoot=.false. (zona radicular fixa, Kcb constante).",
+    ),
+    "crop_age_dap": (
+        "Idade no início [dias após plantio/brotação]",
+        "[dias]",
+        "Há quantos dias a cultura foi plantada (ou brotou) no dia 1 da simulação.",
+        "Vira tau no dia 0 (DAP); o schedule FAO-56 parte desse estádio (Kcb, raiz e fração acumulada). DAP > ciclo é barrado (anuais; com repetir o ciclo permite qualquer ≥ 0).",
+    ),
+    "after_harvest": (
+        "Após a colheita",
+        "",
+        "Solo nu ou repetir o ciclo quando a cultura colhe dentro da simulação.",
+        "Repetir o ciclo equivale a tRPeriod no HYDRUS-1D (tau mod L, raiz reinicia, fração acumula ciclos); cana (soca) repete por padrão.",
+    ),
+    "root_growth_model": (
+        "Crescimento da raiz",
+        "",
+        "Linear (FAO-56) ou logístico Verhulst-Pearl (HYDRUS-1D).",
+        "Linear: raiz_min→máx até o fim do desenvolvimento. Logístico: eq. 2.21-2.22 (L= Lm·f_r), com r por iRFak=1 (50% de (Lm+L0) no meio do ciclo) ou iRFak=0 (passa pela raiz medida).",
+    ),
+    "measured_root": (
+        "Profundidade atual medida da raiz",
+        "[cm]",
+        "Raiz medida no campo no dia 1 (só cultura estabelecida).",
+        "Linear: parte da medida e cresce até a máxima no fim do desenvolvimento; logístico: iRFak=0 calibra r pelo ponto (tau0=DAP, x=medida). Ignorado no plantio.",
+    ),
+    "stage_lengths": (
+        "Durações dos estádios",
+        "[dias]",
+        "Lini, Ldev, Lmid, Lfim do ciclo FAO-56 (Tab. 11).",
+        "Substituem o banco quando informados; DAP e colheita prevista usam esses valores.",
+    ),
+    "kcb_values": (
+        "Kcb ini/méd/fim",
+        "[-]",
+        "Coeficientes basais por estádio (FAO-56 Tab. 17).",
+        "Substituem o banco quando informados; Tp = Kcb·ET0 no dia.",
+    ),
+    "uptake_cap": (
+        "Limitar absorção à demanda da cultura",
+        "",
+        "Teto da absorção acumulada pela demanda nutricional do ciclo.",
+        "Extensão agronômica: cap(t) = demanda·(F(t)−F(0)); o HYDRUS-1D não limita a absorção passiva (só cRootMax/ativa SPot, §3.5).",
+    ),
+    "crop_preview": (
+        "Prévia da cultura no dia 1",
+        "",
+        "Estádio, Kcb, raiz e colheita prevista no primeiro dia simulado.",
+        "Calculada pelo mesmo schedule do solver; valida DAP, estádios e Kcb antes de rodar.",
+    ),
 }
 
 

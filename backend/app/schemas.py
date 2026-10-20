@@ -151,9 +151,20 @@ class SimulateRequest(BaseModel):
     # (perfil na capacidade de campo — prática usual sem medição).
     # No modo Lâmina vale initial_moisture_pct.
     seasonal_initial_moisture_pct: float = Field(default=100.0, ge=0, le=100)
-    # Dia do plantio na série (dia do ano, 1-based); None = dia da aplicação
-    # se > 0, senão dia 1. Só vale no modo série (ignorado na Lâmina).
+    # Dia do plantio na série (dia do ano, 1-based); None = dia da
+    # aplicação se > 0, senão dia 1. Só vale no modo série (ignorado na Lâmina).
     planting_day: Optional[int] = Field(default=None)
+    # v5 — Situação da cultura no início da simulação (HYDRUS-1D §2.2/Tab. 12.4 + FAO-56).
+    crop_start_mode: Optional[str] = Field(default=None, description="planting|established|perennial")
+    crop_age_dap: Optional[float] = Field(default=None, ge=0, description="Idade no início [dias após plantio/brotação]")
+    after_harvest: Optional[str] = Field(default=None, description="bare|repeat")
+    root_growth_model: str = Field(default="linear", description="linear|logistic")
+    measured_root_depth_cm: Optional[float] = Field(default=None, gt=0)
+    stage_lengths_days: Optional[list[float]] = Field(default=None, description="4 durações FAO-56 [dias]")
+    kcb_ini: Optional[float] = Field(default=None)
+    kcb_mid: Optional[float] = Field(default=None)
+    kcb_end: Optional[float] = Field(default=None)
+    uptake_cap: bool = Field(default=True, description="Limitar absorção à demanda (extensão agronômica)")
     et0_mm_day: float = Field(default=4.0, ge=0)
     et0_series: Optional[list[float]] = Field(default=None, description="ET0 diária em mm")
     # ET avançada (Gradio adv_et_toggle): 0 = derivar de ET0 (Kc dual FAO-56:

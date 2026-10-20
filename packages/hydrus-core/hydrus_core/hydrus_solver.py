@@ -138,7 +138,7 @@ class Hydrus1DSimulator:
         print_days: Optional[List[float]] = None, # Dias de leitura (perfis completos) [dias]
         water_only: bool = False,          # True => roda apenas fluxo de água (sem transporte de soluto)
         crop_schedule: Optional[dict] = None,  # agenda diária do ciclo (crop.crop_schedule); None = modo coluna
-        uptake_cap: bool = True            # True => limita absorção acumulada à demanda da cultura
+        uptake_cap: bool = True            # True => limita absorção à demanda RESTANTE (extensão agronômica; HYDRUS-1D não limita a passiva)
     ) -> SimulationResults:
         """
         Executa a simulação transiente acoplada de fluxo hídrico (Richards 1D)
@@ -533,9 +533,12 @@ class Hydrus1DSimulator:
                     try:
                         _fr = _sched.get("uptake_frac_cum", None)
                         _fr_end = float(_fr[min(_sched_n - 1, max(int(self.cfg.total_days), 0))]) if _fr is not None else 0.0
+                        _fr0 = float(_fr[0]) if _fr is not None else 0.0
                     except Exception:
-                        _fr_end = 0.0
-                    _ni["uptake_cap_mg_cm2"] = float(_dem) * 0.01 * max(0.0, _fr_end)
+                        _fr_end, _fr0 = 0.0, 0.0
+                    # Teto usa a demanda RESTANTE a partir do início (extensão agronômica;
+                    # o HYDRUS-1D só tem passiva com cRootMax e ativa com demanda SPot, §3.5).
+                    _ni["uptake_cap_mg_cm2"] = float(_dem) * 0.01 * max(0.0, _fr_end - _fr0)
                 elif _col_cycle is not None and (_col_L > 0 or _col_perennial):
                     if _col_perennial:
                         _fend = max(0.0, float(self.cfg.total_days)) / 365.0
@@ -936,11 +939,13 @@ class Hydrus1DSimulator:
                 ret_cap = theta_safe + self.soil.bulk_density * np.maximum(0.0, kd_eff)
                 c_aq_old = c_old / ret_cap
 
-                # P9: teto de absorção por nutriente (demanda da cultura).
-                # Absorção passiva (fluxo de massa, Šimůnek & Hopmans 2009) limitada pela
-                # demanda nutricional (Feddes 1978 p/ água; teto nutricional: Raij 1997/Malavolta 2006).
+                # P9/v5: teto de absorção por nutriente (demanda restante desde o início).
+                # Extensão agronômica (o HYDRUS-1D só tem passiva com cRootMax e ativa
+                # com demanda SPot, §3.5 — não limita a passiva). Absorção passiva
+                # (fluxo de massa) limitada pela demanda nutricional.
                 # Conservativo: U_pot = Σ s_root·c_aq_old·dz·dt; permitido = teto(t+dt)−uptaken;
                 # f = min(1, permitido/U_pot). Usa f·s_root na matriz E na acumulação (fecha balanço).
+                # cap(t) = demanda·(F(t) − F(0)), onde F(0) = fração no índice 0.
                 _f_cap = 1.0
                 if self.crop and uptake_cap:
                     _dem_cap = _demand_kg_ha.get(str(n_item.get("symbol", "")), None)
@@ -951,7 +956,8 @@ class Hydrus1DSimulator:
                                 _fr_arr = _sched.get("uptake_frac_cum", None)
                                 _idx_end = min(int(t + dt), _sched_n - 1)
                                 _fr_end = float(_fr_arr[_idx_end]) if _fr_arr is not None else 0.0
-                                _teto_end = _dem_mg * max(0.0, _fr_end)
+                                _fr0 = float(_fr_arr[0]) if _fr_arr is not None else 0.0
+                                _teto_end = _dem_mg * max(0.0, _fr_end - _fr0)
                             elif _col_cycle is not None and (_col_L > 0 or _col_perennial):
                                 if _col_perennial:
                                     # F linear (demanda anual/365 por dia): F(off+t)-F(off) = t/365
