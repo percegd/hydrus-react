@@ -613,9 +613,17 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
                              "HYDRUS-1D usa Hoffman & van Genuchten 1983 (eq. 2.17) "
                              "quando a raiz varia — opção futura")
             if not _lroot_on:
-                _root_hyd = (f"lRoot=False (zona radicular fixa), "
-                             f"tRMin={_f(_he.get('tRMin'))}, "
-                             f"xRMin={_f(_he.get('xRMin'))}, xRMax={_f(_he.get('xRMax'))}")
+                try:
+                    _is_per_hyd = (_mode == "perennial") or (bool(getattr(_cyc, "perennial", False)) and not _has_cyc)
+                except Exception:
+                    _is_per_hyd = False
+                if _is_per_hyd:
+                    _root_hyd = (f"lRoot=False (zona radicular fixa), "
+                                 f"xRMin={_f(_he.get('xRMin'))}, xRMax={_f(_he.get('xRMax'))}")
+                else:
+                    _root_hyd = (f"lRoot=False (zona radicular fixa), "
+                                 f"tRMin={_f(_he.get('tRMin'))}, "
+                                 f"xRMin={_f(_he.get('xRMin'))}, xRMax={_f(_he.get('xRMax'))}")
             elif _iroot_int == 1:
                 _root_hyd = (f"lRoot=True, iRootIn=1 (tabela RootDepth(t) gerada pelo crescimento linear FAO-56), "
                              f"tRMin={_f(_he.get('tRMin'))}, tRHarv={_f(_he.get('tRHarv'))}, "
@@ -652,7 +660,7 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
             except (TypeError, ValueError):
                 _rfix = 0.0
             _hyd_txt = (f"lRoot=False (zona radicular fixa), "
-                        f"tRMin=0.00, xRMin={_rfix:.0f}, xRMax={_rfix:.0f}; "
+                        f"xRMin={_rfix:.0f}, xRMax={_rfix:.0f}; "
                         f"hCritA = 10000 cm (|h| mínimo na superfície); "
                         f"Feddes h1..h4=({float(crop.h1):.0f},{float(crop.h2):.0f},{float(crop.h3):.0f},{float(crop.h4):.0f}) cm; "
                         f"cRootMax = ∞ (absorção passiva total); teto de absorção pela demanda: "
@@ -664,8 +672,31 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
     if _mode == "perennial" or (bool(getattr(_cyc, "perennial", False)) and not _has_cyc):
         out["cycle_txt"] = (f"Cultura perene ({crop.name}): sem estádios — Kcb constante "
                             f"e absorção distribuída ao longo do ano.")
-        out["crop_start_txt"] = (f"modo perene adulta; raiz no dia 1 {_root1 or f'{float(crop.root_depth_cm):.0f}'} cm "
-                                 f"(fixa); Kcb no dia 1 {_kcb1 or '—'}.")
+        _per_stage = _stage1 or "perene"
+        if _kcb1:
+            _per_kcb = _kcb1
+        else:
+            try:
+                _km0 = getattr(crop, "kcb_mid", None)
+                if _km0 is None:
+                    _km0 = getattr(_cyc, "kcb_mid", None)
+                if getattr(req, "kcb_mid", None) is not None:
+                    _km0 = float(req.kcb_mid)
+                if _km0 is None:
+                    _km0 = max(0.15, float(crop.kc) - 0.05)
+                _per_kcb = f"{float(_km0):.2f}"
+            except (TypeError, ValueError):
+                _per_kcb = "—"
+        if _root1:
+            _per_root = _root1
+        else:
+            try:
+                _m0 = (_sit or {}).get("measured") if isinstance(_sit, dict) else None
+                _per_root = f"{float(_m0 if _m0 is not None else float(crop.root_depth_cm)):.0f}"
+            except (TypeError, ValueError):
+                _per_root = "—"
+        out["crop_start_txt"] = (f"modo perene adulta; estádio no dia 1 {_per_stage} (Kcb {_per_kcb}); "
+                                 f"raiz no dia 1 {_per_root} cm (fixa).")
         out["hydrus_txt"] = _hyd_txt if _hyd_txt else ""
         return out
     if _has_cyc:
@@ -689,6 +720,44 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
             f"({_L:.0f} dias; estádios ini/des/med/fim {float(_lengths[0]):.0f}/{float(_lengths[1]):.0f}/"
             f"{float(_lengths[2]):.0f}/{float(_lengths[3]):.0f} dias; {_kcb_txt}).")
         # Bloco v5.
+        try:
+            _cropmax_s = f"{float(crop.root_depth_cm):.0f}"
+        except (TypeError, ValueError):
+            _cropmax_s = _rootmax or "—"
+        _permax_s = _rootmax or _cropmax_s
+        _log_note = ""
+        try:
+            if str((_sit or {}).get("root_growth")) == "logistic" and _has_cyc:
+                _Llog = float(sum(float(v) for v in _lengths))
+                _Lm = float(crop.root_depth_cm)
+                _rmin_raw = (getattr(crop, "root_depth_min_cm", None)
+                             if getattr(crop, "root_depth_min_cm", None) is not None
+                             else getattr(_cyc, "root_depth_min_cm", None))
+                try:
+                    _L0 = float(_rmin_raw) if _rmin_raw is not None else float(_Lm)
+                except (TypeError, ValueError):
+                    _L0 = float(_Lm)
+                _L0 = min(float(_L0), float(_Lm))
+                _rlog = None
+                try:
+                    from hydrus_core import crop as _cm_log
+                    _meas0 = (_sit or {}).get("measured")
+                    if _meas0 is not None and _mode == "established":
+                        try:
+                            _tau0 = float((_sit or {}).get("dap") or 0.0)
+                        except (TypeError, ValueError):
+                            _tau0 = 0.0
+                        _rlog = _cm_log._r_logistic_iRFak0(float(_L0), float(_Lm), float(_tau0), float(_meas0))
+                    if _rlog is None and float(_Lm) > float(_L0) and _Llog > 0:
+                        _rlog = _cm_log._r_logistic_iRFak1(float(_L0), float(_Lm), float(_Llog))
+                    if _rlog is not None and float(_Lm) > float(_L0):
+                        _harv = _cm_log._verhulst_root(float(_Llog), float(_L0), float(_Lm), float(_rlog))
+                        _log_note = (f" Nota: no HYDRUS-1D a raiz logística só atinge xRMax em tempo infinito"
+                                     f" (eq. 2.22); com 50% no meio do ciclo ela chega a ~{_harv:.0f} cm na colheita.")
+                except Exception:
+                    pass
+        except Exception:
+            _log_note = ""
         if _mode == "established":
             _dap = _sit.get("dap")
             try:
@@ -698,8 +767,9 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
             _rg_lbl = "Logístico Verhulst-Pearl (HYDRUS-1D)" if str(_sit.get("root_growth")) == "logistic" else "Linear (FAO-56)"
             _ah_lbl = "repetir o ciclo" if str(_sit.get("after_harvest")) == "repeat" else "solo nu"
             out["crop_start_txt"] = (f"estabelecida com {_dap_s} DAP; estádio no dia 1 {_stage1 or '—'} "
-                                     f"(Kcb {_kcb1 or '—'}); raiz no dia 1 {_root1 or '—'} cm (máx {_rootmax or '—'} cm); "
-                                     f"crescimento {_rg_lbl}; após a colheita: {_ah_lbl}.")
+                                     f"(Kcb {_kcb1 or '—'}); raiz no dia 1 {_root1 or '—'} cm "
+                                     f"(máx. no período {_permax_s} cm; máx. da cultura {_cropmax_s} cm); "
+                                     f"crescimento {_rg_lbl}; após a colheita: {_ah_lbl}.{_log_note}")
         elif _mode == "planting":
             try:
                 _pd_s = f"{float(_sit.get('plant_cal')):.0f}"
@@ -709,9 +779,12 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
             _ah_lbl = "repetir o ciclo" if str(_sit.get("after_harvest")) == "repeat" else "solo nu"
             out["crop_start_txt"] = (f"plantio durante a simulação (dia {_pd_s}; solo nu antes); "
                                      f"estádio no dia 1 {_stage1 or '—'} (Kcb {_kcb1 or '—'}); raiz no dia 1 {_root1 or '—'} cm "
-                                     f"(máx {_rootmax or '—'} cm); crescimento {_rg_lbl}; após a colheita: {_ah_lbl}.")
+                                     f"(máx. no período {_permax_s} cm; máx. da cultura {_cropmax_s} cm); crescimento {_rg_lbl}; "
+                                     f"após a colheita: {_ah_lbl}.{_log_note}")
         elif _mode == "perennial":
-            out["crop_start_txt"] = (f"perene adulta; raiz no dia 1 {_root1 or '—'} cm (fixa); Kcb {_kcb1 or '—'}.")
+            _per_stage2 = _stage1 or "perene"
+            out["crop_start_txt"] = (f"perene adulta; estádio no dia 1 {_per_stage2} (Kcb {_kcb1 or '—'}); "
+                                     f"raiz no dia 1 {_root1 or '—'} cm (fixa).")
         if _hyd_txt:
             out["hydrus_txt"] = _hyd_txt
     else:

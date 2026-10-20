@@ -233,3 +233,54 @@ def test_laudo_contem_hydrus():
     results, soil, crop, rd, tr, td = _run_core(req)
     rep = build_report(req, results, soil, crop, rd, tr, td)
     assert "HYDRUS-1D" in rep and "tRMin" in rep
+
+
+def _mk_req(crop_key, **kw):
+    from backend.app.schemas import SimulateRequest, PlacementInput, SoluteInput
+    base = dict(soil_key="latossolo_medio", crop_key=crop_key,
+                depth_cm=100.0, total_days=10, rain_mm=60.0,
+                placement=PlacementInput(mode="surface", application_day=0.0),
+                solutes=[SoluteInput(symbol="N", name="N", dose_kg_ha=10.0, kd=0.0)])
+    base.update(kw)
+    return SimulateRequest(**base)
+
+
+def test_laudo_perene_kcb_estadio_sem_trmin():
+    from backend.app.service import _build_crop, _cycle_info
+    req = _mk_req("cafe", crop_start_mode="perennial")
+    crop = _build_crop(req)
+    info = _cycle_info(req, crop)
+    txt = info["crop_start_txt"]
+    assert "0.90" in txt, txt
+    assert "perene" in txt.lower(), txt
+    assert "Kcb no dia 1 —" not in txt, txt
+    hyd = info["hydrus_txt"]
+    assert "lRoot=False" in hyd, hyd
+    assert "tRMin" not in hyd, hyd
+
+
+def test_laudo_logistico_max_periodo_cultura_e_nota():
+    from backend.app.service import _build_crop, _cycle_info
+    from hydrus_core.crop import _verhulst_root, _r_logistic_iRFak1
+    req = _mk_req("milho", crop_start_mode="established", crop_age_dap=50.0,
+                  root_growth_model="logistic")
+    crop = _build_crop(req)
+    info = _cycle_info(req, crop)
+    txt = info["crop_start_txt"]
+    assert "máx. no período" in txt, txt
+    assert "máx. da cultura 40 cm" in txt, txt
+    assert "tempo infinito" in txt and "eq. 2.22" in txt, txt
+    r = _r_logistic_iRFak1(15.0, 40.0, 125.0)
+    exp = _verhulst_root(125.0, 15.0, 40.0, r)
+    assert f"~{exp:.0f} cm na colheita" in txt, (txt, exp)
+
+
+def test_laudo_linear_sem_nota_logistica():
+    from backend.app.service import _build_crop, _cycle_info
+    req = _mk_req("milho", crop_start_mode="established", crop_age_dap=50.0,
+                  root_growth_model="linear")
+    crop = _build_crop(req)
+    info = _cycle_info(req, crop)
+    txt = info["crop_start_txt"]
+    assert "máx. no período" in txt and "máx. da cultura 40 cm" in txt, txt
+    assert "tempo infinito" not in txt, txt
