@@ -75,3 +75,8 @@ Critérios fortes permitem trabalhar sozinho até o fim. Critérios fracos ("faz
 - Plugin `@dietrichgebert/ponytail` do opencode.
 - Revisão: `opencode run -m <modelo> --command ponytail-review "<escopo>" < /dev/null`
 - Auditoria de dívida técnica: `opencode run -m <modelo> --command ponytail-audit "<escopo>" < /dev/null`
+
+## Regras do Arthur para mudanças
+
+1. **Menos texto na interface.** Remova slogans desnecessários, textos explicativos e tags secundárias. Se, depois da remoção, a interface ficar incompreensível, o problema está no layout. Nesse caso, refaça o layout em vez de devolver o texto.
+2. **Três experiências.** Toda modificação deve considerar a experiência do usuário, a experiência de desenvolvimento e a experiência de uso por agentes de IA. As três devem melhorar, sem comprometer as funcionalidades existentes.
