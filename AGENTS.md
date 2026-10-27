@@ -63,3 +63,15 @@ Em tarefas com várias etapas, apresente um plano curto:
 Critérios fortes permitem trabalhar sozinho até o fim. Critérios fracos ("fazer funcionar") exigem pedir esclarecimento o tempo todo.
 
 **Sinais de que as regras estão funcionando:** diffs com menos mudanças desnecessárias, menos reescritas por excesso de complexidade e perguntas de esclarecimento antes da implementação, não depois dos erros.
+
+## Segurança
+
+- Use a skill `security-audit` (Cloudflare, Apache-2.0) em `.agents/skills/security-audit/`. O opencode a descobre sozinho nesse caminho.
+- Padrão: modo guia (perguntas e revisões pontuais de segurança). Auditoria completa só quando alguém pedir explicitamente.
+- Relatórios ficam fora do repo, em `~/security-audit-skill/hydrus-react/`. Nunca commite relatórios.
+
+## Revisão com Ponytail
+
+- Plugin `@dietrichgebert/ponytail` do opencode.
+- Revisão: `opencode run -m <modelo> --command ponytail-review "<escopo>" < /dev/null`
+- Auditoria de dívida técnica: `opencode run -m <modelo> --command ponytail-audit "<escopo>" < /dev/null`
