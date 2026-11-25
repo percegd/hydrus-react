@@ -12,6 +12,23 @@ from hydrus_core.crop import CropParameters
 from hydrus_core.soil_physics import SoilParameters, water_content_from_h
 
 
+def _liquid_mg_l(c_total, theta, kd, rho) -> np.ndarray:
+    """Concentração total no solo [mg/cm³] → fase líquida [mg/L]."""
+    th = np.asarray(theta, dtype=float)
+    ct = np.asarray(c_total, dtype=float)
+    ret = np.maximum(th + float(rho) * max(0.0, float(kd)), 1e-6)
+    return ct / ret * 1000.0
+
+
+def _kd_of(results, sym: str) -> float:
+    nr = (getattr(results, "nutrient_results", None) or {}).get(sym) or {}
+    try:
+        kd = float(nr.get("kd", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        kd = 0.0
+    return kd
+
+
 def _truncate(text: str, max_len: int) -> str:
     """Truncates a string to max_len characters, adding '…' if needed."""
     return text if len(text) <= max_len else text[:max_len - 1] + "…"
@@ -42,7 +59,7 @@ def plot_water_profile(
     init_theta = np.asarray(results.theta_profiles[0], dtype=float)
 
     fig, ax = plt.subplots(1, 1, figsize=(6.8, 7.2), dpi=150)
-    ax.plot(init_theta, z, color="#9e9e9e", lw=2.0, ls="--", label="Inicial")
+    ax.plot(init_theta, z, color="#9e9e9e", lw=2.0, ls="--", label="Inicial (t = 0)")
     ax.plot(final_theta, z, color="#1f77b4", lw=2.4, label="Final")
 
     # Escala do eixo de umidade baseada no intervalo efetivo do perfil.
@@ -175,15 +192,16 @@ def plot_nutrient_profile(
 
     if is_multi:
         # Plot de múltiplos nutrientes simultâneos
+        rho = float(getattr(soil, "bulk_density", 1.3) or 1.3)
         for sym, n_data in results.nutrient_results.items():
             color_nutr = nutrient_colors.get(sym, "#388e3c")
-            c_prof = n_data["final_profile"]
+            c_prof = _liquid_mg_l(n_data["final_profile"], final_theta, _kd_of(results, sym), rho)
             lbl = f"{n_data['name']} ({sym})"
             ax1.plot(c_prof, z, color=color_nutr, lw=2.4, label=lbl)
             ax1.fill_betweenx(z, 0, c_prof, color=color_nutr, alpha=0.18)
 
         ax1.set_title("Dinâmica Multi-Nutriente no Perfil", fontsize=11, fontweight='bold', pad=8)
-        ax1.set_xlabel("Teor TOTAL no Solo [mg elemento / cm³] (dissolvido+adsorvido)", fontsize=9)
+        ax1.set_xlabel("Concentração na fase líquida [mg/L]", fontsize=9)
     else:
         _per = (getattr(results, "nutrient_results", {}) or {}).get(nutrient_symbol, {})
         if _per and _per.get("final_profile") is not None:
@@ -193,35 +211,42 @@ def plot_nutrient_profile(
             final_n = results.n_profiles[-1]
             peak_z = results.peak_depth_cm
         color_nutr = nutrient_colors.get(nutrient_symbol, "#d95f02")
+        rho = float(getattr(soil, "bulk_density", 1.3) or 1.3)
+        final_n = _liquid_mg_l(final_n, final_theta, _kd_of(results, nutrient_symbol), rho)
 
         ax1.plot(final_n, z, color=color_nutr, lw=2.6, label=f"{nutrient_name} ({nutrient_symbol})")
         ax1.fill_betweenx(z, 0, final_n, color=color_nutr, alpha=0.35)
 
         ax1.set_title(f"Dinâmica de {nutrient_name} ({nutrient_symbol})", fontsize=11, fontweight='bold', pad=8)
-        if nutrient_symbol == "P":
-            ax1.set_xlabel(f"P TOTAL no Solo [mg P / cm³] (dissolvido+adsorvido)", fontsize=9)
-        else:
-            ax1.set_xlabel(f"Teor no Solo [mg {nutrient_symbol} / cm³]", fontsize=10)
+        ax1.set_xlabel(f"Concentração na fase líquida — {nutrient_symbol} [mg/L]", fontsize=10)
 
     ax1.set_ylabel("Profundidade do Solo [cm]", fontsize=10)
     ax1.grid(True, linestyle=":", alpha=0.6)
     ax1.legend(loc="lower right", fontsize=8.2, framealpha=0.9)
-    if x_max is not None and x_max > 0:
-        # Escala X comum (maior pico entre solutos): proporcao comparavel na galeria.
-        ax1.set_xlim(0.0, float(x_max))
+    # x_max legado era em mg/cm³ total; a curva agora é mg/L. Margem a partir dos dados.
+    try:
+        _xhi = float(ax1.dataLim.x1)
+        if _xhi > 0:
+            ax1.set_xlim(0.0, _xhi * 1.08)
+    except Exception:
+        pass
 
     # ------------------ GRÁFICO 2: UMIDADE DO SOLO (só se include_moisture) ------------------
     if ax2 is not None:
-        ax2.plot(init_theta * 100, z, color="#7f7f7f", linestyle=":", lw=1.8, label="Umidade Inicial")
-        ax2.plot(final_theta * 100, z, color="#1f77b4", lw=2.5, label="Umidade Atual")
-        ax2.fill_betweenx(z, init_theta * 100, final_theta * 100, color="#1f77b4", alpha=0.25)
+        ax2.plot(init_theta, z, color="#7f7f7f", linestyle=":", lw=1.8, label="Inicial (t = 0)")
+        ax2.plot(final_theta, z, color="#1f77b4", lw=2.5, label="Final")
+        ax2.fill_betweenx(z, init_theta, final_theta, color="#1f77b4", alpha=0.25)
+        _th = np.concatenate([np.asarray(init_theta, dtype=float), np.asarray(final_theta, dtype=float)])
+        _lo, _hi = float(np.min(_th)), float(np.max(_th))
+        _pad = max(0.005, 0.08 * (_hi - _lo))
+        ax2.set_xlim(max(0.0, _lo - _pad), _hi + _pad)
 
         # Linha da raiz também no gráfico 2
         ax2.axhline(root_depth, color="#2ca02c", linestyle="--", lw=1.8)
         ax2.axhspan(0, root_depth, color="#2ca02c", alpha=0.12)
 
         ax2.set_title("Frente de Umidade da Água", fontsize=11, fontweight='bold', pad=8)
-        ax2.set_xlabel("Umidade Volumétrica [%]", fontsize=10)
+        ax2.set_xlabel("Umidade volumétrica θ [cm³/cm³]", fontsize=10)
         ax2.grid(True, linestyle=":", alpha=0.6)
         ax2.legend(loc="lower right", fontsize=8.5)
 
@@ -349,8 +374,15 @@ def plot_breakthrough_curves(
                 )
         ax.set_title("Evolução da Umidade no Tempo θ(t)", fontsize=11, fontweight="bold", pad=8)
         ax.set_xlabel("Tempo Decorrido [dias]", fontsize=10)
-        ax.set_ylabel("Umidade Volumétrica θ [cm³/cm³]", fontsize=10)
+        ax.set_ylabel("Umidade volumétrica θ [cm³/cm³]", fontsize=10)
         ax.grid(True, linestyle=":", alpha=0.5)
+        _ys = []
+        for _d in depths:
+            _ys.extend(list(obs_theta.get(_d, []) or []))
+        if _ys:
+            _lo, _hi = float(min(_ys)), float(max(_ys))
+            _pad = max(0.005, 0.12 * (_hi - _lo if _hi > _lo else 0.05))
+            ax.set_ylim(_lo - _pad, _hi + _pad)
         ncol = 2 if len(depths) >= 4 else 1
         ax.legend(loc="lower right", fontsize=8.5, framealpha=0.92, facecolor="#ffffff", edgecolor="#cbd5e1", ncol=ncol)
 
@@ -568,6 +600,152 @@ def plot_profiles_at_days(
         y=0.98
     )
     plt.tight_layout(rect=(0.01, 0.01, 0.99, 0.95))
+    plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white", edgecolor="none")
+    plt.close(fig)
+    return output_path
+
+
+def _print_snapshots(results):
+    """(dia, theta, h, c_total) nos dias de leitura, com t = 0 se houver perfil inicial."""
+    z = np.asarray(results.z, dtype=float)
+    snaps = []
+    th0 = getattr(results, "theta_profiles", None) or []
+    h0 = getattr(results, "h_profiles", None) or []
+    if len(th0) and len(h0) and len(np.asarray(th0[0])) == len(z):
+        snaps.append((0.0, np.asarray(th0[0], dtype=float), np.asarray(h0[0], dtype=float), {}))
+    profs = getattr(results, "print_profiles", None) or {}
+    for d in sorted(profs.keys()):
+        snap = profs[d]
+        th = np.asarray(snap.get("theta"), dtype=float) if snap.get("theta") is not None else None
+        hh = np.asarray(snap.get("h"), dtype=float) if snap.get("h") is not None else None
+        if th is None or hh is None or len(th) != len(z):
+            continue
+        snaps.append((float(d), th, hh, snap.get("c_total") or {}))
+    return z, snaps
+
+
+def plot_hydrus_profiles(results, soil, output_path: str, nutrient_symbol: str = None) -> str:
+    """Perfis θ, h e concentração (fase líquida) com a profundidade para baixo, nos dias de leitura."""
+    z, snaps = _print_snapshots(results)
+    if len(z) < 2 or not snaps:
+        return None
+    rho = float(getattr(soil, "bulk_density", 1.3) or 1.3)
+    nr = getattr(results, "nutrient_results", None) or {}
+    sym = None
+    if nutrient_symbol:
+        sym = nutrient_symbol
+    elif nr:
+        sym = next(iter(nr))
+    n_panels = 3 if sym else 2
+    fig, axes = plt.subplots(1, n_panels, figsize=(4.4 * n_panels, 7.0), sharey=True, dpi=150)
+    cmap = plt.get_cmap("viridis")
+    n = max(1, len(snaps) - 1)
+
+    def _color(i):
+        return cmap(i / n)
+
+    ax_th, ax_h = axes[0], axes[1]
+    for i, (d, th, hh, _ct) in enumerate(snaps):
+        lbl = "0 d" if d <= 0 else f"{d:.0f} d"
+        ax_th.plot(th, z, color=_color(i), lw=2.0, label=lbl)
+        ax_h.plot(hh, z, color=_color(i), lw=2.0, label=lbl)
+    ax_th.set_xlabel("Umidade volumétrica θ [cm³/cm³]", fontsize=10)
+    ax_th.set_title("θ(z)", fontsize=11, fontweight="bold")
+    ax_h.set_xlabel("Potencial matricial h [cm]", fontsize=10)
+    ax_h.set_title("h(z)", fontsize=11, fontweight="bold")
+    ax_th.set_ylabel("Profundidade [cm]", fontsize=10)
+    for ax in (ax_th, ax_h):
+        ax.set_ylim(float(np.max(z)), 0.0)
+        ax.grid(True, linestyle=":", alpha=0.5)
+        ax.legend(title="Dia", fontsize=8, loc="lower right")
+    if sym:
+        ax_c = axes[2]
+        name = (nr.get(sym) or {}).get("name", sym)
+        kd = _kd_of(results, sym)
+        for i, (d, th, _hh, ct) in enumerate(snaps):
+            arr = (ct or {}).get(sym)
+            if arr is None:
+                continue
+            c_liq = _liquid_mg_l(arr, th, kd, rho)
+            lbl = "0 d" if d <= 0 else f"{d:.0f} d"
+            ax_c.plot(c_liq, z, color=_color(i), lw=2.0, label=lbl)
+        ax_c.set_xlabel(f"{name} ({sym}) na fase líquida [mg/L]", fontsize=10)
+        ax_c.set_title("Concentração", fontsize=11, fontweight="bold")
+        ax_c.set_ylim(float(np.max(z)), 0.0)
+        ax_c.grid(True, linestyle=":", alpha=0.5)
+        ax_c.legend(title="Dia", fontsize=8, loc="lower right")
+    fig.suptitle("Perfis no estilo HYDRUS-1D (dias de leitura)", fontsize=12, fontweight="bold", color="#2e7d32")
+    plt.tight_layout(rect=(0.01, 0.01, 0.99, 0.95))
+    plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white", edgecolor="none")
+    plt.close(fig)
+    return output_path
+
+
+def plot_hydrus_observations(results, output_path: str, nutrient_symbol: str = None) -> str:
+    """Séries nos nós de observação: θ(t), h(t) e concentração na fase líquida."""
+    times = list(getattr(results, "obs_times_days", []) or [])
+    depths = list(getattr(results, "obs_depths_cm", []) or [])
+    if len(times) < 2 or not depths:
+        return None
+    obs_th = getattr(results, "obs_theta_series", {}) or {}
+    obs_h = getattr(results, "obs_h_series", {}) or {}
+    obs_c = getattr(results, "obs_c_series", {}) or {}
+    sym = nutrient_symbol if nutrient_symbol in obs_c else (next(iter(obs_c), None) if obs_c else None)
+    n_panels = 2 + (1 if sym else 0)
+    fig, axes = plt.subplots(1, n_panels, figsize=(4.6 * n_panels, 4.6), dpi=150)
+    palette = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
+
+    def _series(ax, store, ylabel, title):
+        for i, d in enumerate(depths):
+            vals = (store or {}).get(d, [])
+            if len(vals) == len(times):
+                ax.plot(times, vals, color=palette[i % len(palette)], lw=1.8, label=f"z = {d:.0f} cm")
+        ax.set_xlabel("Tempo [dias]", fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.set_title(title, fontsize=11, fontweight="bold")
+        ax.grid(True, linestyle=":", alpha=0.5)
+        ax.legend(fontsize=8, loc="best")
+        ys = []
+        for d in depths:
+            ys.extend(list((store or {}).get(d, []) or []))
+        if ys:
+            lo, hi = float(min(ys)), float(max(ys))
+            pad = max(abs(hi - lo) * 0.12, 1e-3)
+            ax.set_ylim(lo - pad, hi + pad)
+
+    _series(axes[0], obs_th, "Umidade volumétrica θ [cm³/cm³]", "θ(t)")
+    _series(axes[1], obs_h, "Potencial matricial h [cm]", "h(t)")
+    if sym:
+        _series(axes[2], obs_c.get(sym) or {}, f"{sym} na fase líquida [mg/L]", f"C(t) — {sym}")
+    fig.suptitle("Nós de observação (estilo HYDRUS-1D)", fontsize=12, fontweight="bold", color="#2e7d32")
+    plt.tight_layout(rect=(0.01, 0.01, 0.99, 0.94))
+    plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white", edgecolor="none")
+    plt.close(fig)
+    return output_path
+
+
+def plot_hydrus_cumflux(results, output_path: str) -> str:
+    """Fluxos acumulados no estilo T_LEVEL: infiltração, evaporação, transpiração e fundo."""
+    t = list(getattr(results, "flux_times_days", []) or [])
+    if len(t) < 2:
+        return None
+    series = [
+        ("Infiltração", getattr(results, "cum_infil_cm", []), "#1f77b4"),
+        ("Evaporação", getattr(results, "cum_evap_series_cm", []), "#ff7f0e"),
+        ("Transpiração", getattr(results, "cum_transp_series_cm", []), "#2ca02c"),
+        ("Fluxo no fundo", getattr(results, "cum_bottom_series_cm", []), "#9467bd"),
+    ]
+    fig, ax = plt.subplots(1, 1, figsize=(8.2, 5.2), dpi=150)
+    for name, vals, color in series:
+        if len(vals) == len(t):
+            ax.plot(t, np.asarray(vals, dtype=float) * 10.0, color=color, lw=2.0, label=name)
+    ax.set_xlabel("Tempo [dias]", fontsize=10)
+    ax.set_ylabel("Fluxo acumulado [mm]", fontsize=10)
+    ax.set_title("Fluxos acumulados (T_LEVEL)", fontsize=11, fontweight="bold")
+    ax.grid(True, linestyle=":", alpha=0.5)
+    ax.legend(fontsize=9, loc="best")
+    fig.suptitle("Balanço acumulado no estilo HYDRUS-1D", fontsize=12, fontweight="bold", color="#2e7d32")
+    plt.tight_layout(rect=(0.01, 0.01, 0.99, 0.94))
     plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white", edgecolor="none")
     plt.close(fig)
     return output_path

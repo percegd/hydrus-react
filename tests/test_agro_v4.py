@@ -51,6 +51,7 @@ def test_3_coluna_milho_evap_positiva():
         water_events=[(0.5, 0.3, 20.0)],
         et0_mm_day=4.0,
         nutrients=[{"symbol": "K", "name": "K", "dose_kg_ha": 30.0, "kd": 0.45}],
+        use_dual_kc=True,
     )
     assert float(res.evap_cum_cm) > 0.0
 

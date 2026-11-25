@@ -71,8 +71,15 @@ type Props = {
   setKcbEnd: (v: string) => void;
   uptakeCap: boolean;
   setUptakeCap: (v: boolean) => void;
+  useDualKc: boolean;
+  setUseDualKc: (v: boolean) => void;
+  growingRoot: boolean;
+  setGrowingRoot: (v: boolean) => void;
+  bareAfterHarvest: boolean;
+  setBareAfterHarvest: (v: boolean) => void;
   rainIsSeries: boolean;
   previewBody: Record<string, unknown>;
+  onPreview?: (r: { active_day1?: boolean; kcb_day1?: number | null; ke_day1?: number | null; et_varies?: boolean }) => void;
 };
 
 function SoilLayersIcon() {
@@ -176,8 +183,15 @@ export default function StepSoil({
   setKcbEnd,
   uptakeCap,
   setUptakeCap,
+  useDualKc,
+  setUseDualKc,
+  growingRoot,
+  setGrowingRoot,
+  bareAfterHarvest,
+  setBareAfterHarvest,
   rainIsSeries,
   previewBody,
+  onPreview,
 }: Props) {
   const comCultura = cropMode === "com";
   const [cropModalOpen, setCropModalOpen] = useState(false);
@@ -198,6 +212,7 @@ export default function StepSoil({
       postCropPreview(previewBody).then((r) => {
         const w = r.harvest_day_cal != null ? ` · colheita no dia ${Math.round(Number(r.harvest_day_cal))}` : "";
         setPreview(`Dia 1: estádio ${r.stage_day1} · Kcb ${r.kcb_day1 != null ? Number(r.kcb_day1).toFixed(2) : "—"} · raiz ${r.root_day1_cm != null ? Number(r.root_day1_cm).toFixed(0) : "—"} cm${w}`);
+        onPreview?.(r);
       }).catch(() => setPreview(""));
     }, 300);
     return () => { if (previewTimer.current) clearTimeout(previewTimer.current); };
@@ -554,9 +569,22 @@ export default function StepSoil({
                   <input value={kcbEnd} onChange={(e) => setKcbEnd(e.target.value)} inputMode="decimal" type="number" step="any" placeholder="banco" />
                 </Field>
               </div>
+              <p className="ext-warn">O HYDRUS-1D original não possui essa configuração; ativá-la altera os resultados.</p>
+              <label className="custom-toggle-chk">
+                <input type="checkbox" className="switch" checked={useDualKc} onChange={(e) => setUseDualKc(e.target.checked)} />
+                Kc dual FAO-56 (separa evaporação e transpiração)
+              </label>
+              <label className="custom-toggle-chk">
+                <input type="checkbox" className="switch" checked={growingRoot} onChange={(e) => setGrowingRoot(e.target.checked)} />
+                Raiz crescente ao longo do ciclo
+              </label>
+              <label className="custom-toggle-chk">
+                <input type="checkbox" className="switch" checked={bareAfterHarvest} onChange={(e) => setBareAfterHarvest(e.target.checked)} />
+                Solo nu após a colheita
+              </label>
               <label className="custom-toggle-chk">
                 <input type="checkbox" className="switch" checked={uptakeCap} onChange={(e) => setUptakeCap(e.target.checked)} />
-                Limitar absorção à demanda da cultura (extensão agronômica; o HYDRUS-1D não limita)
+                Limitar absorção à demanda da cultura
               </label>
             </details>
           </div>

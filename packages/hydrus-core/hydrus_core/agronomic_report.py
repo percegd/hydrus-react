@@ -605,13 +605,12 @@ def generate_advanced_report(
     except Exception:
         _kd_eff_adv, _kd_differs = float(kd_used), False
     if _kd_differs:
-        _kd_line = (f"* **Adsorção Linear (Kd nominal):** {kd_used:.3f} cm³/g *(Fonte: {kd_citation})* | "
-                    f"**Kd efetivo usado no transporte:** {_kd_eff_adv:.4f} cm³/g (competição Ca/Langmuir)")
+        _kd_line = (f"* **Kd nominal:** {kd_used:.3f} cm³/g (fonte: {kd_citation}). "
+                    f"**Kd efetivo no transporte:** {_kd_eff_adv:.4f} cm³/g")
     else:
-        _kd_line = f"* **Adsorção Linear (Kd):** {kd_used:.3f} cm³/g *(Fonte: {kd_citation})*"
-    _kd_line += " — valor de referência para a textura do solo (ajustável na tabela de nutrientes; não calibrado para este talhão)"
-    _r_line = (f"* **Fator de Retardo calculado ($R = 1 + ρb·Kd/θ$):** **{_r_adv:.2f}** "
-               f"*(R = 1 indica transporte conservativo; R > 1 indica retenção por adsorção)*")
+        _kd_line = f"* **Kd:** {kd_used:.3f} cm³/g (fonte: {kd_citation})"
+    _kd_line += ". Referência de literatura para a textura; ajustável na tabela."
+    _r_line = f"* **Fator de retardo R:** **{_r_adv:.2f}** (1 + ρb·Kd/θ)"
     _p_note_block = ""
     try:
         _has_p = ("P" in (_nr.keys() if _nr else [])) or nutrient_symbol == "P" or _w_sym == "P"
@@ -855,11 +854,11 @@ def generate_column_report(
     except Exception:
         _kd_eff_c, _kd_dif_c = float(kd_used or 0.0), False
     if _kd_dif_c:
-        _kd_col_line = (f"* **Coeficiente de Adsorção Linear ($K_d$ nominal):** **{float(kd_used):.4f} cm³/g** *(Fonte: {kd_citation})* | "
-                        f"**Kd efetivo usado:** **{_kd_eff_c:.4f} cm³/g**")
+        _kd_col_line = (f"* **Kd nominal:** **{float(kd_used):.4f} cm³/g** (fonte: {kd_citation}). "
+                        f"**Kd efetivo no transporte:** **{_kd_eff_c:.4f} cm³/g**")
     else:
-        _kd_col_line = f"* **Coeficiente de Adsorção Linear ($K_d$):** **{float(kd_used):.4f} cm³/g** *(Fonte: {kd_citation})*"
-    _kd_col_line += " — valor de referência para a textura do solo (ajustável na tabela de nutrientes; não calibrado para este talhão)"
+        _kd_col_line = f"* **Kd:** **{float(kd_used):.4f} cm³/g** (fonte: {kd_citation})"
+    _kd_col_line += ". Referência de literatura para a textura; ajustável na tabela."
     try:
         _has_p_c = ("P" in (_nr_c.keys() if _nr_c else [])) or nutrient_symbol == "P" or _w_sym == "P"
     except Exception:
@@ -912,7 +911,7 @@ def generate_column_report(
 {solutes_header}
 * **Regime Hídrico:** Lâmina de **{rain_mm:.0f} mm** aplicada no início do ensaio de **{total_days:.0f} dias**
 {_kd_col_line}
-* **Fator de Retardo Teórico ($R$):** **{r_factor:.2f}** *(R calculado = 1 + ρb·Kd/θ; R = 1 indica transporte conservativo; R > 1 indica retenção por adsorção/troca catiônica)*
+* **Fator de retardo R:** **{r_factor:.2f}** (1 + ρb·Kd/θ)
 {tech_block}
 {multi_table_block}{_p_note_c}
 #### 2. Balanço Físico de Massa & Perfil de Concentração

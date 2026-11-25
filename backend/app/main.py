@@ -336,10 +336,17 @@ def crops_preview(req: SimulateRequest) -> dict:
         _td = 7.0
     sched = _schedule_for_request(req, crop, _td, _sw)
     if sched is None:
+        try:
+            from hydrus_core.surface_bc import potential_partition_cm
+            _tp0, _ep0 = potential_partition_cm(crop, float(req.et0_mm_day or 0.0), use_dual_kc=False)
+            _tp_m, _ep_m = float(_tp0) * 10.0, float(_ep0) * 10.0
+        except Exception:
+            _tp_m, _ep_m = None, None
         return {"has_cycle": False, "active_day1": True, "stage_day1": "fora do ciclo",
                 "kcb_day1": None, "ke_day1": None, "root_day1_cm": float(crop.root_depth_cm),
                 "harvest_day_cal": None, "dap_effective": None, "remaining_demand_kg_ha": {},
-                "hydrus_equiv": {"lRoot": False, "iRootIn": None}}
+                "hydrus_equiv": {"lRoot": False, "iRootIn": None},
+                "tp_mm_day": _tp_m, "ep_mm_day": _ep_m, "et_varies": False}
     try:
         _stage1 = str((sched.get("stage") or [""])[0])
         _kcb1 = float(sched["kcb"][0])
@@ -398,11 +405,26 @@ def crops_preview(req: SimulateRequest) -> dict:
             _dap_eff = max(0.0, -_rel)
     except Exception:
         pass
+    try:
+        from hydrus_core.surface_bc import potential_partition_cm, schedule_et_varies
+        _et0_prev = float(req.et0_mm_day or 0.0)
+        _tp_cm, _ep_cm = potential_partition_cm(
+            crop, _et0_prev,
+            use_dual_kc=bool(getattr(req, "use_dual_kc", False)),
+            sched=sched, day_index=0,
+            bare_after_harvest=bool(getattr(req, "bare_after_harvest", False)),
+        )
+        _et_varies = schedule_et_varies(sched, bool(getattr(req, "use_dual_kc", False)))
+    except Exception:
+        _tp_cm, _ep_cm, _et_varies = None, None, False
     return {"has_cycle": True, "active_day1": _act1, "stage_day1": _stage1,
             "kcb_day1": _kcb1, "ke_day1": _ke1, "root_day1_cm": _root1,
             "harvest_day_cal": _harv, "dap_effective": _dap_eff,
             "remaining_demand_kg_ha": _rem, "hydrus_equiv": _he,
-            "mode": _sit.get("mode"), "after_harvest": _sit.get("after_harvest")}
+            "mode": _sit.get("mode"), "after_harvest": _sit.get("after_harvest"),
+            "tp_mm_day": (None if _tp_cm is None else float(_tp_cm) * 10.0),
+            "ep_mm_day": (None if _ep_cm is None else float(_ep_cm) * 10.0),
+            "et_varies": bool(_et_varies)}
 
 
 @app.get("/fertilizers")
@@ -960,6 +982,25 @@ def job_graphs_zip(job_id: str):
         media_type="application/zip",
         filename=f"graficos_{job_id}.zip",
     )
+
+
+@app.get("/jobs/{job_id}/hydrus1d.zip")
+def job_hydrus_zip(job_id: str):
+    """Projeto HYDRUS-1D (SELECTOR, ATMOSPH, PROFILE) do mesmo cenário."""
+    import os
+
+    from fastapi.responses import FileResponse
+
+    if _bad_job_id(job_id):
+        raise HTTPException(status_code=404, detail="Job expirado; rode a simulação novamente.")
+    _cleanup_jobs()
+    snapshot, _ev = _get_job_for_read(job_id)
+    if snapshot is None or snapshot.get("status") != "done":
+        raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
+    zip_path = os.path.join(_jobs_root, job_id, "hydrus1d.zip")
+    if not os.path.exists(zip_path):
+        raise HTTPException(status_code=404, detail="projeto HYDRUS-1D indisponível")
+    return FileResponse(zip_path, media_type="application/zip", filename=f"hydrus1d_{job_id}.zip")
 
 
 def _validate(req: SimulateRequest) -> None:

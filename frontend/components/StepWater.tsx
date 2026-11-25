@@ -74,10 +74,17 @@ type Props = {
   setHubLabel: (v: string) => void;
   hubScenario: string;
   setHubScenario: (v: string) => void;
-  hubAppDay: string;
-  setHubAppDay: (v: string) => void;
-  uploadAppDay: string;
-  setUploadAppDay: (v: string) => void;
+  appDay: string;
+  setAppDay: (v: string) => void;
+  printDaysLamina: string;
+  setPrintDaysLamina: (v: string) => void;
+  obsDepths: string;
+  setObsDepths: (v: string) => void;
+  useDualKc: boolean;
+  activeDay1: boolean;
+  kcbDay1: number | null;
+  keDay1: number | null;
+  etVaries: boolean;
   analysisStart: string;
   setAnalysisStart: (v: string) => void;
   analysisEnd: string;
@@ -186,7 +193,8 @@ export default function StepWater(props: Props) {
     days, setDays, rainMode, setRainMode, rainMm, setRainMm, moisture, setMoisture, et0, setEt0,
     hasCrop, cropKc, cropHeightM, seasonalMoisture, setSeasonalMoisture, advEt, setAdvEt, evap, setEvap, transp, setTransp,
     climateRows, setClimateRows, hubKey, setHubKey, hubLabel, setHubLabel, hubScenario, setHubScenario,
-    hubAppDay, setHubAppDay, uploadAppDay, setUploadAppDay,
+    appDay, setAppDay, printDaysLamina, setPrintDaysLamina, obsDepths, setObsDepths,
+    useDualKc, activeDay1, kcbDay1, keDay1, etVaries,
     analysisStart, setAnalysisStart, analysisEnd, setAnalysisEnd, printDays, setPrintDays,
   } = props;
   const [hubs, setHubs] = useState<HubInfo[]>([]);
@@ -277,21 +285,39 @@ export default function StepWater(props: Props) {
   const isUniform = rainMode === "uniform";
   const isHub = rainMode === "hub";
 
-  // Repartição Kc dual FAO-56 cap. 7 (mesmas fórmulas do solver):
-  // Tp = Kcb·ET0, Ep = Ke·ET0; Kcb = max(0,15; kc−0,05); Kc_max = max(1,2; Kcb+0,05);
-  // fc = ((Kcb−0,15)/(Kc_max−0,15))^(1+0,5h); Ke = min(Kc_max−Kcb, (1−fc)·Kc_max, 1,0).
+  // Mesma partição que o solver vai usar no dia 1.
   const et0Num = parseFloat(String(et0).replace(",", ".")) || 0;
   const kcNum = hasCrop ? (parseFloat(String(cropKc).replace(",", ".")) || 0) : 0;
-  const hRaw = parseFloat(String(cropHeightM ?? "1").replace(",", "."));
-  const hNum = Number.isFinite(hRaw) ? hRaw : 1.0;
-  const kcbCalc = hasCrop ? Math.max(0.15, kcNum - 0.05) : 0;
-  const kcMaxCalc = Math.max(1.2, kcbCalc + 0.05);
-  const fcCalc = kcbCalc <= 0.15
-    ? 0
-    : Math.min(0.99, Math.max(0, Math.pow((kcbCalc - 0.15) / Math.max(kcMaxCalc - 0.15, 1e-12), 1 + 0.5 * hNum)));
-  const keCalc = hasCrop ? Math.min(kcMaxCalc - kcbCalc, (1 - fcCalc) * kcMaxCalc, 1.0) : 1.0;
-  const transpCalc = Math.max(0, et0Num * (hasCrop ? kcbCalc : 0));
-  const evapCalc = Math.max(0, et0Num * (hasCrop ? Math.min(1, Math.max(0, keCalc)) : 1));
+  let transpCalc = 0;
+  let evapCalc = et0Num;
+  let etNote = "";
+  if (!hasCrop) {
+    transpCalc = 0;
+    evapCalc = et0Num;
+  } else if (!useDualKc || !activeDay1) {
+    if (useDualKc && !activeDay1) {
+      transpCalc = 0;
+      evapCalc = et0Num;
+      etNote = " (dia 1 fora do ciclo: solo nu)";
+    } else {
+      transpCalc = Math.max(0, kcNum * et0Num);
+      evapCalc = 0;
+    }
+  } else {
+    const kcb = kcbDay1 != null && Number.isFinite(kcbDay1) ? kcbDay1 : Math.max(0.15, kcNum - 0.05);
+    const ke = keDay1 != null && Number.isFinite(keDay1) ? keDay1 : 0;
+    transpCalc = Math.max(0, kcb * et0Num);
+    evapCalc = Math.max(0, Math.min(1, ke) * et0Num);
+    etNote = etVaries ? " (potenciais no dia 1; variam com o estádio)" : "";
+  }
+  if (advEt) {
+    const eManual = parseFloat(String(evap).replace(",", "."));
+    const tManual = parseFloat(String(transp).replace(",", "."));
+    if (Number.isFinite(eManual) && eManual > 0) evapCalc = eManual;
+    if (hasCrop && Number.isFinite(tManual) && tManual > 0) transpCalc = tManual;
+    etNote = " (valores informados substituem a partição)";
+  }
+  void cropHeightM;
 
   return (
     <>
@@ -344,9 +370,9 @@ export default function StepWater(props: Props) {
           {!advEt && (
             <div className="et-split-info">
               {hasCrop ? (
-                <><b>Transpiração (Tp = Kcb·ET0)</b> = {transpCalc.toFixed(2)} mm/dia &nbsp;•&nbsp; <b>Evaporação do solo (Ep = Ke·ET0)</b> = {evapCalc.toFixed(2)} mm/dia</>
+                <>Tp = {transpCalc.toFixed(2)} mm/dia · Ep = {evapCalc.toFixed(2)} mm/dia{etNote}</>
               ) : (
-                <><b>Evaporação do solo</b> = {evapCalc.toFixed(2)} mm/dia <span style={{ color: "#64748b" }}>(solo nu: 100% do ET0)</span></>
+                <>Ep = {evapCalc.toFixed(2)} mm/dia (solo nu)</>
               )}
             </div>
           )}
@@ -362,6 +388,14 @@ export default function StepWater(props: Props) {
               )}
             </div>
           )}
+          <div className="form-row">
+            <Field label="Dias de leitura [dia do ensaio]" helpKey="print_days">
+              <input value={printDaysLamina} onChange={(e) => setPrintDaysLamina(e.target.value)} placeholder="vazio = 25, 50, 75 e 100% da duração" />
+            </Field>
+            <Field label="Nós de observação [cm]" helpKey="obs_depths">
+              <input value={obsDepths} onChange={(e) => setObsDepths(e.target.value)} placeholder="10, 20, 30, 50" />
+            </Field>
+          </div>
         </>
       )}
 
@@ -402,11 +436,6 @@ export default function StepWater(props: Props) {
                   </label>
                 ))}
               </div>
-              <div className="app-day-chip">
-                <Field label="Dia da aplicação do fertilizante [1 - 365]" helpKey="app_day">
-                  <input value={hubAppDay} onChange={(e) => setHubAppDay(e.target.value)} placeholder={APP_DAY_DEFAULT} inputMode="decimal" />
-                </Field>
-              </div>
             </div>
           </div>
           {hubError && <p className="error-text">{hubError}</p>}
@@ -414,7 +443,7 @@ export default function StepWater(props: Props) {
           <div className="upload-note">
             <div><b>Tabela editável (365 dias):</b> edite células diretamente ou cole dados do Excel (Ctrl+V). <HelpIcon helpKey="water_series" /></div>
           </div>
-          <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={hubAppDay} setAppDay={setHubAppDay} hideAppDay />
+          <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={appDay} setAppDay={setAppDay} hideAppDay />
         </div>
       )}
 
@@ -435,12 +464,7 @@ export default function StepWater(props: Props) {
           </div>
           {uploadError && <p className="error-text">{uploadError}</p>}
           {uploadStatus && <p className="hint-text">{uploadStatus}</p>}
-          <div className="app-day-chip" style={{ marginBottom: 8 }}>
-            <Field label="Dia da aplicação do fertilizante [1 - 365]" helpKey="app_day">
-              <input value={uploadAppDay} onChange={(e) => setUploadAppDay(e.target.value)} placeholder={APP_DAY_DEFAULT} inputMode="decimal" />
-            </Field>
-          </div>
-          <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={uploadAppDay} setAppDay={setUploadAppDay} hideAppDay />
+          <ClimateTable rows={climateRows} setRows={setClimateRows} appDay={appDay} setAppDay={setAppDay} hideAppDay />
         </div>
       )}
 
@@ -462,6 +486,9 @@ export default function StepWater(props: Props) {
           <div className="form-row">
             <Field label="Dias de leitura [dia do ensaio] (ex: 55,128,237,365)" helpKey="print_days">
               <input value={printDays} onChange={(e) => setPrintDays(e.target.value)} placeholder="obrigatório — ex: 55, 128, 237, 365" />
+            </Field>
+            <Field label="Nós de observação [cm]" helpKey="obs_depths">
+              <input value={obsDepths} onChange={(e) => setObsDepths(e.target.value)} placeholder="10, 20, 30, 50" />
             </Field>
           </div>
         </>

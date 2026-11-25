@@ -34,6 +34,7 @@ type Props = {
   soluteMeta?: Record<string, SoluteMeta>;
   onDownloadExcel: () => void;
   onDownloadGraphs: () => void;
+  onDownloadHydrus: () => void;
   onLoadReport: () => void;
   onLoadSteps: () => void;
 };
@@ -78,7 +79,7 @@ function screenSrc(u: string | null | undefined): string | null {
 }
 
 export default function Results(props: Props) {
-  const { jobState, elapsed, result, report, steps, rootDepth, appliedMm, soluteMeta, onDownloadExcel, onDownloadGraphs, onLoadReport, onLoadSteps } = props;
+  const { jobState, elapsed, result, report, steps, rootDepth, appliedMm, soluteMeta, onDownloadExcel, onDownloadGraphs, onDownloadHydrus, onLoadReport, onLoadSteps } = props;
 
   /* Laudo + passo a passo carregados automaticamente quando o resultado chega
      (o Gradio concatena os dois no mesmo card: report = f"{laudo}\n\n---\n\n{passo}"). */
@@ -108,6 +109,9 @@ export default function Results(props: Props) {
   const perfilSrc = screenSrc(result?.screen?.perfil);
   const btcSrc = screenSrc(result?.screen?.btc);
   const evolucaoSrc = screenSrc(result?.screen?.evolucao);
+  const hydrusPerfisSrc = screenSrc(result?.screen?.hydrus_perfis);
+  const hydrusObsSrc = screenSrc(result?.screen?.hydrus_obs);
+  const hydrusFluxSrc = screenSrc(result?.screen?.hydrus_fluxos);
   const galeria = useMemo(
     () =>
       (result?.screen?.galeria ?? [])
@@ -136,13 +140,39 @@ export default function Results(props: Props) {
           <div className="metrics-card-grid">
             <div className="metric-card">
               <div className="metric-icon"><RainIcon /></div>
-              <div className="metric-value">{appliedVal != null ? `${appliedVal.toFixed(0)} mm` : "—"}</div>
+              <div className="metric-value">{appliedVal != null ? `${appliedVal.toFixed(1)} mm` : "—"}</div>
               <div className="metric-label">{appliedLabel}</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-icon"><RainIcon /></div>
+              <div className="metric-value">{wb ? `${(wb.infiltration_mm ?? wb.applied_mm - wb.runoff_mm).toFixed(1)} mm` : "—"}</div>
+              <div className="metric-label">Infiltração real</div>
+              {wb && wb.runoff_mm > 0.05 && (
+                <div className="metric-sub">Escoamento {wb.runoff_mm.toFixed(1)} mm</div>
+              )}
+            </div>
+            <div className="metric-card">
+              <div className="metric-icon"><LayersIcon /></div>
+              <div className="metric-value">{wb ? `${wb.storage_mm >= 0 ? "+" : ""}${wb.storage_mm.toFixed(1)} mm` : "—"}</div>
+              <div className="metric-label">Δ armazenamento</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-value">{wb?.evap_mm != null ? `${wb.evap_mm.toFixed(1)} mm` : "—"}</div>
+              <div className="metric-label">Evaporação</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-value">{wb?.transp_mm != null ? `${wb.transp_mm.toFixed(1)} mm` : "—"}</div>
+              <div className="metric-label">Transpiração</div>
             </div>
             <div className="metric-card">
               <div className="metric-icon"><DrainIcon /></div>
               <div className="metric-value">{drainageVal != null ? `${drainageVal.toFixed(1)} mm` : "—"}</div>
               <div className="metric-label">{drainageLabel}</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-value">{wb && wb.balance_error_mm != null ? `${wb.balance_error_mm >= 0 ? "+" : ""}${wb.balance_error_mm.toFixed(2)} mm` : "—"}</div>
+              <div className="metric-label">Erro de balanço</div>
+              {wb && wb.balance_error_pct != null && <div className="metric-sub">WatBalR {wb.balance_error_pct.toFixed(2)}%</div>}
             </div>
             {result.solutes.map((s) => {
               const [bg, fg] = ACCENTS[s.symbol] ?? ["#f1f5f9", "#334155"];
@@ -172,15 +202,15 @@ export default function Results(props: Props) {
                     <span className="metric-nutr-sym" style={{ background: bg, color: fg }}>{s.symbol}</span>
                     <span className="metric-nutr-name">{s.name}</span>
                   </div>
-                  <div className="metric-value">{s.retained_root_pct.toFixed(1)}%</div>
-                  <div className="metric-label">Retido na camada avaliada (0–{rootDepth.toFixed(0)} cm)</div>
-                  <div className="metric-sub">{`${retainedKg.toFixed(1)} kg/ha ${inputTxt}`}</div>
+                  <div className="metric-value">{(s.profile_pct ?? (s.retained_root_pct + s.below_profile_pct)).toFixed(1)}%</div>
+                  <div className="metric-label">No perfil inteiro (ConcVol)</div>
+                  <div className="metric-sub">{`${(s.profile_kg_ha ?? (retainedKg + belowKg)).toFixed(1)} kg/ha ${inputTxt}`}</div>
                   <div className="metric-nutr-rows">
-                    <div className="metric-nutr-row"><span>Abaixo da camada (no perfil)</span><b>{s.below_profile_pct.toFixed(1)}% · {belowKg.toFixed(1)} kg/ha</b></div>
+                    <div className="metric-nutr-row"><span>Zona radicular (0–{rootDepth.toFixed(0)} cm)</span><b>{s.retained_root_pct.toFixed(1)}% · {retainedKg.toFixed(1)} kg/ha</b></div>
+                    <div className="metric-nutr-row"><span>Abaixo da raiz, no perfil</span><b>{s.below_profile_pct.toFixed(1)}% · {belowKg.toFixed(1)} kg/ha</b></div>
                     <div className="metric-nutr-row"><span>Atravessou o fundo ({zmax.toFixed(0)} cm)</span><b>{s.bottom_pct.toFixed(1)}% · {bottomKg.toFixed(1)} kg/ha</b></div>
-                    {s.uptaken_pct > 0.05 && (
-                      <div className="metric-nutr-row"><span>Absorvido pela cultura (limitado pela demanda){s.uptake_capped ? " — limitado pela demanda em parte do período" : ""}{s.uptake_capped && s.uptake_cap_kg_ha != null ? ` (teto no período: ${Number(s.uptake_cap_kg_ha).toFixed(1)} kg/ha)` : ""}</span><b>{s.uptaken_pct.toFixed(1)}% · {uptKg.toFixed(1)} kg/ha</b></div>
-                    )}
+                    <div className="metric-nutr-row"><span>Absorvido pela cultura{s.uptake_capped ? " (teto da demanda)" : ""}{s.uptake_capped && s.uptake_cap_kg_ha != null ? ` · teto ${Number(s.uptake_cap_kg_ha).toFixed(1)} kg/ha` : ""}</span><b>{s.uptaken_pct.toFixed(1)}% · {uptKg.toFixed(1)} kg/ha</b></div>
+                    <div className="metric-nutr-row"><span>Erro de massa (CncBalR)</span><b>{(s.mass_closure_pct ?? 0) >= 0 ? "+" : ""}{(s.mass_closure_pct ?? 0).toFixed(2)}%</b></div>
                     {(s.capsule_pct ?? 0) > 0.05 && (
                       <div className="metric-nutr-row"><span>Ainda no grânulo (não liberado)</span><b>{(s.capsule_pct ?? 0).toFixed(1)}% · {capKg.toFixed(1)} kg/ha</b></div>
                     )}
@@ -200,22 +230,6 @@ export default function Results(props: Props) {
             })}
             {/* Modo "somente água": balanço hídrico (sem solutos) — porte do ramo
                 water_only de build_metrics_cards_html. */}
-            {waterOnly && wb && (
-              <>
-                <div className="metric-card">
-                  <div className="metric-icon"><LayersIcon /></div>
-                  <div className="metric-value">{wb.storage_mm >= 0 ? "+" : ""}{wb.storage_mm.toFixed(1)} mm</div>
-                  <div className="metric-label">Ganho/Perda de Água no Perfil (θf − θi)</div>
-                </div>
-                {wb.runoff_mm > 0.05 && (
-                  <div className="metric-card">
-                    <div className="metric-icon"><RainIcon /></div>
-                    <div className="metric-value">{wb.runoff_mm.toFixed(1)} mm</div>
-                    <div className="metric-label">Escoamento Superficial</div>
-                  </div>
-                )}
-              </>
-            )}
           </div>
 
           {perfilSrc && (
@@ -246,6 +260,27 @@ export default function Results(props: Props) {
             </>
           )}
 
+          {(hydrusPerfisSrc || hydrusObsSrc || hydrusFluxSrc) && (
+            <>
+              <h3 className="results-section-title">Estilo HYDRUS-1D</h3>
+              {hydrusPerfisSrc && (
+                <div className="graph-white-card">
+                  <img src={hydrusPerfisSrc} alt="Perfis θ, h e concentração nos dias de leitura" loading="lazy" />
+                </div>
+              )}
+              {hydrusObsSrc && (
+                <div className="graph-white-card">
+                  <img src={hydrusObsSrc} alt="Séries nos nós de observação" loading="lazy" />
+                </div>
+              )}
+              {hydrusFluxSrc && (
+                <div className="graph-white-card">
+                  <img src={hydrusFluxSrc} alt="Fluxos acumulados" loading="lazy" />
+                </div>
+              )}
+            </>
+          )}
+
           {galeria.length > 0 && (
             <>
               <h3 className="results-section-title">Por Soluto</h3>
@@ -265,6 +300,7 @@ export default function Results(props: Props) {
             <div className="graph-download-actions-row">
               <button className="btn-download-action" onClick={onDownloadGraphs}>Baixar Gráficos (PNG) ⤓</button>
               <button className="btn-download-action" onClick={onDownloadExcel}>Baixar Dados do Perfil (.XLSX) ⤓</button>
+              <button className="btn-download-action" onClick={onDownloadHydrus}>Baixar projeto HYDRUS-1D ⤓</button>
             </div>
           )}
 

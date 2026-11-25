@@ -543,12 +543,19 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
            "crop_start_txt": "", "hydrus_txt": ""}
     if crop is None:
         return out
-    out["kc_dual_txt"] = ("Kc dual FAO-56 (Allen et al., 1998, cap. 7): "
-                          "Tp = Kcb·ET0, Ep = Ke·ET0.")
+    _dual_on = bool(getattr(req, "use_dual_kc", False))
+    _grow_on = bool(getattr(req, "growing_root", False))
+    if _dual_on:
+        out["kc_dual_txt"] = ("Kc dual FAO-56 (Allen et al., 1998, cap. 7): "
+                              "Tp = Kcb·ET0, Ep = Ke·ET0. "
+                              "O HYDRUS-1D original não possui essa configuração.")
+    else:
+        out["kc_dual_txt"] = ("Partição potencial no estilo HYDRUS-1D: rRoot = Kc·ET0, rSoil = 0"
+                              + ("; raiz crescente no ciclo." if _grow_on else "; raiz fixa."))
     _dem = _crop_demands(crop)
     if _dem:
         _parts = ", ".join(f"{_k} {float(_v):.0f}" for _k, _v in sorted(_dem.items()))
-        _cap_on = bool(getattr(req, "uptake_cap", True))
+        _cap_on = bool(getattr(req, "uptake_cap", False))
         _cap_extra = ("absorção limitada pela demanda (teto pela demanda restante; extensão agronômica, "
                       "não existe no HYDRUS-1D)") if _cap_on else "teto de absorção DESLIGADO pelo usuário"
         out["uptake_cap_txt"] = (
@@ -700,6 +707,9 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
         out["crop_start_txt"] = (f"modo perene adulta; estádio no dia 1 {_per_stage} (Kcb {_per_kcb}); "
                                  f"raiz no dia 1 {_per_root} cm (fixa).")
         out["hydrus_txt"] = _hyd_txt if _hyd_txt else ""
+        if not _dual_on:
+            out["crop_start_txt"] = (out["crop_start_txt"].rstrip()
+                                     + " O cálculo usa Kc constante (rRoot = Kc·ET0, rSoil = 0) e raiz fixa.")
         return out
     if _has_cyc:
         _L = float(sum(float(v) for v in _lengths))
@@ -795,6 +805,10 @@ def _cycle_info(req: SimulateRequest, crop) -> dict:
         if _mode:
             out["crop_start_txt"] = ("Cultura personalizada (sem ciclo FAO-56 no banco): Kcb constante "
                                      "e sem teto de absorção; campos de situação ignorados.")
+    if not _dual_on and out.get("crop_start_txt"):
+        _root_txt = "raiz crescente no ciclo" if _grow_on else "raiz fixa"
+        out["crop_start_txt"] = (str(out["crop_start_txt"]).rstrip()
+                                 + f" O cálculo usa Kc constante (rRoot = Kc·ET0, rSoil = 0) e {_root_txt}.")
     return out
 
 
@@ -977,7 +991,10 @@ def _run_core(req: SimulateRequest):
         evap_cm_day=_evap_arg,
         transpiration_mm_day=_transp_arg,
         crop_schedule=_sched,
-        uptake_cap=bool(getattr(req, "uptake_cap", True)),
+        uptake_cap=bool(getattr(req, "uptake_cap", False)),
+        use_dual_kc=bool(getattr(req, "use_dual_kc", False)),
+        growing_root=bool(getattr(req, "growing_root", False)),
+        bare_after_harvest=bool(getattr(req, "bare_after_harvest", False)),
     )
     return results, soil, crop, root_depth, total_rain, total_days
 
@@ -1037,6 +1054,9 @@ def _balances(req: SimulateRequest, results) -> list[SoluteBalance]:
                 bottom_kg_ha=_bottom_kg,
                 uptaken_kg_ha=_f(d, "uptaken_kg_ha", table_dose * _up_pct / 100.0),
                 capsule_kg_ha=_cap_kg,
+                profile_kg_ha=_f(d, "retained_kg_ha", 0.0) + max(0.0, _leach_kg - _bottom_kg),
+                profile_pct=float(d.get("retained_root_pct", 0.0) or 0.0) + max(0.0, leach - bottom),
+                mass_closure_pct=_f(d, "mass_closure_pct"),
                 uptake_cap_kg_ha=_up_cap,
                 uptake_capped=bool(d.get("uptake_capped", False)),
                 fertigation_c0_mg_l=(_cap_c0 if is_fert else None),
@@ -1125,15 +1145,28 @@ def _water_balance(req: SimulateRequest, results, total_rain: float, total_days:
         transp_mm = float(getattr(results, "transp_cum_cm", 0.0) or 0.0) * 10.0
     except (TypeError, ValueError):
         transp_mm = None
+    applied = float(total_rain)
+    drainage = float(getattr(results, "q_bottom_cum_cm", 0.0) or 0.0) * 10.0
+    storage = float(_storage_mm(results))
+    runoff = float(getattr(results, "runoff_cum_cm", 0.0) or 0.0) * 10.0
+    evap_v = float(evap_mm or 0.0)
+    transp_v = float(transp_mm or 0.0)
+    # Resíduo dos termos exibidos: P − RO − E − T − D − ΔS (WatBalR relativo à soma dos módulos).
+    err = applied - runoff - evap_v - transp_v - drainage - storage
+    denom = abs(applied) + abs(runoff) + abs(evap_v) + abs(transp_v) + abs(drainage) + abs(storage)
+    watbalr = (100.0 * abs(err) / denom) if denom > 1e-9 else 0.0
     return WaterBalance(
-        applied_mm=float(total_rain),
-        drainage_mm=float(getattr(results, "q_bottom_cum_cm", 0.0) or 0.0) * 10.0,
-        storage_mm=float(_storage_mm(results)),
-        runoff_mm=float(getattr(results, "runoff_cum_cm", 0.0) or 0.0) * 10.0,
+        applied_mm=applied,
+        drainage_mm=drainage,
+        storage_mm=storage,
+        runoff_mm=runoff,
         evap_mm=evap_mm,
         transp_mm=transp_mm,
         applied_label=applied_label,
         drainage_label=drainage_label,
+        infiltration_mm=applied - runoff,
+        balance_error_mm=err,
+        balance_error_pct=watbalr,
     )
 
 
@@ -1313,13 +1346,35 @@ def build_screen_images(req: SimulateRequest, results, soil, crop, root_depth: f
     except Exception as exc:
         _log.warning("screen: falha ao gerar galeria por-soluto: %s", exc)
 
+    hydrus_perfis = hydrus_obs = hydrus_fluxos = None
+    try:
+        from hydrus_core.visualizer import plot_hydrus_cumflux, plot_hydrus_observations, plot_hydrus_profiles
+
+        p = os.path.join(tela_dir, "hydrus_perfis.png")
+        plot_hydrus_profiles(results, soil, p, nutrient_symbol=(None if water_only else first_sym))
+        if os.path.isfile(p):
+            hydrus_perfis = "hydrus_perfis"
+        p = os.path.join(tela_dir, "hydrus_obs.png")
+        plot_hydrus_observations(results, p, nutrient_symbol=(None if water_only else first_sym))
+        if os.path.isfile(p):
+            hydrus_obs = "hydrus_obs"
+        p = os.path.join(tela_dir, "hydrus_fluxos.png")
+        plot_hydrus_cumflux(results, p)
+        if os.path.isfile(p):
+            hydrus_fluxos = "hydrus_fluxos"
+    except Exception as exc:
+        _log.warning("screen: falha nos gráficos estilo HYDRUS-1D: %s", exc)
+
     try:
         import matplotlib.pyplot as _plt
 
         _plt.close("all")
     except Exception:
         pass
-    return {"perfil": perfil_key, "btc": btc_key, "evolucao": evolucao_key, "galeria": galeria}
+    return {
+        "perfil": perfil_key, "btc": btc_key, "evolucao": evolucao_key, "galeria": galeria,
+        "hydrus_perfis": hydrus_perfis, "hydrus_obs": hydrus_obs, "hydrus_fluxos": hydrus_fluxos,
+    }
 
 
 def build_extra_plots(req: SimulateRequest, results, soil, crop, root_depth: float,
@@ -1500,6 +1555,112 @@ def ensure_steps_file(job_dir: str, lazy_ctx: dict) -> str:
     return steps_md
 
 
+def write_hydrus_project(req: SimulateRequest, soil, crop, total_days: float, job_dir: str) -> str:
+    """Grava SELECTOR/ATMOSPH/PROFILE fiéis ao formulário em ``job_dir/hydrus1d``."""
+    from hydrus_core.hydrus_io import export_to_hydrus1d_project
+
+    water_only = bool(req.water_only)
+    if req.rain_series:
+        full = [max(0.0, float(v or 0.0)) for v in req.rain_series]
+        sw, ew = _effective_window(req, len(full))
+        series = full[sw - 1:ew]
+        if req.et0_series:
+            et0 = [max(0.0, float(v or 0.0)) for v in req.et0_series][sw - 1:ew]
+        else:
+            et0 = float(req.et0_mm_day)
+        try:
+            app_raw = float(req.placement.application_day or 0.0)
+        except (TypeError, ValueError):
+            app_raw = 0.0
+        app_day = (app_raw - sw + 1) if app_raw else 0.0
+        events = [(float(d), 1.0, float(v)) for d, v in enumerate(series) if v > 0.0]
+        days = float(len(series))
+        moist = float(req.seasonal_initial_moisture_pct)
+    else:
+        sw = 1
+        et0 = float(req.et0_mm_day)
+        app_day = float(req.placement.application_day or 0.0)
+        days = float(total_days or req.total_days)
+        rain = float(req.rain_mm or 0.0)
+        events = [(0.5, 0.3, rain)] if rain > 0 else []
+        moist = float(req.initial_moisture_pct)
+    specs = []
+    if not water_only:
+        for s in (req.solutes or []):
+            specs.append({
+                "symbol": s.symbol,
+                "name": s.name,
+                "kd": float(s.kd),
+                "dose_kg_ha": float(s.dose_kg_ha),
+                "initial_residual_mg_dm3": float(s.initial_residual_mg_dm3 or 0.0),
+            })
+    disp = float(specs[0].get("dispersivity_cm", 0) or 0) if specs else 0.0
+    if not disp and req.solutes:
+        try:
+            disp = float(req.solutes[0].dispersivity_cm or 0.0)
+        except (TypeError, ValueError, AttributeError):
+            disp = 0.0
+    if disp <= 0:
+        disp = float(req.depth_cm) / 10.0
+    for sp, s in zip(specs, req.solutes or []):
+        try:
+            sp["dispersivity_cm"] = float(s.dispersivity_cm or disp)
+        except (TypeError, ValueError):
+            sp["dispersivity_cm"] = disp
+    sched = _schedule_for_request(req, crop, days, sw) if crop is not None else None
+    try:
+        e_over = float(req.evap_mm_day or 0.0)
+    except (TypeError, ValueError):
+        e_over = 0.0
+    try:
+        t_over = float(req.transp_mm_day or 0.0)
+    except (TypeError, ValueError):
+        t_over = 0.0
+    seasonal = _is_seasonal(req)
+    if req.rain_series:
+        _sw, _ew = _effective_window(req, len(req.rain_series))
+    else:
+        _sw, _ew = 1, max(1, int(round(days)))
+    print_days = _effective_print_days(req, days, _sw, _ew)
+    obs = _effective_obs_depths(req, float(req.depth_cm))
+    out = os.path.join(job_dir, "hydrus1d")
+    export_to_hydrus1d_project(
+        out, soil, crop=crop,
+        fertilizer_kg_ha=float(specs[0]["dose_kg_ha"]) if specs else 0.0,
+        water_events=events, total_days=days, depth_cm=float(req.depth_cm),
+        kd=float(specs[0]["kd"]) if specs else 0.0,
+        dispersivity_cm=disp,
+        placement_mode=str(req.placement.mode or "surface"),
+        z_app_top_cm=float(req.placement.z_top_cm or 0.0),
+        z_app_bottom_cm=float(req.placement.z_bottom_cm or 2.0),
+        obs_depths_cm=obs,
+        evap_cm_day=(e_over / 10.0) if (e_over > 0 and not seasonal) else 0.0,
+        transpiration_cm_day=(t_over / 10.0) if (t_over > 0 and not seasonal) else 0.0,
+        nutrient_specs=specs or None,
+        print_days=print_days,
+        pulse_days=float(req.placement.fertigation_pulse_days or 0.0),
+        initial_moisture_pct=moist,
+        et0_mm_day=et0,
+        use_dual_kc=bool(getattr(req, "use_dual_kc", False)),
+        growing_root=bool(getattr(req, "growing_root", False)),
+        bare_after_harvest=bool(getattr(req, "bare_after_harvest", False)),
+        crop_schedule=sched,
+        application_day=app_day,
+        water_only=water_only,
+    )
+    try:
+        import zipfile
+        zip_path = os.path.join(job_dir, "hydrus1d.zip")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fn in os.listdir(out):
+                fp = os.path.join(out, fn)
+                if os.path.isfile(fp):
+                    zf.write(fp, arcname=os.path.join("hydrus1d", fn))
+    except OSError:
+        pass
+    return out
+
+
 def execute_job_fast(
     req: SimulateRequest, job_dir: str, job_id: str | None = None
 ) -> tuple[SimulateResponse, str, str, dict]:
@@ -1512,6 +1673,10 @@ def execute_job_fast(
     os.makedirs(job_dir, exist_ok=True)
     _jid = job_id or os.path.basename(job_dir)
     results, soil, crop, root_depth, total_rain, total_days = _run_core(req)
+    try:
+        write_hydrus_project(req, soil, crop, total_days, job_dir)
+    except Exception:
+        pass
     water_only = bool(req.water_only)
     # Imagens estáticas da tela de Resultados (iguais às do Gradio).
     try:
@@ -1558,6 +1723,9 @@ def execute_job_fast(
             btc=_screen_url(screen_files.get("btc")),
             evolucao=_screen_url(screen_files.get("evolucao")),
             galeria=_gal,
+            hydrus_perfis=_screen_url(screen_files.get("hydrus_perfis")),
+            hydrus_obs=_screen_url(screen_files.get("hydrus_obs")),
+            hydrus_fluxos=_screen_url(screen_files.get("hydrus_fluxos")),
         )
     except Exception:
         screen = None
@@ -1787,6 +1955,8 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
         "profile_depth_cm": float(prof_depth),
         "storage_mm": float(_storage_mm(results)),
         "runoff_mm": float(getattr(results, "runoff_cum_cm", 0.0) or 0.0) * 10.0,
+        "evap_mm": float(getattr(results, "evap_cum_cm", 0.0) or 0.0) * 10.0,
+        "transp_mm": float(getattr(results, "transp_cum_cm", 0.0) or 0.0) * 10.0,
         "drainage_mm": float(getattr(results, "q_bottom_cum_cm", 0.0) or 0.0) * 10.0,
         "evap_mm_day": float(_evap_day),
         "transp_mm_day": float(_transp_day),
