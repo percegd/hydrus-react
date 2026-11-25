@@ -164,7 +164,10 @@ class SimulateRequest(BaseModel):
     kcb_ini: Optional[float] = Field(default=None)
     kcb_mid: Optional[float] = Field(default=None)
     kcb_end: Optional[float] = Field(default=None)
-    uptake_cap: bool = Field(default=True, description="Limitar absorção à demanda (extensão agronômica)")
+    uptake_cap: bool = Field(default=False, description="Limitar absorção à demanda (extensão; o HYDRUS-1D não limita)")
+    use_dual_kc: bool = Field(default=False, description="Kc dual FAO-56 (Kcb/Ke). O HYDRUS-1D original não possui.")
+    growing_root: bool = Field(default=False, description="Raiz crescente no ciclo. O HYDRUS-1D típico usa raiz fixa.")
+    bare_after_harvest: bool = Field(default=False, description="Solo nu após a colheita. O HYDRUS-1D original não possui.")
     et0_mm_day: float = Field(default=4.0, ge=0)
     et0_series: Optional[list[float]] = Field(default=None, description="ET0 diária em mm")
     # ET avançada (Gradio adv_et_toggle): 0 = derivar de ET0 (Kc dual FAO-56:
@@ -225,6 +228,9 @@ class SoluteBalance(BaseModel):
     uptake_cap_kg_ha: Optional[float] = None
     uptake_capped: bool = False
     fertigation_c0_mg_l: Optional[float] = None
+    profile_kg_ha: float = 0.0
+    profile_pct: float = 0.0
+    mass_closure_pct: float = 0.0
 
 
 class WaterBalance(BaseModel):
@@ -242,6 +248,9 @@ class WaterBalance(BaseModel):
     transp_mm: Optional[float] = None
     applied_label: str = "Lâmina Aplicada"
     drainage_label: str = "Drenagem no Fundo"
+    infiltration_mm: float = 0.0
+    balance_error_mm: float = 0.0
+    balance_error_pct: float = 0.0
 
 
 class ExtraPlot(BaseModel):
@@ -276,6 +285,9 @@ class ScreenImages(BaseModel):
     btc: Optional[str] = None
     evolucao: Optional[str] = None
     galeria: list[ScreenGalleryItem] = Field(default_factory=list)
+    hydrus_perfis: Optional[str] = None
+    hydrus_obs: Optional[str] = None
+    hydrus_fluxos: Optional[str] = None
 
 
 class SimulateResponse(BaseModel):

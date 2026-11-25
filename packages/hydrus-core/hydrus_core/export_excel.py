@@ -42,6 +42,8 @@ def _water_balance_summary_rows(p: Dict[str, Any]):
         ("Drenagem no Fundo [mm]", drainage_mm),
         ("Escoamento Superficial [mm]", p.get("runoff_mm", 0.0)),
         ("Δ Armazenamento no Perfil [mm]", p.get("storage_mm", 0.0)),
+        ("Evaporação [mm]", p.get("evap_mm", "")),
+        ("Transpiração [mm]", p.get("transp_mm", "")),
     ]
     obs = p.get("obs_depths_cm") or []
     if obs:
@@ -67,8 +69,29 @@ def export_soil_profile_excel(
             _export_seasonal_sheets(writer, results_obj, p)
         else:
             _export_column_sheets(writer, results_obj, p)
+        _write_cumflux_sheet(writer, results_obj)
 
     return out_path
+
+
+def _write_cumflux_sheet(writer, results) -> None:
+    """Aba de fluxos acumulados (T_LEVEL) quando o solver gravou as séries."""
+    t = list(getattr(results, "flux_times_days", []) or [])
+    infil = list(getattr(results, "cum_infil_cm", []) or [])
+    if len(t) < 2 or len(infil) != len(t):
+        return
+    ev = list(getattr(results, "cum_evap_series_cm", []) or [])
+    tr = list(getattr(results, "cum_transp_series_cm", []) or [])
+    bot = list(getattr(results, "cum_bottom_series_cm", []) or [])
+    data = {"Tempo [dias]": np.round(t, 4)}
+    data["Infiltração acumulada [mm]"] = np.round(np.asarray(infil, dtype=float) * 10.0, 4)
+    if len(ev) == len(t):
+        data["Evaporação acumulada [mm]"] = np.round(np.asarray(ev, dtype=float) * 10.0, 4)
+    if len(tr) == len(t):
+        data["Transpiração acumulada [mm]"] = np.round(np.asarray(tr, dtype=float) * 10.0, 4)
+    if len(bot) == len(t):
+        data["Fluxo no fundo acumulado [mm]"] = np.round(np.asarray(bot, dtype=float) * 10.0, 4)
+    pd.DataFrame(data).to_excel(writer, sheet_name="Fluxos_Acumulados", index=False)
 
 
 def _excel_peak_label(results: Any, p: Dict[str, Any]) -> Any:
@@ -272,6 +295,8 @@ def _export_column_sheets(writer: pd.ExcelWriter, results: Any, p: Dict[str, Any
             ("Drenagem Acumulada no Fundo [mm]", float(p.get("drainage_mm", float(p.get("q_bottom_cm", 0.0)) * 10.0))),
             ("Δ Armazenamento no Perfil [mm]", float(p.get("storage_mm", 0.0))),
             ("Escoamento Superficial [mm]", float(p.get("runoff_mm", 0.0))),
+            ("Evaporação [mm]", p.get("evap_mm", "")),
+            ("Transpiração [mm]", p.get("transp_mm", "")),
         ]
         # (L12) Nota de unidade quando P está entre os solutos
         try:
@@ -395,6 +420,8 @@ def _export_seasonal_sheets(writer: pd.ExcelWriter, res: Any, p: Dict[str, Any])
             (_dren_lbl, float(p.get("drainage_mm", float(getattr(res, "drainage_cum_cm", 0.0)) * 10.0))),
             ("Δ Armazenamento no Perfil [mm]", float(p.get("storage_mm", 0.0))),
             ("Escoamento Superficial [mm]", float(p.get("runoff_mm", 0.0))),
+            ("Evaporação [mm]", p.get("evap_mm", "")),
+            ("Transpiração [mm]", p.get("transp_mm", "")),
         ]
         try:
             _syms_s = set((_nr_s.keys() if isinstance(_nr_s, dict) else []) or {sym})

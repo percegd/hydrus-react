@@ -8,7 +8,7 @@ import StepNutrients, { DEFAULT_ROWS, NUTRIENT_SYMBOLS, blankCustomRow, defaultD
 import StepSoil from "../components/StepSoil";
 import StepWater, { emptyRows, type RainMode } from "../components/StepWater";
 import WizardProgress from "../components/WizardProgress";
-import { ApiError, getCrops, getExcelBlob, getGraphsBlob, getJob, getKd, getReport, getSoils, getSteps, postJob, postRosetta, type ClimateRow, type Crop, type SimulateResponse, type Soil } from "../lib/api";
+import { ApiError, getCrops, getExcelBlob, getGraphsBlob, getHydrusBlob, getJob, getKd, getReport, getSoils, getSteps, postJob, postRosetta, type ClimateRow, type Crop, type SimulateResponse, type Soil } from "../lib/api";
 
 const STEP_TITLES = [
   { title: "Apresentação", sub: "Visão geral da plataforma de simulação." },
@@ -167,7 +167,7 @@ export default function Home() {
   const [cropH3, setCropH3] = useState(DEFAULTS.cropH3);
   const [cropH4, setCropH4] = useState(DEFAULTS.cropH4);
   const [cropStartMode, setCropStartMode] = useState("planting");
-  const [cropStartTouched, setCropStartTouched] = useState(false);
+  const [, setCropStartTouched] = useState(false);
   const [cropAgeDap, setCropAgeDap] = useState("");
   const [plantingDay, setPlantingDay] = useState("");
   const [afterHarvest, setAfterHarvest] = useState("bare");
@@ -177,7 +177,13 @@ export default function Home() {
   const [kcbIni, setKcbIni] = useState("");
   const [kcbMid, setKcbMid] = useState("");
   const [kcbEnd, setKcbEnd] = useState("");
-  const [uptakeCap, setUptakeCap] = useState(true);
+  const [uptakeCap, setUptakeCap] = useState(false);
+  const [useDualKc, setUseDualKc] = useState(false);
+  const [growingRoot, setGrowingRoot] = useState(false);
+  const [bareAfterHarvest, setBareAfterHarvest] = useState(false);
+  const [obsDepths, setObsDepths] = useState("10, 20, 30, 50");
+  const [printDaysLamina, setPrintDaysLamina] = useState("");
+  const [cropPreview, setCropPreview] = useState<{ active_day1?: boolean; kcb_day1?: number | null; ke_day1?: number | null; et_varies?: boolean } | null>(null);
   const [depthCm, setDepthCm] = useState(DEFAULTS.depthCm);
   const [rootDepthCm, setRootDepthCm] = useState(DEFAULTS.rootDepthCm);
   const [days, setDays] = useState(DEFAULTS.days);
@@ -193,8 +199,6 @@ export default function Home() {
   const [hubKey, setHubKey] = useState(DEFAULTS.hubKey);
   const [hubLabel, setHubLabel] = useState("");
   const [hubScenario, setHubScenario] = useState(DEFAULTS.hubScenario);
-  const [hubAppDay, setHubAppDay] = useState(DEFAULTS.hubAppDay);
-  const [uploadAppDay, setUploadAppDay] = useState(DEFAULTS.uploadAppDay);
   const [waterOnly, setWaterOnly] = useState(DEFAULTS.waterOnly);
   const [analysisStart, setAnalysisStart] = useState(DEFAULTS.analysisStart);
   const [analysisEnd, setAnalysisEnd] = useState(DEFAULTS.analysisEnd);
@@ -306,16 +310,12 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const series = rainMode === "hub" || rainMode === "upload";
     const canPer = crop === "cafe" || crop === "cana_de_acucar";
     if (cropStartMode === "perennial" && !canPer) {
+      const series = rainMode === "hub" || rainMode === "upload";
       setCropStartMode(series ? "planting" : "established");
-      return;
     }
-    if (cropStartTouched) return;
-    setCropStartMode(crop === "cafe" ? "perennial" : series ? "planting" : "established");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rainMode]);
+  }, [rainMode, crop, cropStartMode]);
 
   // Solo personalizado: areia/argila -> Rosetta preenche θr θs α n Ks ρb (Gradio).
   useEffect(() => {
@@ -480,7 +480,7 @@ export default function Home() {
     let rain_series: number[] | undefined;
     let total_days = num(days, 7);
     let et0_series: number[] | undefined;
-    let appDayEff = appDay;
+    const appDayEff = appDay;
     try {
       if (rainMode === "hub" || rainMode === "upload") {
         if (!climateRows.length) { openValidation(["Tabela de série diária: a tabela de série diária está vazia. Preencha a coluna de chuva (mm)."]); return; }
@@ -494,7 +494,6 @@ export default function Home() {
         });
         if (!rain_series.some((v) => v > 0)) { openValidation(["Tabela de série diária: a tabela de série diária está vazia. Preencha a coluna de chuva (mm)."]); return; }
         total_days = rain_series.length;
-        appDayEff = rainMode === "hub" ? hubAppDay : uploadAppDay;
       }
     } catch (e) { openValidation([String((e as Error).message || e)]); return; }
     const depthVal = num(depthCm, 200);
@@ -519,21 +518,27 @@ export default function Home() {
       .filter((s) => s.symbol && s.dose_kg_ha > 0);
     if (!waterOnly && !solutes.length) { openValidation(["Modo de simulação: modo 'Água + nutrientes' exige ao menos um soluto com dose > 0. Marque um nutriente ou troque para 'Somente água'."]); return; }
     let print_days: number[] | undefined;
+    let obs_depths_cm: number[] | undefined;
     let analysis_start_day = 1;
     let analysis_end_day = 365;
-    if (rainMode === "hub" || rainMode === "upload") {
-      try {
+    try {
+      const obsRaw = String(obsDepths).trim();
+      if (obsRaw) {
+        obs_depths_cm = obsRaw.split(/[\s;,]+/).filter(Boolean).map((t) => Number(t.replace(",", ".")));
+        if (obs_depths_cm.some((v) => !Number.isFinite(v) || v <= 0)) throw new Error("Nós de observação inválidos (profundidades em cm, > 0).");
+      }
+      const dayRaw = rainMode === "uniform" ? String(printDaysLamina).trim() : String(printDays).trim();
+      if (rainMode === "hub" || rainMode === "upload") {
         analysis_start_day = Math.round(num(analysisStart, 1));
         analysis_end_day = Math.round(num(analysisEnd, 365));
-        const raw = String(printDays).trim();
-        if (!raw) {
-          print_days = [];
-        } else {
-          print_days = raw.split(/[\s;,]+/).filter(Boolean).map((t) => Number(t.replace(",", ".")));
-          if (print_days.some((v) => !Number.isFinite(v) || v < 0)) throw new Error("Dias de leitura inválidos (só números ≥ 0).");
-        }
-      } catch (e) { openValidation([String((e as Error).message || e)]); return; }
-    }
+      }
+      if (!dayRaw) {
+        print_days = undefined;
+      } else {
+        print_days = dayRaw.split(/[\s;,]+/).filter(Boolean).map((t) => Number(t.replace(",", ".")));
+        if (print_days.some((v) => !Number.isFinite(v) || v < 0)) throw new Error("Dias de leitura inválidos (só números ≥ 0).");
+      }
+    } catch (e) { openValidation([String((e as Error).message || e)]); return; }
     const appliedTotal = rain_series ? rain_series.reduce((a, b) => a + b, 0) : num(rainMm, 0);
     setAppliedMm(appliedTotal);
     // Permanece no Passo 3 com overlay de tela cheia até o job concluir.
@@ -613,7 +618,15 @@ export default function Home() {
           kcb_mid: kcbMid.trim() === "" ? null : num(kcbMid, 0),
           kcb_end: kcbEnd.trim() === "" ? null : num(kcbEnd, 0),
           uptake_cap: uptakeCap,
-        } : { uptake_cap: true }),
+          use_dual_kc: useDualKc,
+          growing_root: growingRoot,
+          bare_after_harvest: bareAfterHarvest,
+        } : {
+          uptake_cap: false,
+          use_dual_kc: false,
+          growing_root: false,
+          bare_after_harvest: false,
+        }),
         depth_cm: depthVal,
         root_depth_cm: isCom ? num(rootDepthCm, rootFallback) : null,
         total_days,
@@ -628,6 +641,7 @@ export default function Home() {
         analysis_start_day,
         analysis_end_day,
         print_days,
+        obs_depths_cm,
         // Paridade Gradio (laudo sazonal): fonte da série p/ o laudo.
         // hub -> rótulo exato do seletor + " (NASA POWER)"; upload -> planilha
         // do usuário; lâmina -> não envia (backend usa o default do polo).
@@ -764,6 +778,26 @@ export default function Home() {
     }
   }
 
+  async function downloadHydrus() {
+    try {
+      const blob = await getHydrusBlob(jobId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `hydrus1d_${jobId}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
+        openValidation(["Projeto HYDRUS-1D indisponível; rode a simulação novamente."]);
+        return;
+      }
+      showApiError(e);
+    }
+  }
+
   async function downloadGraphs() {
     try {
       const blob = await getGraphsBlob(jobId);
@@ -827,6 +861,10 @@ export default function Home() {
     kcb_mid: kcbMid.trim() !== "" ? num(kcbMid, 0) : null,
     kcb_end: kcbEnd.trim() !== "" ? num(kcbEnd, 0) : null,
     uptake_cap: uptakeCap,
+    use_dual_kc: useDualKc,
+    growing_root: growingRoot,
+    bare_after_harvest: bareAfterHarvest,
+    et0_mm_day: num(et0, 4),
   };
 
   return (
@@ -920,8 +958,15 @@ export default function Home() {
                 setKcbEnd={setKcbEnd}
                 uptakeCap={uptakeCap}
                 setUptakeCap={setUptakeCap}
+                useDualKc={useDualKc}
+                setUseDualKc={setUseDualKc}
+                growingRoot={growingRoot}
+                setGrowingRoot={setGrowingRoot}
+                bareAfterHarvest={bareAfterHarvest}
+                setBareAfterHarvest={setBareAfterHarvest}
                 rainIsSeries={rainMode === "hub" || rainMode === "upload"}
                 previewBody={previewBody}
+                onPreview={setCropPreview}
               />
             )}
 
@@ -985,16 +1030,23 @@ export default function Home() {
                 setHubLabel={setHubLabel}
                 hubScenario={hubScenario}
                 setHubScenario={setHubScenario}
-                hubAppDay={hubAppDay}
-                setHubAppDay={setHubAppDay}
-                uploadAppDay={uploadAppDay}
-                setUploadAppDay={setUploadAppDay}
+                appDay={appDay}
+                setAppDay={setAppDay}
                 analysisStart={analysisStart}
                 setAnalysisStart={setAnalysisStart}
                 analysisEnd={analysisEnd}
                 setAnalysisEnd={setAnalysisEnd}
                 printDays={printDays}
                 setPrintDays={setPrintDays}
+                printDaysLamina={printDaysLamina}
+                setPrintDaysLamina={setPrintDaysLamina}
+                obsDepths={obsDepths}
+                setObsDepths={setObsDepths}
+                useDualKc={useDualKc}
+                activeDay1={cropPreview?.active_day1 !== false}
+                kcbDay1={cropPreview?.kcb_day1 ?? null}
+                keDay1={cropPreview?.ke_day1 ?? null}
+                etVaries={Boolean(cropPreview?.et_varies)}
               />
             )}
 
@@ -1013,6 +1065,7 @@ export default function Home() {
                 soluteMeta={soluteMeta}
                 onDownloadExcel={downloadExcel}
                 onDownloadGraphs={downloadGraphs}
+                onDownloadHydrus={downloadHydrus}
                 onLoadReport={loadReport}
                 onLoadSteps={loadSteps}
               />

@@ -55,6 +55,9 @@ def build_graph_files(
     """Gera os PNGs (1 painel por arquivo) em out_dir; retorna [{key,title,path}]."""
     from hydrus_core.visualizer import (
         plot_breakthrough_curves,
+        plot_hydrus_cumflux,
+        plot_hydrus_observations,
+        plot_hydrus_profiles,
         plot_nutrient_profile,
         plot_profiles_at_days,
         plot_water_profile,
@@ -196,6 +199,27 @@ def build_graph_files(
                 except Exception:
                     pass
 
+    # Estilo HYDRUS-1D (perfis, nós, fluxos acumulados) — entra no zip.
+    _sym0 = solutes[0] if solutes else None
+    try:
+        _p = os.path.join(out_dir, "hydrus_perfis.png")
+        plot_hydrus_profiles(results, soil, _p, nutrient_symbol=_sym0)
+        _add("hydrus_perfis", "Perfis HYDRUS-1D (θ, h, concentração)", _p)
+    except Exception:
+        pass
+    try:
+        _p = os.path.join(out_dir, "hydrus_obs.png")
+        plot_hydrus_observations(results, _p, nutrient_symbol=_sym0)
+        _add("hydrus_obs", "Nós de observação HYDRUS-1D", _p)
+    except Exception:
+        pass
+    try:
+        _p = os.path.join(out_dir, "hydrus_fluxos.png")
+        plot_hydrus_cumflux(results, _p)
+        _add("hydrus_fluxos", "Fluxos acumulados (T_LEVEL)", _p)
+    except Exception:
+        pass
+
     return files
 
 
@@ -282,4 +306,10 @@ def write_zip(files: list[dict], zip_path: str, folder_name: str = "graficos_sim
             fp = f["path"]
             if os.path.isfile(fp) and fp.lower().endswith(".png"):
                 zf.write(fp, arcname=os.path.join(folder_name, os.path.basename(fp)))
+        hydrus_dir = os.path.join(os.path.dirname(os.path.abspath(zip_path)), "hydrus1d")
+        if os.path.isdir(hydrus_dir):
+            for fn in sorted(os.listdir(hydrus_dir)):
+                fp = os.path.join(hydrus_dir, fn)
+                if os.path.isfile(fp):
+                    zf.write(fp, arcname=os.path.join("projeto_hydrus1d", fn))
     return zip_path

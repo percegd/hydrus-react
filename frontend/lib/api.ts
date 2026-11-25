@@ -22,6 +22,9 @@ export type SoluteBalance = {
   uptake_cap_kg_ha?: number | null;
   uptake_capped?: boolean;
   fertigation_c0_mg_l?: number | null;
+  profile_kg_ha?: number;
+  profile_pct?: number;
+  mass_closure_pct?: number;
 };
 export type WaterBalance = {
   applied_mm: number;
@@ -32,10 +35,13 @@ export type WaterBalance = {
   transp_mm: number | null;
   applied_label: string;
   drainage_label: string;
+  infiltration_mm?: number;
+  balance_error_mm?: number;
+  balance_error_pct?: number;
 };
 export type ExtraPlot = { key: string; title: string; png_base64?: string | null; url?: string | null };
 export type ScreenGalleryItem = { symbol: string; name: string; url: string };
-export type ScreenImages = { perfil: string | null; btc: string | null; evolucao: string | null; galeria: ScreenGalleryItem[] };
+export type ScreenImages = { perfil: string | null; btc: string | null; evolucao: string | null; galeria: ScreenGalleryItem[]; hydrus_perfis?: string | null; hydrus_obs?: string | null; hydrus_fluxos?: string | null };
 export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; plots_png_base64?: Record<string, string> | null; extra_plots?: ExtraPlot[] | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null; water_only?: boolean; water_balance?: WaterBalance | null; screen?: ScreenImages | null };
 export type HelpEntry = { key: string; title: string; unit: string; what: string; simulation: string };
 
@@ -187,6 +193,13 @@ export const getSteps = async (id: string): Promise<string> => {
 export const getHelp = () => req<HelpEntry[]>("/help");
 export const getGraphsBlob = async (id: string): Promise<Blob> => {
   const r = await fetch(`/api/jobs/${id}/graphs.zip`);
+  if (!r.ok) {
+    throw await toApiError(r);
+  }
+  return r.blob();
+};
+export const getHydrusBlob = async (id: string): Promise<Blob> => {
+  const r = await fetch(`/api/jobs/${id}/hydrus1d.zip`);
   if (!r.ok) {
     throw await toApiError(r);
   }

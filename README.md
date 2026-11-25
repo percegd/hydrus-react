@@ -42,6 +42,15 @@ docker compose up --build
 Limites atuais: chuva uniforme no período (série diária na fase 2),
 casos curtos (séries anuais vão para fila + progresso na fase 2).
 
+## Notas de versão
+
+Os padrões do formulário e da API passaram a seguir o preenchimento típico do
+HYDRUS-1D: **rRoot = Kc·ET0**, **rSoil = 0**, raiz fixa e absorção passiva.
+Kc dual FAO-56, raiz crescente, solo nu após a colheita e teto de absorção
+ficam desligados; cada um é um opt-in (`use_dual_kc`, `growing_root`,
+`bare_after_harvest`, `uptake_cap`). Quem já enviava esses campos explicitamente
+continua com o valor enviado.
+
 ## Roadmap
 
 - [x] Fase 0 — scaffold: pacote, API mínima, página funcional

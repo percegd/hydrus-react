@@ -17,6 +17,7 @@ from hydrus_core.soil_physics import (
 )
 from hydrus_core.crop import CropParameters, feddes_water_stress, root_distribution
 from hydrus_core import crop as _crop_mod
+from hydrus_core.surface_bc import potential_partition_cm
 
 @dataclass
 class SimulationConfig:
@@ -92,6 +93,13 @@ class SimulationResults:
     transp_cum_cm: float = 0.0          # F1: transpiração acumulada da cultura (sink Feddes) [cm]
     water_closure_cm: float = 0.0       # F1: resíduo hídrico P-(dS+D+RO+E+T) [cm] (dV)
     water_closure_pct: float = 0.0      # F1: resíduo hídrico relativo a P [%] (0 se P=0)
+    # Séries acumuladas no estilo T_LEVEL (cm), amostradas com os nós de observação.
+    flux_times_days: List[float] = field(default_factory=list)
+    cum_infil_cm: List[float] = field(default_factory=list)
+    cum_evap_series_cm: List[float] = field(default_factory=list)
+    cum_transp_series_cm: List[float] = field(default_factory=list)
+    cum_bottom_series_cm: List[float] = field(default_factory=list)
+    obs_h_series: Dict[float, List[float]] = field(default_factory=dict)
 
 class Hydrus1DSimulator:
     """
@@ -138,7 +146,10 @@ class Hydrus1DSimulator:
         print_days: Optional[List[float]] = None, # Dias de leitura (perfis completos) [dias]
         water_only: bool = False,          # True => roda apenas fluxo de água (sem transporte de soluto)
         crop_schedule: Optional[dict] = None,  # agenda diária do ciclo (crop.crop_schedule); None = modo coluna
-        uptake_cap: bool = True            # True => limita absorção à demanda RESTANTE (extensão agronômica; HYDRUS-1D não limita a passiva)
+        uptake_cap: bool = True,           # True => limita absorção à demanda RESTANTE (extensão; o app envia False)
+        use_dual_kc: bool = False,         # True => Kcb/Ke FAO-56; False => rRoot=Kc·ET0, rSoil=0
+        growing_root: bool = False,        # True => profundidade de raiz segue a agenda
+        bare_after_harvest: bool = False,  # True => solo nu (Ep=ET0, Tp=0) após a colheita
     ) -> SimulationResults:
         """
         Executa a simulação transiente acoplada de fluxo hídrico (Richards 1D)
@@ -433,6 +444,7 @@ class Hydrus1DSimulator:
 
         obs_times = [0.0]
         obs_theta = {d: [float(theta[idx])] for d, idx in obs_node_map.items()}
+        obs_h = {d: [float(h[idx])] for d, idx in obs_node_map.items()}
         for _ni in active_nutrients:
             _ni["kd_eff"] = _ni["kd"]
         obs_c = {n_item["symbol"]: {d: [float(n_item["c_prof"][idx] / max(theta[idx] + self.soil.bulk_density * max(0.0, float(np.asarray(n_item["kd_eff"])[idx]) if np.ndim(n_item["kd_eff"]) else float(n_item["kd_eff"])), 1e-4) * 1000.0)] for d, idx in obs_node_map.items()} for n_item in active_nutrients}
@@ -443,8 +455,14 @@ class Hydrus1DSimulator:
         t = 0.0
         q_bottom_cum = 0.0
         runoff_cum = 0.0  # Escoamento superficial acumulado [cm]
+        infil_cum = 0.0   # Infiltração real acumulada [cm] (lâmina que entrou)
         evap_cum = 0.0    # F1: evaporação real acumulada [cm]
         transp_cum = 0.0  # F1: transpiração real acumulada (sink Feddes) [cm]
+        flux_times = [0.0]
+        cum_infil_s = [0.0]
+        cum_evap_s = [0.0]
+        cum_transp_s = [0.0]
+        cum_bottom_s = [0.0]
         non_converged_steps = 0  # R1: passos aceitos sem convergência (fallback dt_min)
 
         # F1: fronteiras de evento hídrico (início/fim de cada chuva).
@@ -621,56 +639,26 @@ class Hydrus1DSimulator:
                 _et0_arr = np.asarray(et0_mm_day, dtype=float).ravel()
                 et0_today_mm = float(_et0_arr[min(int(t), _et0_arr.size - 1)])
 
-            # Demanda hídrica: Kc dual FAO-56 Cap. 7 (Allen et al. 1998).
-            # Tp = Kcb·ET0 (x ativo); Ep = Ke·ET0, Ke = min(Kcmax-Kcb, few·Kcmax),
-            # Kcmax = max(1,2; Kcb+0,05) (eq. 72, sem correção climática),
-            # few = 1-fc, fc = ((Kcb-0,15)/(Kcmax-0,15))^(1+0,5h) (eq. 76, clip 0..0,99).
-            # Ke ≤ 1 p/ continuidade com solo nu (Ep=ET0). A redução por secagem (Kr)
-            # já é feita fisicamente pelo limitador hCritA da superfície (como no
-            # HYDRUS-1D, Šimůnek et al. 2008) — ver max_evap abaixo. Fora do ciclo:
-            # Tp=0, Ep=ET0. Sem schedule (coluna): Kcb = max(0,15; kc-0,05)
-            # (Kcb mid ≈ Kc mid − 0,05) e height_m da cultura (custom: 1,0 m).
+            # Partição potencial. Padrão HYDRUS-1D: rRoot = Kc·ET0, rSoil = 0.
+            # use_dual_kc liga Kcb/Ke; growing_root atualiza a raiz; a redução
+            # real de E continua no limitador hCritA (max_evap abaixo).
             _sched_idx = min(int(t), _sched_n - 1) if (_sched is not None and _sched_n > 0) else None
-            _sched_active = True
-            if self.crop is not None:
-                if _sched is not None and _sched_idx is not None:
-                    try:
-                        _sched_active = bool(_sched["active"][_sched_idx])
-                        _kcb_day = float(_sched["kcb"][_sched_idx])
-                    except Exception:
-                        _sched_active, _kcb_day = True, max(0.15, float(self.crop.kc) - 0.05)
-                    # Raiz variável: recalcula root_b no máx. 1x por dia
-                    try:
-                        _rday = float(_sched["root_depth_cm"][_sched_idx])
-                        if int(t) != _last_root_day and _rday > 0:
-                            self.root_b = root_distribution(self.z, _rday)
-                            _last_root_day = int(t)
-                    except Exception:
-                        pass
-                    if not _sched_active:
-                        _tp_pot = 0.0
-                        _ke_day = 1.0
-                        _ep_pot = float(et0_today_mm) / 10.0
-                    else:
-                        try:
-                            _ke_day = float(_sched["ke_max"][_sched_idx])
-                        except Exception:
-                            _fw0, _km0, _ke0 = _crop_mod._dual_ke_few(_kcb_day, float(getattr(self.crop, "height_m", 1.0) or 1.0))
-                            _ke_day = _ke0
-                        _tp_pot = _kcb_day * float(et0_today_mm) / 10.0
-                        _ep_pot = min(1.0, max(0.0, _ke_day)) * float(et0_today_mm) / 10.0
-                else:
-                    _kcb_day = max(0.15, float(self.crop.kc) - 0.05)
-                    try:
-                        _hh = float(getattr(self.crop, "height_m", None) or 1.0)
-                    except (TypeError, ValueError):
-                        _hh = 1.0
-                    _fw0, _km0, _ke0 = _crop_mod._dual_ke_few(_kcb_day, _hh)
-                    _tp_pot = _kcb_day * float(et0_today_mm) / 10.0
-                    _ep_pot = min(1.0, max(0.0, _ke0)) * float(et0_today_mm) / 10.0
-            else:
-                _tp_pot = 0.0
-                _ep_pot = float(et0_today_mm) / 10.0
+            if growing_root and self.crop is not None and _sched is not None and _sched_idx is not None:
+                try:
+                    _rday = float(_sched["root_depth_cm"][_sched_idx])
+                    if int(t) != _last_root_day and _rday > 0:
+                        self.root_b = root_distribution(self.z, _rday)
+                        _last_root_day = int(t)
+                except Exception:
+                    pass
+            _tp_pot, _ep_pot = potential_partition_cm(
+                self.crop,
+                et0_today_mm,
+                use_dual_kc=bool(use_dual_kc),
+                sched=_sched,
+                day_index=(int(_sched_idx) if _sched_idx is not None else int(t)),
+                bare_after_harvest=bool(bare_after_harvest),
+            )
             # Explícitos continuam sobrepondo (mesma semântica)
             if transpiration_mm_day is not None:
                 transpiration_demand_cm_day = max(0.0, float(transpiration_mm_day)) / 10.0
@@ -849,6 +837,7 @@ class Hydrus1DSimulator:
             # Acumula escoamento APENAS do passo aceito (nunca de tentativas de
             # dt reduzido que foram descartadas por nao-convergencia)
             runoff_cum += (surface_flux_cm_day - infil_rate_cm_day) * dt
+            infil_cum += float(infil_rate_cm_day) * dt
                 
             # Atualiza variáveis de fluxo
             h = h_new
@@ -1132,8 +1121,14 @@ class Hydrus1DSimulator:
             # Salvar observações temporais (Breakthrough Curves nos nós de profundidade)
             if t >= next_obs_save or t >= self.cfg.total_days:
                 obs_times.append(float(t))
+                flux_times.append(float(t))
+                cum_infil_s.append(float(infil_cum))
+                cum_evap_s.append(float(evap_cum))
+                cum_transp_s.append(float(transp_cum))
+                cum_bottom_s.append(float(q_bottom_cum))
                 for d_val, idx_val in obs_node_map.items():
                     obs_theta[d_val].append(float(theta[idx_val]))
+                    obs_h[d_val].append(float(h[idx_val]))
                     for n_it in active_nutrients:
                         sym_it = n_it["symbol"]
                         # N2: obs usa kd_eff (com competição Ca) em vez do kd nominal
@@ -1335,7 +1330,13 @@ class Hydrus1DSimulator:
                 evap_cum_cm=float(evap_cum),
                 transp_cum_cm=float(transp_cum),
                 water_closure_cm=float(_wc_cm),
-                water_closure_pct=float(_wc_pct)
+                water_closure_pct=float(_wc_pct),
+                flux_times_days=list(flux_times),
+                cum_infil_cm=list(cum_infil_s),
+                cum_evap_series_cm=list(cum_evap_s),
+                cum_transp_series_cm=list(cum_transp_s),
+                cum_bottom_series_cm=list(cum_bottom_s),
+                obs_h_series=obs_h,
             )
         else:
             # Modo "somente água" - sem solutos
@@ -1370,5 +1371,11 @@ class Hydrus1DSimulator:
                 evap_cum_cm=float(evap_cum),
                 transp_cum_cm=float(transp_cum),
                 water_closure_cm=float(_wc_cm),
-                water_closure_pct=float(_wc_pct)
+                water_closure_pct=float(_wc_pct),
+                flux_times_days=list(flux_times),
+                cum_infil_cm=list(cum_infil_s),
+                cum_evap_series_cm=list(cum_evap_s),
+                cum_transp_series_cm=list(cum_transp_s),
+                cum_bottom_series_cm=list(cum_bottom_s),
+                obs_h_series=obs_h,
             )
