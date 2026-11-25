@@ -66,6 +66,36 @@ function LayersIcon() {
   );
 }
 
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+    </svg>
+  );
+}
+
+function LeafIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z" />
+      <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" />
+    </svg>
+  );
+}
+
+function BalanceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" />
+      <path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" />
+      <path d="M7 21h10" />
+      <path d="M12 3v18" />
+      <path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2" />
+    </svg>
+  );
+}
+
 function fmtPeak(v: number | null | undefined): string {
   if (v === null || v === undefined || (typeof v === "number" && Number.isNaN(v))) return "indefinido";
   return `${v.toFixed(1)} cm`;
@@ -79,7 +109,7 @@ function screenSrc(u: string | null | undefined): string | null {
 }
 
 export default function Results(props: Props) {
-  const { jobState, elapsed, result, report, steps, rootDepth, appliedMm, soluteMeta, onDownloadExcel, onDownloadGraphs, onDownloadHydrus, onLoadReport, onLoadSteps } = props;
+  const { jobState, elapsed, result, report, steps, rootDepth, appliedMm, soluteMeta, hasCrop, onDownloadExcel, onDownloadGraphs, onDownloadHydrus, onLoadReport, onLoadSteps } = props;
 
   /* Laudo + passo a passo carregados automaticamente quando o resultado chega
      (o Gradio concatena os dois no mesmo card: report = f"{laudo}\n\n---\n\n{passo}"). */
@@ -135,8 +165,8 @@ export default function Results(props: Props) {
       )}
       {result && (
         <>
-          {/* Cartões de resultado — porte de build_metrics_cards_html (app_gradio.py):
-              água (lâmina + drenagem) primeiro, depois um cartão por soluto. */}
+          {/* Água numa faixa de cartões iguais. Cada soluto fica fora dela,
+              na largura toda, para o detalhe não esticar a linha. */}
           <div className="metrics-card-grid">
             <div className="metric-card">
               <div className="metric-icon"><RainIcon /></div>
@@ -157,80 +187,106 @@ export default function Results(props: Props) {
               <div className="metric-label">Δ armazenamento</div>
             </div>
             <div className="metric-card">
+              <div className="metric-icon"><SunIcon /></div>
               <div className="metric-value">{wb?.evap_mm != null ? `${wb.evap_mm.toFixed(1)} mm` : "—"}</div>
               <div className="metric-label">Evaporação</div>
             </div>
-            <div className="metric-card">
-              <div className="metric-value">{wb?.transp_mm != null ? `${wb.transp_mm.toFixed(1)} mm` : "—"}</div>
-              <div className="metric-label">Transpiração</div>
-            </div>
+            {hasCrop && (
+              <div className="metric-card">
+                <div className="metric-icon"><LeafIcon /></div>
+                <div className="metric-value">{wb?.transp_mm != null ? `${wb.transp_mm.toFixed(1)} mm` : "—"}</div>
+                <div className="metric-label">Transpiração</div>
+              </div>
+            )}
             <div className="metric-card">
               <div className="metric-icon"><DrainIcon /></div>
               <div className="metric-value">{drainageVal != null ? `${drainageVal.toFixed(1)} mm` : "—"}</div>
               <div className="metric-label">{drainageLabel}</div>
             </div>
             <div className="metric-card">
+              <div className="metric-icon"><BalanceIcon /></div>
               <div className="metric-value">{wb && wb.balance_error_mm != null ? `${wb.balance_error_mm >= 0 ? "+" : ""}${wb.balance_error_mm.toFixed(2)} mm` : "—"}</div>
               <div className="metric-label">Erro de balanço</div>
               {wb && wb.balance_error_pct != null && <div className="metric-sub">WatBalR {wb.balance_error_pct.toFixed(2)}%</div>}
             </div>
-            {result.solutes.map((s) => {
-              const [bg, fg] = ACCENTS[s.symbol] ?? ["#f1f5f9", "#334155"];
-              const dose = s.dose_kg_ha;
-              const meta = soluteMeta?.[s.symbol];
-              const kdNum = meta?.kd != null && meta.kd !== "" ? parseFloat(String(meta.kd).replace(",", ".")) : NaN;
-              const resNum = meta?.residual != null && meta.residual !== "" ? parseFloat(String(meta.residual).replace(",", ".")) : 0;
-              // kg/ha vindos do backend (sobre dose+residual); fallback pct×dose.
-              const kgOf = (v: number | null | undefined, pct: number) =>
-                v !== null && v !== undefined && Number.isFinite(v) ? v : (dose * pct) / 100;
-              const retainedKg = kgOf(s.retained_kg_ha, s.retained_root_pct);
-              const belowKg = kgOf(s.below_kg_ha, s.below_profile_pct);
-              const bottomKg = kgOf(s.bottom_kg_ha, s.bottom_pct);
-              const uptKg = kgOf(s.uptaken_kg_ha, s.uptaken_pct);
-              const capKg = kgOf(s.capsule_kg_ha, s.capsule_pct ?? 0);
-              const resKg = s.residual_kg_ha ?? 0;
-              const tableDose = s.dose_input_kg_ha ?? dose;
-              const inputKg = s.input_kg_ha ?? dose;
-              const inputTxt = resKg > 0.005
-                ? `de ${inputKg.toFixed(1)} kg/ha (dose ${tableDose.toFixed(1)} + residual ${resKg.toFixed(1)})`
-                : s.is_fertigation
-                  ? `de ${dose.toFixed(1)} kg/ha injetados (fertirrigação)`
-                  : `de ${dose.toFixed(0)} kg/ha aplicados`;
-              return (
-                <div className="metric-card metric-nutr" key={s.symbol}>
-                  <div className="metric-nutr-head">
-                    <span className="metric-nutr-sym" style={{ background: bg, color: fg }}>{s.symbol}</span>
-                    <span className="metric-nutr-name">{s.name}</span>
-                  </div>
-                  <div className="metric-value">{(s.profile_pct ?? (s.retained_root_pct + s.below_profile_pct)).toFixed(1)}%</div>
-                  <div className="metric-label">No perfil inteiro (ConcVol)</div>
-                  <div className="metric-sub">{`${(s.profile_kg_ha ?? (retainedKg + belowKg)).toFixed(1)} kg/ha ${inputTxt}`}</div>
-                  <div className="metric-nutr-rows">
-                    <div className="metric-nutr-row"><span>Zona radicular (0–{rootDepth.toFixed(0)} cm)</span><b>{s.retained_root_pct.toFixed(1)}% · {retainedKg.toFixed(1)} kg/ha</b></div>
-                    <div className="metric-nutr-row"><span>Abaixo da raiz, no perfil</span><b>{s.below_profile_pct.toFixed(1)}% · {belowKg.toFixed(1)} kg/ha</b></div>
-                    <div className="metric-nutr-row"><span>Atravessou o fundo ({zmax.toFixed(0)} cm)</span><b>{s.bottom_pct.toFixed(1)}% · {bottomKg.toFixed(1)} kg/ha</b></div>
-                    <div className="metric-nutr-row"><span>Absorvido pela cultura{s.uptake_capped ? " (teto da demanda)" : ""}{s.uptake_capped && s.uptake_cap_kg_ha != null ? ` · teto ${Number(s.uptake_cap_kg_ha).toFixed(1)} kg/ha` : ""}</span><b>{s.uptaken_pct.toFixed(1)}% · {uptKg.toFixed(1)} kg/ha</b></div>
-                    <div className="metric-nutr-row"><span>Erro de massa (CncBalR)</span><b>{(s.mass_closure_pct ?? 0) >= 0 ? "+" : ""}{(s.mass_closure_pct ?? 0).toFixed(2)}%</b></div>
-                    {(s.capsule_pct ?? 0) > 0.05 && (
-                      <div className="metric-nutr-row"><span>Ainda no grânulo (não liberado)</span><b>{(s.capsule_pct ?? 0).toFixed(1)}% · {capKg.toFixed(1)} kg/ha</b></div>
-                    )}
-                    {s.is_fertigation && s.fertigation_c0_mg_l != null && (
-                      <div className="metric-nutr-row"><span>C₀ calculado (= dose ÷ lâmina na injeção)</span><b>{s.fertigation_c0_mg_l.toFixed(1)} mg/L</b></div>
-                    )}
-                    <div className="metric-nutr-row"><span>Pico no perfil</span><b>{fmtPeak(s.peak_depth_cm)}</b></div>
-                    {Number.isFinite(kdNum) && (
-                      <div className="metric-nutr-row"><span>Kd</span><b>{kdNum.toFixed(3)} cm³/g</b></div>
-                    )}
-                    {resNum > 0 && (
-                      <div className="metric-nutr-row"><span>Residual inicial</span><b>{resNum.toFixed(2)} mg/dm³</b></div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            {/* Modo "somente água": balanço hídrico (sem solutos) — porte do ramo
-                water_only de build_metrics_cards_html. */}
           </div>
+          {result.solutes.length > 0 && (
+            <div className="solute-balance-list">
+              {result.solutes.map((s) => {
+                const [bg, fg] = ACCENTS[s.symbol] ?? ["#f1f5f9", "#334155"];
+                const dose = s.dose_kg_ha;
+                const meta = soluteMeta?.[s.symbol];
+                const kdNum = meta?.kd != null && meta.kd !== "" ? parseFloat(String(meta.kd).replace(",", ".")) : NaN;
+                const resNum = meta?.residual != null && meta.residual !== "" ? parseFloat(String(meta.residual).replace(",", ".")) : 0;
+                // kg/ha vindos do backend (sobre dose+residual); fallback pct×dose.
+                const kgOf = (v: number | null | undefined, pct: number) =>
+                  v !== null && v !== undefined && Number.isFinite(v) ? v : (dose * pct) / 100;
+                const retainedKg = kgOf(s.retained_kg_ha, s.retained_root_pct);
+                const belowKg = kgOf(s.below_kg_ha, s.below_profile_pct);
+                const bottomKg = kgOf(s.bottom_kg_ha, s.bottom_pct);
+                const uptKg = kgOf(s.uptaken_kg_ha, s.uptaken_pct);
+                const capKg = kgOf(s.capsule_kg_ha, s.capsule_pct ?? 0);
+                const resKg = s.residual_kg_ha ?? 0;
+                const tableDose = s.dose_input_kg_ha ?? dose;
+                const inputKg = s.input_kg_ha ?? dose;
+                const inputTxt = resKg > 0.005
+                  ? `de ${inputKg.toFixed(1)} kg/ha (dose ${tableDose.toFixed(1)} + residual ${resKg.toFixed(1)})`
+                  : s.is_fertigation
+                    ? `de ${dose.toFixed(1)} kg/ha injetados (fertirrigação)`
+                    : `de ${dose.toFixed(0)} kg/ha aplicados`;
+                const pctKg = (pct: number, kg: number) => `${pct.toFixed(1)}% · ${kg.toFixed(1)} kg/ha`;
+                const profilePct = s.profile_pct ?? (s.retained_root_pct + s.below_profile_pct);
+                const profileKg = s.profile_kg_ha ?? (retainedKg + belowKg);
+                const rows: { label: string; value: string }[] = [];
+                // Sem raiz, "zona radicular" e "abaixo da raiz" repetem o perfil
+                // inteiro (a camada cai no fundo do domínio). O número grande já é o ConcVol.
+                if (hasCrop) {
+                  rows.push({ label: `Zona radicular (0–${rootDepth.toFixed(0)} cm)`, value: pctKg(s.retained_root_pct, retainedKg) });
+                  rows.push({ label: "Abaixo da raiz, no perfil", value: pctKg(s.below_profile_pct, belowKg) });
+                }
+                rows.push({ label: `Atravessou o fundo (${zmax.toFixed(0)} cm)`, value: pctKg(s.bottom_pct, bottomKg) });
+                if (hasCrop) {
+                  const capNote = s.uptake_capped ? " (teto da demanda)" : "";
+                  const capKgNote = s.uptake_capped && s.uptake_cap_kg_ha != null ? ` · teto ${Number(s.uptake_cap_kg_ha).toFixed(1)} kg/ha` : "";
+                  rows.push({ label: `Absorvido pela cultura${capNote}${capKgNote}`, value: pctKg(s.uptaken_pct, uptKg) });
+                }
+                const closure = s.mass_closure_pct ?? 0;
+                rows.push({ label: "Erro de massa (CncBalR)", value: `${closure >= 0 ? "+" : ""}${closure.toFixed(2)}%` });
+                if ((s.capsule_pct ?? 0) > 0.05) {
+                  rows.push({ label: "Ainda no grânulo (não liberado)", value: pctKg(s.capsule_pct ?? 0, capKg) });
+                }
+                if (s.is_fertigation && s.fertigation_c0_mg_l != null) {
+                  rows.push({ label: "C₀ calculado (= dose ÷ lâmina na injeção)", value: `${s.fertigation_c0_mg_l.toFixed(1)} mg/L` });
+                }
+                rows.push({ label: "Pico no perfil", value: fmtPeak(s.peak_depth_cm) });
+                if (Number.isFinite(kdNum)) rows.push({ label: "Kd", value: `${kdNum.toFixed(3)} cm³/g` });
+                if (resNum > 0) rows.push({ label: "Residual inicial", value: `${resNum.toFixed(2)} mg/dm³` });
+                return (
+                  <article className="solute-balance-card" key={s.symbol}>
+                    <div className="solute-balance-head">
+                      <span className="metric-nutr-sym" style={{ background: bg, color: fg }}>{s.symbol}</span>
+                      <div>
+                        <div className="metric-nutr-name">{s.name}</div>
+                        <div className="metric-label">No perfil inteiro (ConcVol)</div>
+                        <div className="metric-sub">{`${profileKg.toFixed(1)} kg/ha ${inputTxt}`}</div>
+                      </div>
+                      <div className="solute-balance-headline">
+                        <div className="metric-value">{profilePct.toFixed(1)}%</div>
+                      </div>
+                    </div>
+                    <dl className="solute-balance-grid">
+                      {rows.map((row) => (
+                        <div key={row.label}>
+                          <dt>{row.label}</dt>
+                          <dd>{row.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </article>
+                );
+              })}
+            </div>
+          )}
 
           {perfilSrc && (
             <>

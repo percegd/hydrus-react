@@ -10,6 +10,17 @@ import pandas as pd
 import numpy as np
 
 
+def _if_crop(p: Dict[str, Any], value):
+    """Indicador de cultura. Sem cultura o Excel marca 'não se aplica' em vez de 0.
+
+    A série temporal de transpiração continua na aba Fluxos_Acumulados.
+    ``has_crop`` ausente mantém o número (chamadas antigas).
+    """
+    if p.get("has_crop", True):
+        return value
+    return "não se aplica"
+
+
 def _water_balance_summary_rows(p: Dict[str, Any]):
     """Resumo (parâmetro, valor) do balanço hídrico para o modo "Somente água".
 
@@ -43,7 +54,7 @@ def _water_balance_summary_rows(p: Dict[str, Any]):
         ("Escoamento Superficial [mm]", p.get("runoff_mm", 0.0)),
         ("Δ Armazenamento no Perfil [mm]", p.get("storage_mm", 0.0)),
         ("Evaporação [mm]", p.get("evap_mm", "")),
-        ("Transpiração [mm]", p.get("transp_mm", "")),
+        ("Transpiração [mm]", _if_crop(p, p.get("transp_mm", ""))),
     ]
     obs = p.get("obs_depths_cm") or []
     if obs:
@@ -288,15 +299,15 @@ def _export_column_sheets(writer: pd.ExcelWriter, results: Any, p: Dict[str, Any
             ("Retenção na Camada [%]", round(_ret, 2)),
             ("Lixiviação / Deslocamento Além da Camada [%]", _leach),
             ("Ainda no Grânulo (não liberado) [%]", round(float(_cap), 2)),
-            ("Absorção pela Cultura [%] (limitada pela demanda)", round(float(_upt), 2)),
-            ("Absorção limitada pela demanda em parte do período", "sim" if _capped_any else "não"),
-            ("Teto no período [kg/ha]", _teto_period),
+            ("Absorção pela Cultura [%] (limitada pela demanda)", _if_crop(p, round(float(_upt), 2))),
+            ("Absorção limitada pela demanda em parte do período", _if_crop(p, "sim" if _capped_any else "não")),
+            ("Teto no período [kg/ha]", _if_crop(p, _teto_period)),
             ("Profundidade do Pico Máximo [cm]", _excel_peak_label(results, p)),
             ("Drenagem Acumulada no Fundo [mm]", float(p.get("drainage_mm", float(p.get("q_bottom_cm", 0.0)) * 10.0))),
             ("Δ Armazenamento no Perfil [mm]", float(p.get("storage_mm", 0.0))),
             ("Escoamento Superficial [mm]", float(p.get("runoff_mm", 0.0))),
             ("Evaporação [mm]", p.get("evap_mm", "")),
-            ("Transpiração [mm]", p.get("transp_mm", "")),
+            ("Transpiração [mm]", _if_crop(p, p.get("transp_mm", ""))),
         ]
         # (L12) Nota de unidade quando P está entre os solutos
         try:
@@ -413,15 +424,15 @@ def _export_seasonal_sheets(writer: pd.ExcelWriter, res: Any, p: Dict[str, Any])
             (_ret_lbl, round(_ret_s, 2)),
             (_leach_lbl, _leach_s),
             ("Ainda no Grânulo (não liberado) [%]", round(float(_cap_s), 2)),
-            ("Absorção pela Cultura [%] (limitada pela demanda)", round(float(_upt_s), 2)),
-            ("Absorção limitada pela demanda em parte do período", "sim" if _capped_s else "não"),
-            ("Teto no período [kg/ha]", _teto_period_s),
+            ("Absorção pela Cultura [%] (limitada pela demanda)", _if_crop(p, round(float(_upt_s), 2))),
+            ("Absorção limitada pela demanda em parte do período", _if_crop(p, "sim" if _capped_s else "não")),
+            ("Teto no período [kg/ha]", _if_crop(p, _teto_period_s)),
             ("Profundidade do Pico Máximo no Fim do Ano [cm]", _excel_peak_label(res, p)),
             (_dren_lbl, float(p.get("drainage_mm", float(getattr(res, "drainage_cum_cm", 0.0)) * 10.0))),
             ("Δ Armazenamento no Perfil [mm]", float(p.get("storage_mm", 0.0))),
             ("Escoamento Superficial [mm]", float(p.get("runoff_mm", 0.0))),
             ("Evaporação [mm]", p.get("evap_mm", "")),
-            ("Transpiração [mm]", p.get("transp_mm", "")),
+            ("Transpiração [mm]", _if_crop(p, p.get("transp_mm", ""))),
         ]
         try:
             _syms_s = set((_nr_s.keys() if isinstance(_nr_s, dict) else []) or {sym})

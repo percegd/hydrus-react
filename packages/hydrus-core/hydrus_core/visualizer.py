@@ -152,12 +152,9 @@ def plot_nutrient_profile(
 
     z = results.z
     dz = z[1] - z[0] if len(z) > 1 else 1.0
-    if crop is not None:
-        root_depth = float(crop.root_depth_cm)
-    elif target_depth_cm is not None:
-        root_depth = float(target_depth_cm)
-    else:
-        root_depth = float(getattr(results, "target_depth_cm", 30.0) or 30.0)
+    # Sem cultura o target_depth cai no fundo do domínio: a faixa cobriria
+    # o perfil inteiro e a legenda falaria de raiz. A curva fica; a faixa não.
+    root_depth = float(crop.root_depth_cm) if crop is not None else None
 
     final_theta = results.theta_profiles[-1]
     init_theta = results.theta_profiles[0]
@@ -177,12 +174,10 @@ def plot_nutrient_profile(
         "P": "#66a61e"    # Verde oliva
     }
 
-    # Zonas agronômicas de fundo (comum para todos os nutrientes)
-    lbl_eval = "Zona Radicular" if crop else "Camada Avaliada"
-    lbl_deep = "Zona de Perda (Subsolo)" if crop else "Deslocamento Profundo"
-    ax1.axhspan(0, root_depth, color="#2ca02c", alpha=0.12, label=lbl_eval)
-    ax1.axhspan(root_depth, max(z), color="#d62728", alpha=0.06, label=lbl_deep)
-    ax1.axhline(root_depth, color="#2ca02c", linestyle="--", lw=1.8)
+    if root_depth is not None:
+        ax1.axhspan(0, root_depth, color="#2ca02c", alpha=0.12, label="Zona Radicular")
+        ax1.axhspan(root_depth, max(z), color="#d62728", alpha=0.06, label="Zona de Perda (Subsolo)")
+        ax1.axhline(root_depth, color="#2ca02c", linestyle="--", lw=1.8)
 
     is_multi = hasattr(results, "nutrient_results") and len(results.nutrient_results) > 1
     if solute_filter and getattr(results, "nutrient_results", None) and solute_filter in results.nutrient_results:
@@ -241,9 +236,9 @@ def plot_nutrient_profile(
         _pad = max(0.005, 0.08 * (_hi - _lo))
         ax2.set_xlim(max(0.0, _lo - _pad), _hi + _pad)
 
-        # Linha da raiz também no gráfico 2
-        ax2.axhline(root_depth, color="#2ca02c", linestyle="--", lw=1.8)
-        ax2.axhspan(0, root_depth, color="#2ca02c", alpha=0.12)
+        if root_depth is not None:
+            ax2.axhline(root_depth, color="#2ca02c", linestyle="--", lw=1.8)
+            ax2.axhspan(0, root_depth, color="#2ca02c", alpha=0.12)
 
         ax2.set_title("Frente de Umidade da Água", fontsize=11, fontweight='bold', pad=8)
         ax2.set_xlabel("Umidade volumétrica θ [cm³/cm³]", fontsize=10)
@@ -724,17 +719,22 @@ def plot_hydrus_observations(results, output_path: str, nutrient_symbol: str = N
     return output_path
 
 
-def plot_hydrus_cumflux(results, output_path: str) -> str:
-    """Fluxos acumulados no estilo T_LEVEL: infiltração, evaporação, transpiração e fundo."""
+def plot_hydrus_cumflux(results, output_path: str, show_transpiration: bool = True) -> str:
+    """Fluxos acumulados no estilo T_LEVEL: infiltração, evaporação, transpiração e fundo.
+
+    ``show_transpiration=False`` omite a série e a legenda quando o cenário
+    não tem cultura. O número continua na planilha.
+    """
     t = list(getattr(results, "flux_times_days", []) or [])
     if len(t) < 2:
         return None
     series = [
         ("Infiltração", getattr(results, "cum_infil_cm", []), "#1f77b4"),
         ("Evaporação", getattr(results, "cum_evap_series_cm", []), "#ff7f0e"),
-        ("Transpiração", getattr(results, "cum_transp_series_cm", []), "#2ca02c"),
-        ("Fluxo no fundo", getattr(results, "cum_bottom_series_cm", []), "#9467bd"),
     ]
+    if show_transpiration:
+        series.append(("Transpiração", getattr(results, "cum_transp_series_cm", []), "#2ca02c"))
+    series.append(("Fluxo no fundo", getattr(results, "cum_bottom_series_cm", []), "#9467bd"))
     fig, ax = plt.subplots(1, 1, figsize=(8.2, 5.2), dpi=150)
     for name, vals, color in series:
         if len(vals) == len(t):

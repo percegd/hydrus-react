@@ -1359,7 +1359,7 @@ def build_screen_images(req: SimulateRequest, results, soil, crop, root_depth: f
         if os.path.isfile(p):
             hydrus_obs = "hydrus_obs"
         p = os.path.join(tela_dir, "hydrus_fluxos.png")
-        plot_hydrus_cumflux(results, p)
+        plot_hydrus_cumflux(results, p, show_transpiration=crop is not None)
         if os.path.isfile(p):
             hydrus_fluxos = "hydrus_fluxos"
     except Exception as exc:
@@ -1921,6 +1921,7 @@ def _sim_params(req: SimulateRequest, results, soil, crop, root_depth: float, to
         "kd": float(first.kd) if first is not None else 0.0,
         "kd_citation": "Referência para a textura (ajustável; não calibrado)",
         "dispersivity": float(first.dispersivity_cm) if first is not None else float(req.depth_cm) / 10.0,
+        "has_crop": crop is not None,
         "crop_name": (crop.name if crop else "Perfil de solo nu (sem cultura)"),
         "crop_citation": _crop_citation(req, crop),
         "root_depth_cm": float(root_depth),
