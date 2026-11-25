@@ -215,7 +215,7 @@ def build_graph_files(
         pass
     try:
         _p = os.path.join(out_dir, "hydrus_fluxos.png")
-        plot_hydrus_cumflux(results, _p)
+        plot_hydrus_cumflux(results, _p, show_transpiration=crop_obj is not None)
         _add("hydrus_fluxos", "Fluxos acumulados (T_LEVEL)", _p)
     except Exception:
         pass
