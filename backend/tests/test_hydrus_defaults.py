@@ -125,6 +125,93 @@ def test_cartoes_balanco_e_soluto(tmp_path):
     assert abs(float(node[2]) - (-150.0)) < 5.0
 
 
+def _profile_nodes(path: str):
+    """Nós do PROFILE.DAT: x [cm], Conc na fase líquida [mg/cm³]."""
+    xs, concs = [], []
+    for line in open(path, encoding="utf-8"):
+        bits = line.split()
+        if len(bits) < 12:
+            continue
+        try:
+            n = int(bits[0])
+            x = float(bits[1])
+            conc = float(bits[10])
+        except ValueError:
+            continue
+        if n <= 0:
+            continue
+        xs.append(x)
+        concs.append(conc)
+    return np.asarray(xs), np.asarray(concs)
+
+
+def _hydrus_nodal_width(x: np.ndarray) -> np.ndarray:
+    """Δx nodal do HYDRUS-1D: meia célula nas extremidades, célula cheia no interior."""
+    w = np.zeros(len(x))
+    if len(x) == 1:
+        w[0] = 1.0
+        return w
+    w[0] = 0.5 * abs(x[1] - x[0])
+    w[-1] = 0.5 * abs(x[-1] - x[-2])
+    for i in range(1, len(x) - 1):
+        w[i] = 0.5 * abs(x[i + 1] - x[i - 1])
+    return w
+
+
+def test_profile_massa_inicial_k_pulse(tmp_path):
+    """Conc da camada 0–2 cm fecha 30 kg/ha na integração nodal do HYDRUS-1D.
+
+    Nós 0, −1 e −2 cm: meia célula na superfície e célula de 1 cm em −2 cm
+    (não 3·dz). Conc líquida ≈ 0,149 mg/cm³.
+    """
+    from hydrus_core.soil_physics import water_content_from_h
+
+    soil = SOIL_DATABASE["latossolo_medio"]
+    crop = CROP_DATABASE["soja"]
+    dose = 30.0
+    kd = 0.45
+    export_to_hydrus1d_project(
+        str(tmp_path),
+        soil,
+        crop=crop,
+        fertilizer_kg_ha=dose,
+        water_events=[(0.5, 0.3, 50.0)],
+        total_days=30.0,
+        depth_cm=200.0,
+        dz=1.0,
+        kd=kd,
+        dispersivity_cm=20.0,
+        placement_mode="surface",
+        z_app_top_cm=0.0,
+        z_app_bottom_cm=2.0,
+        initial_moisture_pct=100.0,
+        et0_mm_day=4.0,
+        nutrient_specs=[{"symbol": "K", "kd": kd, "dose_kg_ha": dose}],
+    )
+    x, conc = _profile_nodes(os.path.join(tmp_path, "PROFILE.DAT"))
+    assert len(x) == 201
+    h = -150.0
+    # h escrito no arquivo (coluna 3 da primeira linha de nó).
+    first = open(os.path.join(tmp_path, "PROFILE.DAT"), encoding="utf-8").read().splitlines()[4].split()
+    h = float(first[2])
+    theta = float(water_content_from_h(np.array([h]), soil)[0])
+    ret = theta + float(soil.bulk_density) * kd
+    width = _hydrus_nodal_width(x)
+    mass_mg_cm2 = float(np.sum(conc * ret * width))
+    mass_kg_ha = mass_mg_cm2 * 100.0
+    # 6 casas do PROFILE.DAT; o bug antigo (3·dz) deixava ~25 kg/ha.
+    assert abs(mass_kg_ha - dose) < 1e-3, mass_kg_ha
+    # 0, −1 e −2 cm carregam a dose; o nó seguinte está limpo.
+    assert abs(float(x[0])) < 1e-9 and abs(float(x[2]) - (-2.0)) < 1e-9
+    assert abs(float(conc[0]) - float(conc[1])) < 1e-8
+    assert abs(float(conc[1]) - float(conc[2])) < 1e-8
+    assert abs(float(conc[0]) - 0.149) < 2e-3
+    assert float(conc[3]) == 0.0
+    # A célula de −2 cm é 1 cm, não meia.
+    assert abs(float(width[2]) - 1.0) < 1e-12
+    assert abs(float(width[0]) - 0.5) < 1e-12
+
+
 def test_preview_tp_bate_com_a_particao():
     with TestClient(app) as client:
         r = client.post("/crops/preview", json={

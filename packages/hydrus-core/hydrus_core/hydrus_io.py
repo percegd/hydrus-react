@@ -31,6 +31,21 @@ def _initial_state(soil: SoilParameters, moisture_pct: float):
     return theta, h
 
 
+def _nodal_width_cm(i: int, nz: int, dz: float) -> float:
+    """Largura nodal do HYDRUS-1D [cm].
+
+    Meia célula nas extremidades do perfil (i = 0 e i = nz-1); célula inteira
+    no interior. O nó no fim de uma camada de adubo que não é o fundo do
+    perfil (ex.: −2 cm com dz = 1) entra com dz, não com dz/2.
+    """
+    step = float(dz)
+    if nz <= 1:
+        return step
+    if i == 0 or i == nz - 1:
+        return 0.5 * step
+    return step
+
+
 def _placement_bounds(placement_mode: str, z_top: float, z_bot: float):
     pm = str(placement_mode or "surface").lower().strip()
     if pm == "furrow":
@@ -202,7 +217,9 @@ def export_to_hydrus1d_project(
         if len(app_nodes) == 0:
             z_mid = 0.5 * (z_top + z_bot)
             app_nodes = np.sort(np.argsort(np.abs(z_nodes - z_mid))[:2])
-        thick = max(len(app_nodes) * float(dz), float(dz))
+        # θ(h) que o HYDRUS-1D recalcula a partir do h escrito no PROFILE.
+        theta_h = float(water_content_from_h(np.array([h_init]), soil)[0])
+        widths = np.array([_nodal_width_cm(int(i), nz, dz) for i in app_nodes], dtype=float)
         for j, sp in enumerate(specs):
             dose = float(sp.get("dose_kg_ha") or 0.0)
             if j == 0 and dose <= 0:
@@ -210,8 +227,9 @@ def export_to_hydrus1d_project(
             mass = dose * 0.01  # kg/ha -> mg/cm2
             kd_j = float(sp.get("kd", kd) or 0.0)
             if mass > 0 and len(app_nodes):
-                c_bulk = mass / thick
-                c_liq = c_bulk / max(theta0 + rho * max(0.0, kd_j), 1e-8)
+                ret = theta_h + rho * max(0.0, kd_j)
+                # Conc uniforme na fase líquida: soma Conc·(θ+ρKd)·Δx_nodal = dose.
+                c_liq = mass / max(ret * float(np.sum(widths)), 1e-12)
                 conc[app_nodes, j] += c_liq
             res_raw = sp.get("initial_residual_mg_dm3", None)
             if res_raw is None:
