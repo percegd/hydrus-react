@@ -1,6 +1,6 @@
-"""Exemplos de aula HYDRUS-1D montados pelo schema (não pelo exportador).
+"""Cenários de validação HYDRUS-1D montados pelo schema (não pelo exportador).
 
-A) infiltração empoçada, 1 h, carga h=0.
+A) infiltração sob carga h=0, 1 h.
 B) fluxo constante + K a 10 mg/L, 3 h.
 O caminho padrão (dias, BC atmosférica, Δz=1 cm, umidade em %) permanece o anterior.
 """

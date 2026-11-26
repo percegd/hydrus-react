@@ -1,12 +1,18 @@
 """T15/T17/T18: gráficos extras, ZIP, passo a passo, ajuda e jobs expirados."""
 
 import io
+import json
+import re
 import time
 import zipfile
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app.main import app
+
+_ROOT = Path(__file__).resolve().parents[2]
+_CLASSROOM = re.compile(r"aula|orientador|professor|\bcurso\b|esalq", re.IGNORECASE)
 
 
 def _payload(**overrides):
@@ -106,19 +112,84 @@ def test_steps_non_empty() -> None:
         assert isinstance(md, str) and len(md.strip()) > 200
 
 
-def test_help_entries() -> None:
-    with TestClient(app) as client:
-        r = client.get("/help")
-        assert r.status_code == 200, r.text
-        entries = r.json()
-        assert isinstance(entries, list) and len(entries) >= 20
-        by_key = {e["key"]: e for e in entries}
-        for key in ("theta_r", "kd_tab", "water_source", "placement_mode", "release_type"):
-            assert key in by_key, key
-            e = by_key[key]
-            assert e["title"].strip()
-            assert e["what"].strip()
-            assert "simulation" in e
+def _frontend_help_keys() -> set[str]:
+    keys: set[str] = set()
+    root = _ROOT / "frontend"
+    for path in list(root.rglob("*.tsx")) + list(root.rglob("*.ts")):
+        if "node_modules" in path.parts or ".next" in path.parts or path.name == "fieldHelp.ts":
+            continue
+        keys.update(re.findall(r'helpKey="([^"]+)"', path.read_text(encoding="utf-8")))
+    return keys
+
+
+def _field_help_entries() -> dict[str, dict[str, str]]:
+    text = (_ROOT / "frontend/lib/fieldHelp.ts").read_text(encoding="utf-8")
+    entries: dict[str, dict[str, str]] = {}
+    for match in re.finditer(
+        r'"([^"]+)": \{\s*'
+        r'title: "((?:\\.|[^"\\])*)",\s*'
+        r'unit: "((?:\\.|[^"\\])*)",\s*'
+        r'what: "((?:\\.|[^"\\])*)",\s*'
+        r'simulation: "((?:\\.|[^"\\])*)",',
+        text,
+    ):
+        key, title, unit, what, sim = match.groups()
+        entries[key] = {
+            "title": json_unescape(title),
+            "unit": json_unescape(unit),
+            "what": json_unescape(what),
+            "simulation": json_unescape(sim),
+        }
+    return entries
+
+
+def json_unescape(value: str) -> str:
+    return json.loads(f'"{value}"')
+
+
+def test_every_frontend_help_key_has_text() -> None:
+    """Cada helpKey da UI existe em frontend/lib/fieldHelp.ts, com texto."""
+    keys = _frontend_help_keys()
+    assert keys, "nenhuma helpKey no frontend"
+    entries = _field_help_entries()
+    missing = sorted(keys - entries.keys())
+    assert not missing, missing
+    for key in sorted(keys):
+        entry = entries[key]
+        assert entry["title"].strip() and entry["what"].strip() and entry["simulation"].strip(), key
+    dz = entries["dz_cm"]
+    assert "pontos de cálculo a cada Δz" in dz["what"]
+    assert "precisão" in dz["simulation"]
+    assert "n_nodes" not in keys
+    blob = " ".join(e["title"] + e["what"] + e["simulation"] for e in entries.values())
+    assert _CLASSROOM.search(blob) is None
+
+
+def test_step1_has_no_scenario_selector() -> None:
+    page = (_ROOT / "frontend/app/page.tsx").read_text(encoding="utf-8")
+    css = (_ROOT / "frontend/app/globals.css").read_text(encoding="utf-8")
+    soil = (_ROOT / "frontend/components/StepSoil.tsx").read_text(encoding="utf-8")
+    assert "Exemplo de aula" not in page
+    assert "exampleId" not in page
+    assert "SCENARIOS" not in page
+    assert "Cenário" not in page
+    assert "scenario-" not in css
+    assert "Nós da malha" not in soil
+    assert "mesh-nodes" not in soil
+    assert 'const [dzCm, setDzCm] = useState("1")' in page
+    assert not (_ROOT / "packages/hydrus-core/hydrus_core/field_help.py").exists()
+    assert not (_ROOT / "frontend/lib/helpFallback.json").exists()
+    for path in (
+        _ROOT / "frontend/app/page.tsx",
+        _ROOT / "frontend/app/layout.tsx",
+        _ROOT / "frontend/components/StepSoil.tsx",
+        _ROOT / "frontend/components/StepWater.tsx",
+        _ROOT / "frontend/components/StepNutrients.tsx",
+        _ROOT / "frontend/lib/fieldHelp.ts",
+        _ROOT / "backend/app/soils.py",
+    ):
+        text = path.read_text(encoding="utf-8")
+        assert _CLASSROOM.search(text) is None, path
 
 
 def test_expired_job_endpoints() -> None:

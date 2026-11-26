@@ -106,14 +106,14 @@ def literature_kd(sym: str, soil_key: str | None, sand: float | None, clay: floa
         return {
             "symbol": sym,
             "kd": float(PUB_LVA_KD.get(sym, 0.235)),
-            "citation": "PUB Arthur / ESALQ (LVA Arenoso)",
+            "citation": "Coluna experimental de Latossolo Vermelho-Amarelo arenoso (Pinho & Miranda, 2014)",
             "description": "Ajustado em coluna experimental de Latossolo Vermelho-Amarelo.",
         }
     if key == "pub_nv_argiloso":
         return {
             "symbol": sym,
             "kd": float(PUB_NV_KD.get(sym, 0.5189)),
-            "citation": "TCC Isabela / ESALQ (NV Argiloso)",
+            "citation": "Coluna experimental de Nitossolo Vermelho argiloso (Pinho & Miranda, 2014)",
             "description": "Ajustado em coluna experimental de Nitossolo Vermelho Eutrófico.",
         }
     texture = texture_for(None if key == "custom" else key, sand, clay)

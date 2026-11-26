@@ -8,7 +8,8 @@ import StepNutrients, { DEFAULT_ROWS, NUTRIENT_SYMBOLS, blankCustomRow, defaultD
 import StepSoil from "../components/StepSoil";
 import StepWater, { emptyRows, type RainMode } from "../components/StepWater";
 import WizardProgress from "../components/WizardProgress";
-import { ApiError, getCrops, getExcelBlob, getGraphsBlob, getHydrusBlob, getJob, getKd, getReport, getSoils, getSteps, postJob, postRosetta, type ClimateRow, type Crop, type SimulateResponse, type Soil } from "../lib/api";
+import { ApiError, getCrops, getExcelBlob, getGraphsBlob, getHydrusBlob, getJob, getKd, getReport, getSoils, getSteps, postJob, type ClimateRow, type Crop, type SimulateResponse, type Soil } from "../lib/api";
+import { formatCatalog, soilHydraulicIssues, valueDiffers } from "../lib/soilForm";
 
 const STEP_TITLES = [
   { title: "Apresentação", sub: "Visão geral da plataforma de simulação." },
@@ -20,15 +21,13 @@ const STEP_TITLES = [
 
 const DEFAULTS = {
   soil: "latossolo_medio",
-  isCustomSoil: false,
-  sandPct: "60",
-  clayPct: "25",
   thetaR: "0.1",
   thetaS: "0.43",
   vgAlpha: "0.03",
   vgN: "1.65",
   ks: "80",
   bulk: "1.3",
+  vgL: "0.5",
   cropMode: "sem",
   crop: "soja",
   cropName: "Soja",
@@ -146,16 +145,13 @@ export default function Home() {
   const [soils, setSoils] = useState<Soil[]>([]);
   const [crops, setCrops] = useState<Crop[]>([]);
   const [soil, setSoil] = useState(DEFAULTS.soil);
-  const [isCustomSoil, setIsCustomSoil] = useState(DEFAULTS.isCustomSoil);
-  const [sandPct, setSandPct] = useState(DEFAULTS.sandPct);
-  const [clayPct, setClayPct] = useState(DEFAULTS.clayPct);
   const [thetaR, setThetaR] = useState(DEFAULTS.thetaR);
   const [thetaS, setThetaS] = useState(DEFAULTS.thetaS);
   const [vgAlpha, setVgAlpha] = useState(DEFAULTS.vgAlpha);
   const [vgN, setVgN] = useState(DEFAULTS.vgN);
   const [ks, setKs] = useState(DEFAULTS.ks);
   const [bulk, setBulk] = useState(DEFAULTS.bulk);
-  const [rosettaNote, setRosettaNote] = useState("");
+  const [vgL, setVgL] = useState(DEFAULTS.vgL);
   const [kdInfo, setKdInfo] = useState<Record<string, { kd: string; citation: string }>>({});
   const [cropMode, setCropModeState] = useState(DEFAULTS.cropMode);
   const [crop, setCrop] = useState(DEFAULTS.crop);
@@ -188,7 +184,6 @@ export default function Home() {
   const [rootDepthCm, setRootDepthCm] = useState(DEFAULTS.rootDepthCm);
   const [days, setDays] = useState(DEFAULTS.days);
   const [dzCm, setDzCm] = useState("1");
-  const [nNodes, setNNodes] = useState("");
   const [timeUnit, setTimeUnit] = useState("days");
   const [topBc, setTopBc] = useState("atmospheric");
   const [hTop, setHTop] = useState("0");
@@ -200,8 +195,6 @@ export default function Home() {
   const [inletConc, setInletConc] = useState("");
   const [concUnit, setConcUnit] = useState("mg_l");
   const [molarMass, setMolarMass] = useState("");
-  const [exampleId, setExampleId] = useState("");
-  const skipKdReset = useRef(false);
   const [rainMode, setRainMode] = useState<RainMode>(DEFAULTS.rainMode);
   const [rainMm, setRainMm] = useState(DEFAULTS.rainMm);
   const [moisture, setMoisture] = useState(DEFAULTS.moisture);
@@ -332,48 +325,35 @@ export default function Home() {
     }
   }, [rainMode, crop, cropStartMode]);
 
-  // Solo personalizado: areia/argila -> Rosetta preenche θr θs α n Ks ρb (Gradio).
-  useEffect(() => {
-    if (!isCustomSoil) {
-      setRosettaNote("");
-      return;
-    }
-    const sand = parseFloat(sandPct.replace(",", "."));
-    const clay = parseFloat(clayPct.replace(",", "."));
-    if (!Number.isFinite(sand) || !Number.isFinite(clay) || sand + clay > 100) return;
-    const t = setTimeout(() => {
-      const bulkNum = parseFloat(bulk.replace(",", "."));
-      postRosetta({ sand_pct: sand, clay_pct: clay, bulk_density: Number.isFinite(bulkNum) ? bulkNum : undefined })
-        .then((r) => {
-          setThetaR(String(r.theta_r));
-          setThetaS(String(r.theta_s));
-          setVgAlpha(String(r.alpha));
-          setVgN(String(r.n));
-          setKs(String(r.ks));
-          setBulk(String(r.bulk_density));
-          setRosettaNote(`Silte: ${r.silt_pct}% • Classe: ${r.texture} • Areia (${sand}%) + Argila (${clay}%) + Silte (${r.silt_pct})% = 100%`);
-        })
-        .catch(() => setRosettaNote("Rosetta indisponível para esta granulometria."));
-    }, 400);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCustomSoil, sandPct, clayPct]);
+  function fillHydraulics(found: Soil) {
+    setThetaR(formatCatalog(found.theta_r, 4));
+    setThetaS(formatCatalog(found.theta_s, 4));
+    setVgAlpha(formatCatalog(found.alpha, 4));
+    setVgN(formatCatalog(found.n, 3));
+    setKs(formatCatalog(found.ks, 2));
+    setBulk(formatCatalog(found.bulk_density, 2));
+    setVgL(formatCatalog(found.l ?? 0.5, 2));
+  }
 
-  // Kd de literatura por textura: preenche as linhas ao trocar o solo (Gradio),
-  // preservando valores editados manualmente (badge "Editado").
+  function pickSoil(key: string) {
+    setSoil(key);
+    const found = soils.find((s) => s.key === key);
+    if (found) fillHydraulics(found);
+  }
+
   useEffect(() => {
-    const params = isCustomSoil
-      ? { sand: parseFloat(sandPct.replace(",", ".")), clay: parseFloat(clayPct.replace(",", ".")), }
-      : { soil_key: soil };
-    if (params.sand !== undefined && (!Number.isFinite(params.sand) || !Number.isFinite(params.clay as number))) return;
-    getKd(params).then((r) => {
+    const found = soils.find((s) => s.key === soil);
+    if (found) fillHydraulics(found);
+    // Só na carga do catálogo: trocar o solo passa por pickSoil.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soils]);
+
+  // Kd de literatura por textura: preenche as linhas ao trocar o solo (Gradio).
+  useEffect(() => {
+    getKd({ soil_key: soil }).then((r) => {
       const info: Record<string, { kd: string; citation: string }> = {};
       for (const e of r.entries) info[e.symbol] = { kd: String(e.kd), citation: e.citation };
       setKdInfo(info);
-      if (skipKdReset.current) {
-        skipKdReset.current = false;
-        return;
-      }
       setRows((rs) => rs.map((row) => {
         // Igual ao Gradio: ao trocar o solo, o Kd sempre volta ao valor de literatura.
         // Linhas "Outro soluto" não têm literatura (Kd 0.20 de traçador) — preservadas.
@@ -384,7 +364,7 @@ export default function Home() {
       }));
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soil, isCustomSoil, sandPct, clayPct]);
+  }, [soil]);
 
   function applyFertilizer(doses: Record<string, number>, fertKey?: string, grossDose?: number) {
     // Paridade Gradio (apply_commercial_fertilizer): 6 linhas fixas recebem
@@ -418,52 +398,6 @@ export default function Home() {
       setLastFert({ fert_key: fertKey, gross_dose: grossDose, doses: rounded });
     } else {
       setLastFert(null);
-    }
-  }
-
-  function applyExample(id: string) {
-    setExampleId(id);
-    if (!id) return;
-    skipKdReset.current = true;
-    setIsCustomSoil(false);
-    setSoil("areia_carsel");
-    setCropMode("sem");
-    setDepthCm("70");
-    setDzCm("0.7");
-    setNNodes("101");
-    setTimeUnit("hours");
-    setIcMode("head");
-    setHInit("-100");
-    setEt0("0");
-    setRainMm("0");
-    setRainMode("uniform");
-    setAdvEt(false);
-    setObsDepths("7, 14, 21, 28, 35, 42, 49, 56, 63, 70");
-    setConcUnit("mg_l");
-    setMolarMass("39.0983");
-    if (id === "ponded") {
-      setTopBc("head");
-      setHTop("0");
-      setIcMode("table");
-      setIcKind("h");
-      // Nó da superfície em h=0; os demais em h=−100 (o arquivo da aula).
-      setIcTable("0, 0\n0.0001, -100\n70, -100");
-      setDays("1");
-      setPrintDaysLamina("0.2, 0.4, 0.6, 0.8, 1");
-      setWaterOnly(true);
-      setInletConc("");
-    } else {
-      setTopBc("flux");
-      setFluxTop("0.0416667");
-      setDays("3");
-      setPrintDaysLamina("0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3");
-      setWaterOnly(false);
-      setInletConc("10");
-      setRows(DEFAULT_ROWS.map((r) => {
-        if (r.custom) return { ...r, active: false, dose: "0" };
-        if (r.symbol === "K") return { ...r, active: true, dose: "0", kd: "0", disp: "7", res: "0", kdEdited: true };
-        return { ...r, active: false, dose: "0" };
-      }));
     }
   }
 
@@ -655,18 +589,29 @@ export default function Home() {
     }
     try {
       const stageArr = isCom ? stageLengths.map((s) => numOrNull(s)).filter((v): v is number => v !== null) : [];
+      const catalog = soils.find((s) => s.key === soil);
+      const soilOverridePayload = (() => {
+        if (!catalog) return null;
+        const pairs: [string, string, number | undefined, number][] = [
+          ["theta_r", thetaR, catalog.theta_r, 4],
+          ["theta_s", thetaS, catalog.theta_s, 4],
+          ["alpha", vgAlpha, catalog.alpha, 4],
+          ["n", vgN, catalog.n, 3],
+          ["ks", ks, catalog.ks, 2],
+          ["bulk_density", bulk, catalog.bulk_density, 2],
+          ["l", vgL, catalog.l ?? 0.5, 2],
+        ];
+        const out: Record<string, number> = {};
+        for (const [key, raw, base, digits] of pairs) {
+          if (!valueDiffers(raw, base, digits)) continue;
+          const v = parseFloat(String(raw).replace(",", "."));
+          if (Number.isFinite(v)) out[key] = v;
+        }
+        return Object.keys(out).length ? out : null;
+      })();
       const body = {
         soil_key: soil,
-        custom_soil: isCustomSoil ? {
-          sand_pct: num(sandPct, 60),
-          clay_pct: num(clayPct, 25),
-          bulk_density: num(bulk, 1.3),
-          theta_r: num(thetaR, 0.1),
-          theta_s: num(thetaS, 0.43),
-          alpha: num(vgAlpha, 0.03),
-          n: num(vgN, 1.65),
-          ks: num(ks, 80),
-        } : null,
+        ...(soilOverridePayload ? { soil_overrides: soilOverridePayload } : {}),
         crop_key: isCom ? crop : null,
         crop_name: isCom ? (cropName.trim() || null) : null,
         kc: isCom ? numOrNull(cropKc) : null,
@@ -697,7 +642,6 @@ export default function Home() {
         }),
         depth_cm: depthVal,
         dz_cm: num(dzCm, 1),
-        ...(String(nNodes).trim() ? { n_nodes: Math.round(num(nNodes, 0)) } : {}),
         root_depth_cm: isCom ? num(rootDepthCm, rootFallback) : null,
         total_days,
         time_unit: rainMode === "uniform" ? timeUnit : "days",
@@ -719,7 +663,6 @@ export default function Home() {
         } : {}),
         conc_unit: concUnit,
         ...(String(molarMass).trim() ? { molar_mass_g_mol: num(molarMass, 0) } : {}),
-        ...(exampleId === "pulse" ? { diffusion_cm2_day: 0 } : {}),
         rain_mm: num(rainMm, 0), rain_series,
         initial_moisture_pct: num(moisture, 80),
         seasonal_initial_moisture_pct: num(seasonalMoisture, 100),
@@ -912,6 +855,17 @@ export default function Home() {
   const cropEntry = crops.find((c) => c.key === crop);
   const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
   const cropLabel = isCom ? (cropName.trim() || cropEntry?.name || crop) : "Sem cultura";
+  const catalogSoil = soils.find((s) => s.key === soil);
+  const soilEdited = !!catalogSoil && (
+    valueDiffers(thetaR, catalogSoil.theta_r, 4)
+    || valueDiffers(thetaS, catalogSoil.theta_s, 4)
+    || valueDiffers(vgAlpha, catalogSoil.alpha, 4)
+    || valueDiffers(vgN, catalogSoil.n, 3)
+    || valueDiffers(ks, catalogSoil.ks, 2)
+    || valueDiffers(bulk, catalogSoil.bulk_density, 2)
+    || valueDiffers(vgL, catalogSoil.l ?? 0.5, 2)
+  );
+  const soilIssues = soilHydraulicIssues({ thetaR, thetaS, alpha: vgAlpha, n: vgN, ks, bulk, l: vgL });
   const resultsWaterOnly = result ? (result.water_only || !result.solutes?.length) : waterOnly;
   const headerTitle = step === 4 && resultsWaterOnly
     ? "Resultados da Modelagem Física 1D — Fluxo de Água"
@@ -962,7 +916,6 @@ export default function Home() {
       <header className="app-header">
         <div className="header-logos">
           <img src="/ppg_header.png" alt="PPG Engenharia de Sistemas Agrícolas" className="header-logo-img" />
-          <img src="/gpeas_header.png" alt="GPEAS" className="header-logo-img" />
         </div>
         <p className="app-subtitle">Simulação de transporte de água e nutrientes no perfil do solo</p>
       </header>
@@ -974,16 +927,6 @@ export default function Home() {
           <StepIntro />
         ) : (
           <>
-            {step >= 1 && step <= 3 && (
-              <label className="field" style={{ marginBottom: 14 }}>
-                <span className="field-label">Exemplo de aula</span>
-                <select value={exampleId} onChange={(e) => applyExample(e.target.value)}>
-                  <option value="">—</option>
-                  <option value="ponded">Exemplo de aula: infiltração empoçada em coluna de areia (1 h)</option>
-                  <option value="pulse">Exemplo de aula: pulso de K a 10 ppm (3 h)</option>
-                </select>
-              </label>
-            )}
             <div className="wizard-question-header">
               <h2 className="wizard-question-title">{headerTitle}</h2>
               {headerSub && (
@@ -996,7 +939,7 @@ export default function Home() {
                 soils={soils}
                 crops={crops}
                 soil={soil}
-                setSoil={setSoil}
+                setSoil={pickSoil}
                 cropMode={cropMode}
                 setCropMode={setCropMode}
                 crop={crop}
@@ -1017,16 +960,8 @@ export default function Home() {
                 setDepthCm={setDepthCm}
                 dzCm={dzCm}
                 setDzCm={setDzCm}
-                nNodes={nNodes}
-                setNNodes={setNNodes}
                 rootDepthCm={rootDepthCm}
                 setRootDepthCm={setRootDepthCm}
-                isCustomSoil={isCustomSoil}
-                setIsCustomSoil={setIsCustomSoil}
-                sandPct={sandPct}
-                setSandPct={setSandPct}
-                clayPct={clayPct}
-                setClayPct={setClayPct}
                 thetaR={thetaR}
                 setThetaR={setThetaR}
                 thetaS={thetaS}
@@ -1039,7 +974,14 @@ export default function Home() {
                 setKs={setKs}
                 bulk={bulk}
                 setBulk={setBulk}
-                rosettaNote={rosettaNote}
+                vgL={vgL}
+                setVgL={setVgL}
+                soilEdited={soilEdited}
+                onRestoreSoil={() => {
+                  const found = soils.find((s) => s.key === soil);
+                  if (found) fillHydraulics(found);
+                }}
+                soilIssues={soilIssues}
                 cropStartMode={cropStartMode}
                 setCropStartMode={handleCropStartModeSelect}
                 cropAgeDap={cropAgeDap}
@@ -1218,7 +1160,7 @@ export default function Home() {
             <button className="btn-wizard-back" onClick={() => setStep(step - 1)}>
               Voltar
             </button>
-            <button className="btn-wizard-next" onClick={() => setStep(step + 1)}>
+            <button className="btn-wizard-next" onClick={() => setStep(step + 1)} disabled={step === 1 && soilIssues.length > 0}>
               Avançar
             </button>
           </>

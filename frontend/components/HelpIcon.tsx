@@ -2,68 +2,39 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { getHelp, type HelpEntry } from "../lib/api";
-
-let cache: HelpEntry[] | null = null;
-let inflight: Promise<HelpEntry[]> | null = null;
-
-function loadHelp(): Promise<HelpEntry[]> {
-  if (cache) return Promise.resolve(cache);
-  if (!inflight) {
-    inflight = getHelp()
-      .then((entries) => {
-        cache = entries;
-        return entries;
-      })
-      .catch(() => [] as HelpEntry[])
-      .finally(() => {
-        inflight = null;
-      }) as Promise<HelpEntry[]>;
-  }
-  return inflight;
-}
+import { FIELD_HELP } from "../lib/fieldHelp";
 
 export default function HelpIcon({ helpKey }: { helpKey: string }) {
   const [open, setOpen] = useState(false);
-  const [entry, setEntry] = useState<HelpEntry | null>(null);
-  const [loaded, setLoaded] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const entry = FIELD_HELP[helpKey];
 
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  useEffect(() => {
-    if (!open || loaded) return;
-    loadHelp().then((entries) => {
-      setEntry(entries.find((e) => e.key === helpKey) ?? null);
-      setLoaded(true);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
 
   return (
     <>
       <button
         type="button"
         className="help-badge"
-        aria-label={`Ajuda sobre ${helpKey}`}
+        aria-label={entry ? `Ajuda: ${entry.title}` : "Ajuda"}
         title="O que é isto?"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setOpen(true);
+          if (entry) setOpen(true);
         }}
       >
         ?
       </button>
-      {open && mounted
+      {open && mounted && entry
         ? createPortal(
             <div
               className="modal-overlay"
               role="alertdialog"
               aria-modal="true"
-              aria-label={entry?.title ?? "Ajuda"}
+              aria-label={entry.title}
               onClick={() => setOpen(false)}
             >
               <div
@@ -75,34 +46,18 @@ export default function HelpIcon({ helpKey }: { helpKey: string }) {
                   <div className="help-modal-icon">?</div>
                   <div>
                     <h3 className="help-modal-title">
-                      {entry ? (
-                        <>
-                          {entry.title} <span className="help-modal-unit">{entry.unit}</span>
-                        </>
-                      ) : loaded ? (
-                        "Ajuda indisponível no momento"
-                      ) : (
-                        "Carregando ajuda…"
-                      )}
+                      {entry.title} {entry.unit ? <span className="help-modal-unit">{entry.unit}</span> : null}
                     </h3>
                   </div>
                 </div>
-                {entry ? (
-                  <div className="help-modal-body">
-                    <p>
-                      <b>O que é:</b> {entry.what}
-                    </p>
-                    <p>
-                      <b>Na simulação:</b> {entry.simulation}
-                    </p>
-                  </div>
-                ) : (
-                  loaded && (
-                    <div className="help-modal-body">
-                      <p>Não foi possível carregar o texto de ajuda. Tente novamente mais tarde.</p>
-                    </div>
-                  )
-                )}
+                <div className="help-modal-body">
+                  <p>
+                    <b>O que é:</b> {entry.what}
+                  </p>
+                  <p>
+                    <b>Na simulação:</b> {entry.simulation}
+                  </p>
+                </div>
                 <div className="modal-actions">
                   <button
                     type="button"

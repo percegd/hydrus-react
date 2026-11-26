@@ -24,7 +24,6 @@ from . import climate as _climate
 from .schemas import (
     FertilizerDoseRequest,
     FertilizerDoseResponse,
-    HelpEntry,
     JobCreated,
     JobStatus,
     KdEntry,
@@ -296,6 +295,7 @@ def soils() -> list[dict]:
             "n": s.n,
             "ks": s.ks,
             "bulk_density": s.bulk_density,
+            "l": s.l,
         }
         for k, s in SOIL_DATABASE.items()
     ]
@@ -815,26 +815,6 @@ def job_report(job_id: str) -> dict:
             return {"report_markdown": f.read()}
     except FileNotFoundError:
         raise HTTPException(status_code=410, detail="Job expirado; rode a simulação novamente.")
-
-
-@app.get("/help", response_model=list[HelpEntry])
-def field_help() -> list[HelpEntry]:
-    """Textos de ajuda por campo (botão "?" da UI), iguais aos do Gradio.
-
-    Mapeamento de campos igual ao Gradio (KEY_BY_HOST + data-helpkey):
-    theta_r, theta_s, alpha, n, ks, bulk_density, disp, domain_depth,
-    obs_depths, crop_name, root_depth, kc, fed_h1..h4, dose_tab, kd_tab,
-    disp_tab, res_tab, release_type, release_days, placement_mode, z_top,
-    z_bottom, fert_c0, fert_pulse, rain_mm, moisture, seasonal_moisture,
-    total_days, et0, evap, transp, app_day, print_days, window_start,
-    window_end, water_source, water_series, water_upload.
-    """
-    from hydrus_core.field_help import FIELD_HELP
-
-    return [
-        HelpEntry(key=key, title=title, unit=unit, what=what, simulation=sim)
-        for key, (title, unit, what, sim) in FIELD_HELP.items()
-    ]
 
 
 @app.get("/jobs/{job_id}/plots/{key}.png")
