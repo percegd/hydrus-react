@@ -354,14 +354,6 @@ class StepsResponse(BaseModel):
     steps_markdown: str
 
 
-class HelpEntry(BaseModel):
-    key: str
-    title: str
-    unit: str
-    what: str
-    simulation: str
-
-
 class JobStatus(BaseModel):
     job_id: str
     status: str  # queued | running | failed

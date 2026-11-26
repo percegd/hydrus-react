@@ -105,16 +105,6 @@ function SeedlingIcon() {
   );
 }
 
-function meshNodeCount(depthCm: string, dzCm: string): number | null {
-  const depth = parseFloat(String(depthCm).replace(",", "."));
-  const dz = parseFloat(String(dzCm).replace(",", "."));
-  if (!Number.isFinite(depth) || !Number.isFinite(dz) || depth <= 0 || dz <= 0) return null;
-  // Δz = 1 cm: int(profundidade/Δz)+1, com dz nominal (caminho padrão do solver).
-  // Outro Δz: round(profundidade/Δz)+1, o n_nodes que o backend aplica.
-  const count = Math.abs(dz - 1) <= 1e-9 ? Math.trunc(depth / dz) + 1 : Math.round(depth / dz) + 1;
-  return count;
-}
-
 function Field({ label, children, helpKey }: { label: string; children: React.ReactNode; helpKey?: string }) {
   return (
     <label className="field">
@@ -219,7 +209,6 @@ export default function StepSoil({
     ks: isCustomSoil ? ks : fmt(catalog?.ks, 2),
     bulk: isCustomSoil ? bulk : fmt(catalog?.bulk_density, 2),
   };
-  const nodeCount = meshNodeCount(depthCm, dzCm);
   const [cropModalOpen, setCropModalOpen] = useState(false);
   useEffect(() => {
     if (!cropModalOpen) return;
@@ -422,17 +411,6 @@ export default function StepSoil({
         <Field label="Espaçamento da malha, Δz (cm)" helpKey="dz_cm">
           <input value={dzCm} onChange={(e) => setDzCm(e.target.value)} inputMode="decimal" type="number" min={0.05} step="any" />
         </Field>
-        <div className="field mesh-nodes-field">
-          <span className="field-label">
-            <span className="field-label-row">
-              Nós da malha
-              <HelpIcon helpKey="n_nodes" />
-            </span>
-          </span>
-          <p className="mesh-nodes-value" aria-live="polite">
-            {nodeCount == null ? "—" : `= ${nodeCount} nós`}
-          </p>
-        </div>
       </div>
 
       <div className="step-section-title" style={{ marginTop: 28 }}>Cultura (Transpiração e Absorção Radicular)</div>

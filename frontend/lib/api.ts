@@ -44,7 +44,6 @@ export type ScreenGalleryItem = { symbol: string; name: string; url: string };
 export type ScreenImages = { perfil: string | null; btc: string | null; evolucao: string | null; galeria: ScreenGalleryItem[]; hydrus_perfis?: string | null; hydrus_obs?: string | null; hydrus_fluxos?: string | null };
 export type LevelRow = { t: number; volume_cm: number; q_top: number | null; q_bottom: number | null; h_mean_cm: number; infil_cum_cm?: number; drain_cum_cm?: number };
 export type SimulateResponse = { drainage_mm: number; solutes: SoluteBalance[]; plot_png_base64: string | null; plots_png_base64?: Record<string, string> | null; extra_plots?: ExtraPlot[] | null; profiles: { z: number[]; solutes: Record<string, { name: string; c: number[] }> } | null; water_only?: boolean; water_balance?: WaterBalance | null; screen?: ScreenImages | null; time_unit?: string; top_bc?: string; conc_unit?: string; molar_mass_g_mol?: number | null; level_rows?: LevelRow[] };
-export type HelpEntry = { key: string; title: string; unit: string; what: string; simulation: string };
 
 export class ApiError extends Error {
   details: string[];
@@ -191,7 +190,6 @@ export const getSteps = async (id: string): Promise<string> => {
   const j = await req<{ steps_markdown: string }>(`/jobs/${id}/steps`);
   return j.steps_markdown;
 };
-export const getHelp = () => req<HelpEntry[]>("/help");
 export const getGraphsBlob = async (id: string): Promise<Blob> => {
   const r = await fetch(`/api/jobs/${id}/graphs.zip`);
   if (!r.ok) {
