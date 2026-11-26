@@ -56,6 +56,18 @@ class CustomSoilInput(BaseModel):
     ks: Optional[float] = Field(default=None, examples=[80.0])
 
 
+class SoilOverrides(BaseModel):
+    """Ajustes sobre o solo da lista. Campo ausente = valor do catálogo."""
+
+    theta_r: Optional[float] = None
+    theta_s: Optional[float] = None
+    alpha: Optional[float] = None
+    n: Optional[float] = None
+    ks: Optional[float] = None
+    bulk_density: Optional[float] = None
+    l: Optional[float] = None
+
+
 class RosettaRequest(BaseModel):
     sand_pct: float = Field(examples=[60.0])
     clay_pct: float = Field(examples=[25.0])
@@ -138,6 +150,7 @@ class FertilizerUsed(BaseModel):
 class SimulateRequest(BaseModel):
     soil_key: Optional[str] = Field(default="latossolo_medio", examples=["latossolo_medio"])
     custom_soil: Optional[CustomSoilInput] = Field(default=None)
+    soil_overrides: Optional[SoilOverrides] = None
     crop_key: Optional[str] = Field(default="soja", examples=["soja"])
     # T13: cultura editável como no Gradio (crop params box: nome editável,
     # profundidade radicular, Kc e limiares de Feddes h1..h4). Todos opcionais:

@@ -242,12 +242,14 @@ def _effective_print_days(req: SimulateRequest, total_days: float, sw: int, ew: 
 
 
 def _resolve_soil(req: SimulateRequest):
-    """Solo da lista ou personalizado (Rosetta + overrides, como o Gradio)."""
+    """Solo da lista, com ajustes opcionais, ou personalizado via Rosetta."""
+    from dataclasses import replace
+
     from .soils import resolve_custom_soil
 
     if req.custom_soil is not None:
         cs = req.custom_soil
-        return resolve_custom_soil(
+        soil = resolve_custom_soil(
             sand_pct=float(cs.sand_pct),
             clay_pct=float(cs.clay_pct),
             bulk_density=(float(cs.bulk_density) if cs.bulk_density is not None else None),
@@ -260,7 +262,19 @@ def _resolve_soil(req: SimulateRequest):
                 "bulk_density": cs.bulk_density,
             },
         )
-    return SOIL_DATABASE[req.soil_key]
+    else:
+        soil = SOIL_DATABASE[req.soil_key]
+    ov = getattr(req, "soil_overrides", None)
+    if ov is None:
+        return soil
+    fields = {}
+    for name in ("theta_r", "theta_s", "alpha", "n", "ks", "bulk_density", "l"):
+        val = getattr(ov, name, None)
+        if val is not None:
+            fields[name] = float(val)
+    if not fields:
+        return soil
+    return replace(soil, **fields)
 
 
 def _build_crop(req: SimulateRequest):

@@ -36,6 +36,12 @@ export const FIELD_HELP: Record<string, HelpText> = {
     what: "Velocidade máxima da água quando o solo está encharcado.",
     simulation: "Governa drenagem profunda e escoamento; Ks baixo com chuva forte = encharco superficial no gráfico θ(z) e lixiviação subestimada no fundo.",
   },
+  "vg_l": {
+    title: "l — Tortuosidade",
+    unit: "[-]",
+    what: "Expoente de tortuosidade de Mualem na condutividade não saturada.",
+    simulation: "Os solos da lista usam 0,5. l menor reduz K fora da saturação e atrasa a drenagem.",
+  },
   "bulk_density": {
     title: "ρb — Densidade do solo",
     unit: "[g/cm³]",

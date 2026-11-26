@@ -1,4 +1,4 @@
-export type Soil = { key: string; name: string; theta_r?: number; theta_s?: number; alpha?: number; n?: number; ks?: number; bulk_density?: number };
+export type Soil = { key: string; name: string; theta_r?: number; theta_s?: number; alpha?: number; n?: number; ks?: number; bulk_density?: number; l?: number };
 export type Crop = { key: string; name: string; root_depth_cm: number; kc: number; h1: number; h2: number; h3: number; h4: number; height_m: number | null };
 export type SoluteBalance = {
   symbol: string;

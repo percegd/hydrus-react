@@ -32,12 +32,6 @@ type Props = {
   setDzCm: (v: string) => void;
   rootDepthCm: string;
   setRootDepthCm: (v: string) => void;
-  isCustomSoil: boolean;
-  setIsCustomSoil: (v: boolean) => void;
-  sandPct: string;
-  setSandPct: (v: string) => void;
-  clayPct: string;
-  setClayPct: (v: string) => void;
   thetaR: string;
   setThetaR: (v: string) => void;
   thetaS: string;
@@ -50,7 +44,11 @@ type Props = {
   setKs: (v: string) => void;
   bulk: string;
   setBulk: (v: string) => void;
-  rosettaNote: string;
+  vgL: string;
+  setVgL: (v: string) => void;
+  soilEdited: boolean;
+  onRestoreSoil: () => void;
+  soilIssues: string[];
   cropStartMode: string;
   setCropStartMode: (v: string) => void;
   cropAgeDap: string;
@@ -146,12 +144,6 @@ export default function StepSoil({
   setDzCm,
   rootDepthCm,
   setRootDepthCm,
-  isCustomSoil,
-  setIsCustomSoil,
-  sandPct,
-  setSandPct,
-  clayPct,
-  setClayPct,
   thetaR,
   setThetaR,
   thetaS,
@@ -164,7 +156,11 @@ export default function StepSoil({
   setKs,
   bulk,
   setBulk,
-  rosettaNote,
+  vgL,
+  setVgL,
+  soilEdited,
+  onRestoreSoil,
+  soilIssues,
   cropStartMode,
   setCropStartMode,
   cropAgeDap,
@@ -198,17 +194,6 @@ export default function StepSoil({
   onPreview,
 }: Props) {
   const comCultura = cropMode === "com";
-  const catalog = soils.find((s) => s.key === soil);
-  const fmt = (n: number | undefined, digits: number) =>
-    n == null || !Number.isFinite(n) ? "" : String(Math.round(n * 10 ** digits) / 10 ** digits);
-  const vgShown = {
-    thetaR: isCustomSoil ? thetaR : fmt(catalog?.theta_r, 4),
-    thetaS: isCustomSoil ? thetaS : fmt(catalog?.theta_s, 4),
-    alpha: isCustomSoil ? vgAlpha : fmt(catalog?.alpha, 4),
-    n: isCustomSoil ? vgN : fmt(catalog?.n, 3),
-    ks: isCustomSoil ? ks : fmt(catalog?.ks, 2),
-    bulk: isCustomSoil ? bulk : fmt(catalog?.bulk_density, 2),
-  };
   const [cropModalOpen, setCropModalOpen] = useState(false);
   useEffect(() => {
     if (!cropModalOpen) return;
@@ -234,40 +219,6 @@ export default function StepSoil({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comCultura, JSON.stringify(previewBody)]);
 
-  function parsePct(v: string): number {
-    return parseFloat(String(v).replace(",", "."));
-  }
-
-  const sandNum = parsePct(sandPct);
-  const clayNum = parsePct(clayPct);
-  const sandOk = Number.isFinite(sandNum) && sandNum >= 0 && sandNum <= 100;
-  const clayOk = Number.isFinite(clayNum) && clayNum >= 0 && clayNum <= 100;
-  const siltVal = sandOk && clayOk ? 100 - sandNum - clayNum : NaN;
-  const granulometryInvalid = !sandOk || !clayOk || !Number.isFinite(siltVal) || siltVal < 0;
-
-  function onSandInput(v: string) {
-    const s = parsePct(v);
-    if (!Number.isFinite(s)) { setSandPct(v); return; }
-    const sClamped = Math.min(100, Math.max(0, s));
-    const c = clayOk ? clayNum : 0;
-    if (sClamped + c > 100) {
-      // Areia subiu: reduz a argila para manter silte >= 0.
-      setClayPct(String(Math.round((100 - sClamped) * 100) / 100));
-    }
-    setSandPct(String(sClamped));
-  }
-
-  function onClayInput(v: string) {
-    const c = parsePct(v);
-    if (!Number.isFinite(c)) { setClayPct(v); return; }
-    const cClamped = Math.min(100, Math.max(0, c));
-    const s = sandOk ? sandNum : 0;
-    if (s + cClamped > 100) {
-      // Argila subiu: reduz a areia para manter silte >= 0.
-      setSandPct(String(Math.round((100 - cClamped) * 100) / 100));
-    }
-    setClayPct(String(cClamped));
-  }
 
   function pickCrop(key: string) {
     setCrop(key);
@@ -287,106 +238,56 @@ export default function StepSoil({
     <>
       <div className="form-row">
         <Field label="Tipo de Solo">
-          <select value={soil} onChange={(e) => setSoil(e.target.value)} disabled={isCustomSoil}>
-            {soils.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
+          <select value={soil} onChange={(e) => setSoil(e.target.value)}>
+            {soils.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.name}{soilEdited && s.key === soil ? " (personalizado)" : ""}
+              </option>
+            ))}
           </select>
+          {soilEdited && (
+            <button type="button" className="btn-restore-soil" onClick={onRestoreSoil}>
+              Restaurar valores do solo
+            </button>
+          )}
         </Field>
       </div>
-
-      <div className="custom-toggle-chk">
-        <label>
-          <input
-            type="checkbox"
-            className="switch"
-            checked={isCustomSoil}
-            onChange={(e) => setIsCustomSoil(e.target.checked)}
-          />
-          Solo Personalizado
-        </label>
-      </div>
-
-      {isCustomSoil && (
-        <div className="custom-param-box">
-          <span className="param-subheading">Granulometria do Solo Personalizado (Cálculo Automático Rosetta)</span>
-          <div className="form-row" style={{ marginTop: 12 }}>
-            <Field label={`% de Areia`}>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={sandOk ? String(sandNum) : "0"}
-                onChange={(e) => onSandInput(e.target.value)}
-                aria-label="% de Areia"
-              />
-              <input
-                value={sandPct}
-                onChange={(e) => onSandInput(e.target.value)}
-                inputMode="decimal"
-                aria-label="% de Areia (valor)"
-                style={{ marginTop: 6 }}
-              />
-            </Field>
-            <Field label={`% de Argila`}>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={clayOk ? String(clayNum) : "0"}
-                onChange={(e) => onClayInput(e.target.value)}
-                aria-label="% de Argila"
-              />
-              <input
-                value={clayPct}
-                onChange={(e) => onClayInput(e.target.value)}
-                inputMode="decimal"
-                aria-label="% de Argila (valor)"
-                style={{ marginTop: 6 }}
-              />
-            </Field>
-            <Field label={`% de Silte (100 − areia − argila)`}>
-              <input
-                value={Number.isFinite(siltVal) ? String(Math.round(siltVal * 100) / 100) : ""}
-                readOnly
-                disabled
-                aria-label="% de Silte (calculado)"
-                title="Silte = 100 − areia − argila"
-              />
-            </Field>
-          </div>
-          {granulometryInvalid && (
-            <p className="error-text">Areia + argila deve ser ≤ 100 (silte ≥ 0).</p>
-          )}
-          {rosettaNote && <div className="soil-texture-badge" dangerouslySetInnerHTML={{ __html: rosettaNote.replace(/(\S+):/g, "<b>$1:</b>") }} />}
-        </div>
-      )}
 
       <div style={{ margin: "18px 0 10px 0" }}>
         <span className="step-section-title-inline">Propriedades Físico-Hídricas do Solo (van Genuchten - Mualem)</span>
       </div>
       <div className="form-row">
         <Field label="θr - Umidade residual [cm³/cm³]" helpKey="theta_r">
-          <input value={vgShown.thetaR} onChange={(e) => setThetaR(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} max={1} />
+          <input value={thetaR} onChange={(e) => setThetaR(e.target.value)} inputMode="decimal" type="number" step="any" />
         </Field>
         <Field label="θs - Umidade de saturação [cm³/cm³]" helpKey="theta_s">
-          <input value={vgShown.thetaS} onChange={(e) => setThetaS(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} max={1} />
+          <input value={thetaS} onChange={(e) => setThetaS(e.target.value)} inputMode="decimal" type="number" step="any" />
         </Field>
         <Field label="α - Parâmetro de escala (entrada de ar) [1/cm]" helpKey="alpha">
-          <input value={vgShown.alpha} onChange={(e) => setVgAlpha(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} />
+          <input value={vgAlpha} onChange={(e) => setVgAlpha(e.target.value)} inputMode="decimal" type="number" step="any" />
         </Field>
       </div>
       <div className="form-row">
         <Field label="n - Índice de poros [-]" helpKey="n">
-          <input value={vgShown.n} onChange={(e) => setVgN(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} />
+          <input value={vgN} onChange={(e) => setVgN(e.target.value)} inputMode="decimal" type="number" step="any" />
         </Field>
         <Field label="Ks - Condutividade saturada [cm/dia]" helpKey="ks">
-          <input value={vgShown.ks} onChange={(e) => setKs(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} />
+          <input value={ks} onChange={(e) => setKs(e.target.value)} inputMode="decimal" type="number" step="any" />
         </Field>
         <Field label="ρb - Densidade aparente [g/cm³]" helpKey="bulk_density">
-          <input value={vgShown.bulk} onChange={(e) => setBulk(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} />
+          <input value={bulk} onChange={(e) => setBulk(e.target.value)} inputMode="decimal" type="number" step="any" />
         </Field>
       </div>
+      <div className="form-row">
+        <Field label="l - Tortuosidade [-]" helpKey="vg_l">
+          <input value={vgL} onChange={(e) => setVgL(e.target.value)} inputMode="decimal" type="number" step="any" />
+        </Field>
+      </div>
+      {soilIssues.length > 0 && (
+        <ul className="error-text soil-issue-list">
+          {soilIssues.map((msg) => <li key={msg}>{msg}</li>)}
+        </ul>
+      )}
 
       <div style={{ margin: "26px 0 10px 0" }}>
         <span className="step-section-title-inline">Domínio do Perfil de Solo Simulado</span>

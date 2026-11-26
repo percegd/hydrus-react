@@ -312,6 +312,21 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .form-row:last-child { margin-bottom: 0; }
 .form-row .field { flex: 1 1 0; }
 .form-row .field.fixed { flex: 0 0 auto; }
+.btn-restore-soil {
+  align-self: flex-start;
+  margin-top: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.soil-issue-list { margin: 4px 0 0; padding-left: 18px; }
 
 /* ---------------- Checkbox = switch toggle ---------------- */
 input[type="checkbox"].switch {

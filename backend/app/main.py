@@ -295,6 +295,7 @@ def soils() -> list[dict]:
             "n": s.n,
             "ks": s.ks,
             "bulk_density": s.bulk_density,
+            "l": s.l,
         }
         for k, s in SOIL_DATABASE.items()
     ]
