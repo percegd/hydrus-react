@@ -444,6 +444,10 @@ export default function Home() {
     if (id === "ponded") {
       setTopBc("head");
       setHTop("0");
+      setIcMode("table");
+      setIcKind("h");
+      // Nó da superfície em h=0; os demais em h=−100 (o arquivo da aula).
+      setIcTable("0, 0\n0.0001, -100\n70, -100");
       setDays("1");
       setPrintDaysLamina("0.2, 0.4, 0.6, 0.8, 1");
       setWaterOnly(true);
@@ -452,7 +456,7 @@ export default function Home() {
       setTopBc("flux");
       setFluxTop("0.0416667");
       setDays("3");
-      setPrintDaysLamina("1, 2, 3");
+      setPrintDaysLamina("0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3");
       setWaterOnly(false);
       setInletConc("10");
       setRows(DEFAULT_ROWS.map((r) => {

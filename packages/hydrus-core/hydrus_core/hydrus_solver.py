@@ -143,6 +143,71 @@ class Hydrus1DSimulator:
         else:
             self.root_b = np.zeros(self.nz)
 
+    def _picard_prescribed_head(self, h, theta, dt, h_top, dV):
+        """Um passo de Picard conservativo com h[0] fixo.
+
+        Mesma malha e a mesma média aritmética de K do restante do código.
+        O Newton do ramo atmosférico não converge bem no passo curto que a
+        frente em areia pede; este caminho existe só para carga prescrita.
+        """
+        nz = self.nz
+        dz = self.dz
+        h_it = np.asarray(h, dtype=float).copy()
+        h_it[0] = float(h_top)
+        th_old = np.asarray(theta, dtype=float)
+        for _it in range(25):
+            th_it = water_content_from_h(h_it, self.soil)
+            dh = h_it - h
+            C_vg = np.maximum(specific_moisture_capacity(h_it, self.soil), 1e-8)
+            use = np.abs(dh) > 1e-6
+            C = np.where(use, (th_it - th_old) / np.where(use, dh, 1.0), C_vg)
+            C = np.maximum(np.nan_to_num(C, nan=1e-8, posinf=1e-8, neginf=1e-8), 1e-8)
+            K = hydraulic_conductivity(h_it, self.soil)
+            Kh = 0.5 * (K[:-1] + K[1:])
+            A_sub = np.zeros(nz - 1)
+            A_diag = np.zeros(nz)
+            A_sup = np.zeros(nz - 1)
+            rhs = np.zeros(nz)
+            A_diag[0] = 1.0
+            rhs[0] = float(h_top)
+            for i in range(1, nz - 1):
+                Ku = Kh[i - 1]
+                Kd = Kh[i]
+                A_diag[i] = dV[i] * C[i] / dt + (Ku + Kd) / dz
+                A_sub[i - 1] = -Ku / dz
+                A_sup[i] = -Kd / dz
+                rhs[i] = (
+                    dV[i] * C[i] / dt * h_it[i]
+                    - dV[i] * (th_it[i] - th_old[i]) / dt
+                    + Ku - Kd
+                )
+            Ku = Kh[-1]
+            i = nz - 1
+            A_diag[i] = dV[i] * C[i] / dt + Ku / dz
+            A_sub[i - 1] = -Ku / dz
+            rhs[i] = (
+                dV[i] * C[i] / dt * h_it[i]
+                - dV[i] * (th_it[i] - th_old[i]) / dt
+                - K[i] + Ku
+            )
+            ab = np.zeros((3, nz))
+            ab[0, 1:] = A_sup
+            ab[1, :] = A_diag
+            ab[2, :-1] = A_sub
+            try:
+                h_new = linalg.solve_banded((1, 1), ab, rhs)
+            except linalg.LinAlgError:
+                return h_it, False
+            if not np.all(np.isfinite(h_new)):
+                return h_it, False
+            if float(np.max(np.abs(h_new - h_it))) < 5e-4:
+                h_new[0] = float(h_top)
+                return h_new, True
+            h_it = h_new
+            h_it[0] = float(h_top)
+        h_it[0] = float(h_top)
+        return h_it, False
+
     def run(
         self,
         initial_moisture_pct: float,      # Umidade inicial como % da capacidade de campo (~0.3 a 0.8)
@@ -268,6 +333,17 @@ class Hydrus1DSimulator:
                 f"top_bc '{top_bc}' inválido. Use 'atmospheric', 'head' ou 'flux'.")
         _dirichlet = _bc == "head"
         _neumann_flux = _bc == "flux"
+        # Frente de molhamento com carga prescrita: o Newton do caminho
+        # atmosférico, com passo maior, deixa a frente ~1 nó atrasada em areia.
+        # Picard com Δt ≤ 0,0005 h reproduz o HYDRUS-1D (média aritmética de K).
+        # Só este ramo; o modo atmosférico não lê o teto.
+        if _dirichlet:
+            _dt_head = 0.0005 / 24.0
+            if float(self.cfg.dt_max) > _dt_head:
+                self.cfg.dt_max = _dt_head
+            if float(self.cfg.dt_init) > _dt_head:
+                self.cfg.dt_init = _dt_head
+            dt = min(dt, _dt_head)
         _h_top = 0.0
         _q_fix = 0.0
         if _dirichlet:
@@ -767,7 +843,8 @@ class Hydrus1DSimulator:
             # superficie (frente de molhamento): com Neumann intenso sobre perfil
             # seco, a raiz do sistema implicito fica muito longe do chute e o
             # metodo de passo grande gastava 25 iteracoes sem convergir.
-            if infil_rate_cm_day > 0.0:
+            # Na carga prescrita o passo já está limitado e o Picard resolve.
+            if (not _dirichlet) and infil_rate_cm_day > 0.0:
                 th_now = water_content_from_h(h, self.soil) + _eps_sat * _sig_band * (np.maximum(h / _sig_band, 0.0) + np.log1p(np.exp(-np.abs(h / _sig_band))))
                 front = np.flatnonzero(th_now < self.soil.theta_s - 0.01)
                 if front.size:
@@ -842,157 +919,183 @@ class Hydrus1DSimulator:
             #    fixo do Picard, que convergia linearmente ou oscilava);
             #  - regularizacao "overly-bulk" (eps_sat): capacidade minima na banda
             #    proxima a h >= 0, pois no sem capacidade torna o sistema singular.
-            h_old = h.copy()
-            theta_old = theta.copy()
-            h_new = h_old.copy()
-            
-            # R3: definicao UNICA de theta(h) em todo o passo (Richards +
-            # transporte + diagnostico). theta(h) = VG(h) + eps_sat*softplus(h):
-            # o termo eps e regularizacao "overly-bulk" (capacidade minima na
-            # banda |h|~1 cm p/ h>=0, pois C(h)->0 na saturacao singulariza o
-            # Jacobiano). Versao anterior somava eps so no residuo (:410) e
-            # reportava theta puro VG (:525), criando armazenamento fantasma
-            # (mismatch 3.4e-03 cm). Aqui o MESMO _theta alimenta residuo,
-            # capacidade, theta reportado, theta_safe do transporte e obs.
-            eps_sat = _eps_sat
-            sig_band = _sig_band
+            if _dirichlet:
+                theta_old = theta.copy()
+                dV = np.full(nz, dz)
+                dV[0] = dz * 0.5
+                dV[-1] = dz * 0.5
+                eps_sat = _eps_sat
+                sig_band = _sig_band
 
-            def _softplus(hv):
-                return sig_band * (np.maximum(hv / sig_band, 0.0)
-                                   + np.log1p(np.exp(-np.abs(hv / sig_band))))
+                def _softplus(hv):
+                    return sig_band * (np.maximum(hv / sig_band, 0.0)
+                                       + np.log1p(np.exp(-np.abs(hv / sig_band))))
 
-            def _sigmoid(hv):
-                return 1.0 / (1.0 + np.exp(-np.clip(hv / sig_band, -60.0, 60.0)))
-            dV = np.full(nz, dz)
-            dV[0] = dz * 0.5
-            dV[-1] = dz * 0.5
-            
-            def _theta(hv):
-                # R3: unica fonte de verdade de armazenamento; usada no residuo,
-                # no theta reportado e no transporte (theta_safe deriva dela).
-                return water_content_from_h(hv, self.soil) + eps_sat * _softplus(hv)
+                def _theta(hv):
+                    return water_content_from_h(hv, self.soil) + eps_sat * _softplus(hv)
 
-            def _richards_residual(hv, th_old, dt_step, infil_step):
-                th = _theta(hv)
-                k = hydraulic_conductivity(hv, self.soil)
-                if self.crop:
-                    s = feddes_water_stress(hv, self.crop) * self.root_b * transpiration_demand_cm_day
-                else:
-                    s = np.zeros(nz)
-                kf = 0.5 * (k[:-1] + k[1:])
-                g = 1.0 - (hv[1:] - hv[:-1]) / dz
-                q = kf * g
-                Fv = dV * (th - th_old) / dt_step + s * dV
-                Fv[1:-1] += q[1:] - q[:-1]
-                if _dirichlet:
-                    # Nó da superfície com h fixo (Dirichlet). O fluxo de topo
-                    # sai do balanço da meia-célula depois da convergência.
-                    Fv[0] = hv[0] - _h_top
-                else:
-                    Fv[0] += q[0] - infil_step
-                # F1: drenagem livre = K(h_fundo) (gradiente unitário no fundo,
-                # q=-K*(dh/dz-1) com dh/dz=0). A forma anterior usava kf[-1]
-                # (média das 2 últimas células) no balanço mas reportava a
-                # face interna q_faces[-1]=kf[-1]*(1-dh/dz) no acumulado:
-                # mismatch sistemático ~k*dh/dz que crescia com P.
-                Fv[-1] += k[-1] - q[-1]
-                return Fv
+                h_new, _pic_ok = self._picard_prescribed_head(h, theta, dt, _h_top, dV)
+                converged = bool(_pic_ok)
+                stuck_at_floor = False
+                n_picard_it = 1
+                if not _pic_ok and dt > self.cfg.dt_min:
+                    dt = max(dt * 0.5, self.cfg.dt_min)
+                    continue
+                if not _pic_ok:
+                    stuck_at_floor = True
+                    non_converged_steps += 1
+            else:
+                h_old = h.copy()
+                theta_old = theta.copy()
+                h_new = h_old.copy()
             
-            def _cap_reg(hv):
-                # R3: d(_theta)/dh consistente com o residuo (derivada do softplus = sigmoide).
-                return specific_moisture_capacity(hv, self.soil) + eps_sat * _sigmoid(hv)
+                # R3: definicao UNICA de theta(h) em todo o passo (Richards +
+                # transporte + diagnostico). theta(h) = VG(h) + eps_sat*softplus(h):
+                # o termo eps e regularizacao "overly-bulk" (capacidade minima na
+                # banda |h|~1 cm p/ h>=0, pois C(h)->0 na saturacao singulariza o
+                # Jacobiano). Versao anterior somava eps so no residuo (:410) e
+                # reportava theta puro VG (:525), criando armazenamento fantasma
+                # (mismatch 3.4e-03 cm). Aqui o MESMO _theta alimenta residuo,
+                # capacidade, theta reportado, theta_safe do transporte e obs.
+                eps_sat = _eps_sat
+                sig_band = _sig_band
+
+                def _softplus(hv):
+                    return sig_band * (np.maximum(hv / sig_band, 0.0)
+                                       + np.log1p(np.exp(-np.abs(hv / sig_band))))
+
+                def _sigmoid(hv):
+                    return 1.0 / (1.0 + np.exp(-np.clip(hv / sig_band, -60.0, 60.0)))
+                dV = np.full(nz, dz)
+                dV[0] = dz * 0.5
+                dV[-1] = dz * 0.5
             
-            omega = float(getattr(self.cfg, "picard_omega", 1.0))
-            omega = min(max(omega, 0.05), 1.0)
+                def _theta(hv):
+                    # R3: unica fonte de verdade de armazenamento; usada no residuo,
+                    # no theta reportado e no transporte (theta_safe deriva dela).
+                    return water_content_from_h(hv, self.soil) + eps_sat * _softplus(hv)
+
+                def _richards_residual(hv, th_old, dt_step, infil_step):
+                    th = _theta(hv)
+                    k = hydraulic_conductivity(hv, self.soil)
+                    if self.crop:
+                        s = feddes_water_stress(hv, self.crop) * self.root_b * transpiration_demand_cm_day
+                    else:
+                        s = np.zeros(nz)
+                    kf = 0.5 * (k[:-1] + k[1:])
+                    g = 1.0 - (hv[1:] - hv[:-1]) / dz
+                    q = kf * g
+                    Fv = dV * (th - th_old) / dt_step + s * dV
+                    Fv[1:-1] += q[1:] - q[:-1]
+                    if _dirichlet:
+                        # Nó da superfície com h fixo (Dirichlet). O fluxo de topo
+                        # sai do balanço da meia-célula depois da convergência.
+                        Fv[0] = hv[0] - _h_top
+                    else:
+                        Fv[0] += q[0] - infil_step
+                    # F1: drenagem livre = K(h_fundo) (gradiente unitário no fundo,
+                    # q=-K*(dh/dz-1) com dh/dz=0). A forma anterior usava kf[-1]
+                    # (média das 2 últimas células) no balanço mas reportava a
+                    # face interna q_faces[-1]=kf[-1]*(1-dh/dz) no acumulado:
+                    # mismatch sistemático ~k*dh/dz que crescia com P.
+                    Fv[-1] += k[-1] - q[-1]
+                    return Fv
             
-            converged = False
-            n_picard_it = self.cfg.max_picard_iter
-            F = _richards_residual(h_new, theta_old, dt, net_top_flux_cm_day)
-            norm_F = float(np.max(np.abs(F)))
-            norm_F0 = max(norm_F, 1e-12)
-            for it in range(self.cfg.max_picard_iter):
-                c = _cap_reg(h_new)
-                k = hydraulic_conductivity(h_new, self.soil)
-                # dK/dh por diferenca central (K crescente em h; trava p/ >= 0)
-                eps_h = 1e-4 * (1.0 + np.abs(h_new))
-                kp = (hydraulic_conductivity(h_new + eps_h, self.soil)
-                      - hydraulic_conductivity(h_new - eps_h, self.soil)) / (2.0 * eps_h)
-                kp = np.maximum(kp, 0.0)
-                
-                # Fluxos de face e derivadas dq_j/dh_j, dq_j/dh_{j+1}
-                k_half = 0.5 * (k[:-1] + k[1:])
-                g_fac = 1.0 - (h_new[1:] - h_new[:-1]) / dz
-                dq_up = 0.5 * kp[:-1] * g_fac + k_half / dz
-                dq_dn = 0.5 * kp[1:] * g_fac - k_half / dz
-                
-                # Jacobiana tridiagonal (armazenamento em banda)
-                J_diag = np.empty(nz)
-                J_sup = np.zeros(nz - 1)  # coef. de h_{i+1} na linha i
-                J_sub = np.zeros(nz - 1)  # coef. de h_{i-1} na linha i
-                if _dirichlet:
-                    J_diag[0] = 1.0
-                    J_sup[0] = 0.0
-                else:
-                    J_diag[0] = dV[0] * c[0] / dt + dq_up[0]
-                    J_sup[0] = dq_dn[0]
-                J_diag[1:-1] = dV[1:-1] * c[1:-1] / dt + dq_up[1:] - dq_dn[:-1]
-                J_sub[:-1] = -dq_up[:-1]
-                J_sup[1:] = dq_dn[1:]  # F_i contem +q_i => +d q_i/d h_{i+1}
-                # F1: derivada da drenagem livre K(h[-1]) (não mais kf[-1]):
-                # d/dh[-1]=kp[-1] cheia; d/dh[-2]=0 (sem dependência).
-                J_diag[-1] = dV[-1] * c[-1] / dt + kp[-1] - dq_dn[-1]
-                J_sub[-1] = -dq_up[-1]
-                
-                ab = np.zeros((3, nz))
-                ab[0, 1:] = J_sup
-                ab[1, :] = J_diag
-                ab[2, :-1] = J_sub
-                
-                try:
-                    delta = linalg.solve_banded((1, 1), ab, -F)
-                except linalg.LinAlgError:
-                    break  # tratado como nao convergido (dt reduzido)
-                if not np.all(np.isfinite(delta)):
-                    break
-                
-                # Line search (Armijo): aceita o maior passo w <= omega que reduz
-                # o residuo de forma monotona
-                moved = False
-                w = omega
-                while w >= 0.02:
-                    h_try = h_new + w * delta
-                    F_try = _richards_residual(h_try, theta_old, dt, net_top_flux_cm_day)
-                    if np.all(np.isfinite(F_try)):
-                        norm_try = float(np.max(np.abs(F_try)))
-                        if norm_try < (1.0 - 1e-4 * w) * norm_F:
-                            moved = True
-                            break
-                    w *= 0.5
-                if not moved:
-                    break  # sem direcao de descida neste dt: nao convergido
-                
-                h_new = h_try
-                step_max = w * float(np.max(np.abs(delta)))
-                F = F_try
-                norm_F = norm_try
-                n_picard_it = it + 1
-                if step_max < self.cfg.picard_tol or norm_F < 1e-2 * norm_F0:
-                    # criterio de passo fino OU queda de 100x no residuo da
-                    # itacao (fluxo de saida ~ 1% do desbalanceio inicial)
-                    converged = True
-                    break
+                def _cap_reg(hv):
+                    # R3: d(_theta)/dh consistente com o residuo (derivada do softplus = sigmoide).
+                    return specific_moisture_capacity(hv, self.soil) + eps_sat * _sigmoid(hv)
             
-            # Se nao convergiu, reduz dt e tenta novamente
-            stuck_at_floor = False
-            if not converged and dt > self.cfg.dt_min:
-                dt = max(dt * 0.5, self.cfg.dt_min)
-                continue
-            if not converged:
-                # Fallback no piso de dt: aceita a ultima iterate (residuo minimo
-                # do line search) e volta a crescer o passo, evitando travamento.
-                # R1: exposto via SimulationResults.converged=False.
-                stuck_at_floor = True
-                non_converged_steps += 1
+                omega = float(getattr(self.cfg, "picard_omega", 1.0))
+                omega = min(max(omega, 0.05), 1.0)
+            
+                converged = False
+                n_picard_it = self.cfg.max_picard_iter
+                F = _richards_residual(h_new, theta_old, dt, net_top_flux_cm_day)
+                norm_F = float(np.max(np.abs(F)))
+                norm_F0 = max(norm_F, 1e-12)
+                for it in range(self.cfg.max_picard_iter):
+                    c = _cap_reg(h_new)
+                    k = hydraulic_conductivity(h_new, self.soil)
+                    # dK/dh por diferenca central (K crescente em h; trava p/ >= 0)
+                    eps_h = 1e-4 * (1.0 + np.abs(h_new))
+                    kp = (hydraulic_conductivity(h_new + eps_h, self.soil)
+                          - hydraulic_conductivity(h_new - eps_h, self.soil)) / (2.0 * eps_h)
+                    kp = np.maximum(kp, 0.0)
+                
+                    # Fluxos de face e derivadas dq_j/dh_j, dq_j/dh_{j+1}
+                    k_half = 0.5 * (k[:-1] + k[1:])
+                    g_fac = 1.0 - (h_new[1:] - h_new[:-1]) / dz
+                    dq_up = 0.5 * kp[:-1] * g_fac + k_half / dz
+                    dq_dn = 0.5 * kp[1:] * g_fac - k_half / dz
+                
+                    # Jacobiana tridiagonal (armazenamento em banda)
+                    J_diag = np.empty(nz)
+                    J_sup = np.zeros(nz - 1)  # coef. de h_{i+1} na linha i
+                    J_sub = np.zeros(nz - 1)  # coef. de h_{i-1} na linha i
+                    if _dirichlet:
+                        J_diag[0] = 1.0
+                        J_sup[0] = 0.0
+                    else:
+                        J_diag[0] = dV[0] * c[0] / dt + dq_up[0]
+                        J_sup[0] = dq_dn[0]
+                    J_diag[1:-1] = dV[1:-1] * c[1:-1] / dt + dq_up[1:] - dq_dn[:-1]
+                    J_sub[:-1] = -dq_up[:-1]
+                    J_sup[1:] = dq_dn[1:]  # F_i contem +q_i => +d q_i/d h_{i+1}
+                    # F1: derivada da drenagem livre K(h[-1]) (não mais kf[-1]):
+                    # d/dh[-1]=kp[-1] cheia; d/dh[-2]=0 (sem dependência).
+                    J_diag[-1] = dV[-1] * c[-1] / dt + kp[-1] - dq_dn[-1]
+                    J_sub[-1] = -dq_up[-1]
+                
+                    ab = np.zeros((3, nz))
+                    ab[0, 1:] = J_sup
+                    ab[1, :] = J_diag
+                    ab[2, :-1] = J_sub
+                
+                    try:
+                        delta = linalg.solve_banded((1, 1), ab, -F)
+                    except linalg.LinAlgError:
+                        break  # tratado como nao convergido (dt reduzido)
+                    if not np.all(np.isfinite(delta)):
+                        break
+                
+                    # Line search (Armijo): aceita o maior passo w <= omega que reduz
+                    # o residuo de forma monotona
+                    moved = False
+                    w = omega
+                    while w >= 0.02:
+                        h_try = h_new + w * delta
+                        F_try = _richards_residual(h_try, theta_old, dt, net_top_flux_cm_day)
+                        if np.all(np.isfinite(F_try)):
+                            norm_try = float(np.max(np.abs(F_try)))
+                            if norm_try < (1.0 - 1e-4 * w) * norm_F:
+                                moved = True
+                                break
+                        w *= 0.5
+                    if not moved:
+                        break  # sem direcao de descida neste dt: nao convergido
+                
+                    h_new = h_try
+                    step_max = w * float(np.max(np.abs(delta)))
+                    F = F_try
+                    norm_F = norm_try
+                    n_picard_it = it + 1
+                    if step_max < self.cfg.picard_tol or norm_F < 1e-2 * norm_F0:
+                        # criterio de passo fino OU queda de 100x no residuo da
+                        # itacao (fluxo de saida ~ 1% do desbalanceio inicial)
+                        converged = True
+                        break
+            
+                # Se nao convergiu, reduz dt e tenta novamente
+                stuck_at_floor = False
+                if not converged and dt > self.cfg.dt_min:
+                    dt = max(dt * 0.5, self.cfg.dt_min)
+                    continue
+                if not converged:
+                    # Fallback no piso de dt: aceita a ultima iterate (residuo minimo
+                    # do line search) e volta a crescer o passo, evitando travamento.
+                    # R1: exposto via SimulationResults.converged=False.
+                    stuck_at_floor = True
+                    non_converged_steps += 1
             
             # Carga prescrita: o fluxo que fecha a meia-célula do topo
             # (Darcy na primeira face + variação de armazenamento do nó fixo).

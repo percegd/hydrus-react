@@ -34,16 +34,28 @@ def _sand_common(**extra):
 
 
 def test_cenario_a_infiltracao_empocada():
+    # IC do arquivo: superfície em h=0, demais nós em h=−100.
     req = _sand_common(
         total_days=1,
         top_bc="head",
         h_top_cm=0.0,
         water_only=True,
+        ic_mode="table",
+        initial_head_cm=None,
+        initial_profile_kind="h",
+        initial_profile=[
+            ProfilePoint(depth_cm=0.0, value=0.0),
+            ProfilePoint(depth_cm=0.0001, value=-100.0),
+            ProfilePoint(depth_cm=70.0, value=-100.0),
+        ],
         print_days=[0.2, 0.4, 0.6, 0.8, 1.0],
         solutes=[],
     )
     assert validate_request(req) == []
     res, *_ = _run_core(req)
+    h0 = np.asarray(res.h_profiles[0])
+    assert abs(float(h0[0])) < 1e-8
+    assert abs(float(h0[1]) - (-100.0)) < 1e-6
     rows = {round(t * 24.0, 1): i for i, t in enumerate(res.level_times_days)}
     ref = {
         0.0: dict(V=3.59, qT=None, h=-99.5),
@@ -56,19 +68,26 @@ def test_cenario_a_infiltracao_empocada():
     for t, exp in ref.items():
         i = rows[t]
         vol = res.level_volume_cm[i]
-        assert abs(vol - exp["V"]) / exp["V"] <= 0.02, (t, vol, exp["V"])
+        assert abs(vol - exp["V"]) / exp["V"] <= 0.005, (t, vol, exp["V"])
         qt = res.level_q_top_cm_day[i]
-        if exp["qT"] is not None and t >= 0.4:
+        if exp["qT"] is not None:
             got = -qt / 24.0
-            assert abs(got - exp["qT"]) / abs(exp["qT"]) <= 0.03, (t, got)
+            assert abs(got - exp["qT"]) / abs(exp["qT"]) <= 0.01, (t, got)
     i1 = rows[1.0]
-    assert abs(res.level_h_mean_cm[i1]) < 0.05
-    assert abs(-res.level_q_bot_cm_day[i1] / 24.0 - (-29.7)) / 29.7 <= 0.03
+    assert abs(res.level_h_mean_cm[i1]) < 0.02
+    assert abs(-res.level_q_bot_cm_day[i1] / 24.0 - (-29.7)) / 29.7 <= 0.01
     infil = res.level_infil_cum_cm[i1]
     drain = res.level_drain_cum_cm[i1]
-    assert abs(infil - 31.895) / 31.895 <= 0.03, infil
-    assert abs(drain - 5.3854) / 5.3854 <= 0.10, drain
-    # Perfil saturado: θ = θs.
+    assert abs(infil - 31.895) / 31.895 <= 0.005, infil
+    assert abs(drain - 5.3854) / 5.3854 <= 0.01, drain
+    z = np.asarray(res.z)
+    p02 = res.print_profiles[min(res.print_profiles, key=lambda k: abs(k * 24 - 0.2))]
+    i21 = int(np.argmin(np.abs(z - 21.0)))
+    assert abs(float(p02["theta"][i21]) - 0.282) / 0.282 <= 0.02
+    p08 = res.print_profiles[min(res.print_profiles, key=lambda k: abs(k * 24 - 0.8))]
+    # Frente já no nó de 70 cm (não permanece no h inicial −100).
+    assert float(p08["theta"][-1]) > 0.06
+    assert float(p08["h"][-1]) > -45.0
     assert abs(float(np.mean(res.theta_profiles[-1])) - 0.43) < 1e-3
 
 
