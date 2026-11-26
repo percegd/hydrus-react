@@ -47,8 +47,14 @@ def test_kd_pub_soils_use_column_values() -> None:
         lva = client.get("/kd", params={"soil_key": "pub_lva_arenoso", "symbol": "K"}).json()
         nv = client.get("/kd", params={"soil_key": "pub_nv_argiloso", "symbol": "K"}).json()
     assert lva["entries"][0]["kd"] == 0.235
-    assert "ESALQ" in lva["entries"][0]["citation"]
+    assert lva["entries"][0]["citation"] == (
+        "Coluna experimental de Latossolo Vermelho-Amarelo arenoso (Pinho & Miranda, 2014)"
+    )
+    assert "ESALQ" not in lva["entries"][0]["citation"]
     assert nv["entries"][0]["kd"] == 0.5189
+    assert nv["entries"][0]["citation"] == (
+        "Coluna experimental de Nitossolo Vermelho argiloso (Pinho & Miranda, 2014)"
+    )
 
 
 def test_kd_unknown_soil_404_and_bad_texture_422() -> None:

@@ -18,6 +18,21 @@ const STEP_TITLES = [
   { title: "Resultados da Modelagem Física 1D", sub: "Balanço de água e nutrientes consolidado com base na Equação de Richards e Advecção-Dispersão." },
 ];
 
+const SCENARIOS: { id: string; label: string; description: string }[] = [
+  {
+    id: "ponded",
+    label: "Infiltração sob carga hidráulica constante (h = 0) em coluna de areia, 70 cm, 1 h",
+    description:
+      "Areia (Carsel e Parrish, 1988). Contorno superior com carga constante h = 0. Condição inicial: h = 0 na superfície e h = −100 cm no restante da coluna. Observe a frente de molhamento e a infiltração em 1 h.",
+  },
+  {
+    id: "pulse",
+    label: "Transporte de potássio (K, 10 mg/L) sob fluxo constante em coluna de areia, 70 cm, 3 h",
+    description:
+      "Areia (Carsel e Parrish, 1988). Contorno superior com fluxo constante de 1 cm/d. Condição inicial: h = −100 cm. Água de entrada com K a 10 mg/L. Observe a curva de chegada do potássio em 3 h.",
+  },
+];
+
 const DEFAULTS = {
   soil: "latossolo_medio",
   isCustomSoil: false,
@@ -188,7 +203,6 @@ export default function Home() {
   const [rootDepthCm, setRootDepthCm] = useState(DEFAULTS.rootDepthCm);
   const [days, setDays] = useState(DEFAULTS.days);
   const [dzCm, setDzCm] = useState("1");
-  const [nNodes, setNNodes] = useState("");
   const [timeUnit, setTimeUnit] = useState("days");
   const [topBc, setTopBc] = useState("atmospheric");
   const [hTop, setHTop] = useState("0");
@@ -430,7 +444,6 @@ export default function Home() {
     setCropMode("sem");
     setDepthCm("70");
     setDzCm("0.7");
-    setNNodes("101");
     setTimeUnit("hours");
     setIcMode("head");
     setHInit("-100");
@@ -446,7 +459,7 @@ export default function Home() {
       setHTop("0");
       setIcMode("table");
       setIcKind("h");
-      // Nó da superfície em h=0; os demais em h=−100 (o arquivo da aula).
+      // Nó da superfície em h=0; os demais em h=−100 (referência HYDRUS-1D).
       setIcTable("0, 0\n0.0001, -100\n70, -100");
       setDays("1");
       setPrintDaysLamina("0.2, 0.4, 0.6, 0.8, 1");
@@ -697,7 +710,6 @@ export default function Home() {
         }),
         depth_cm: depthVal,
         dz_cm: num(dzCm, 1),
-        ...(String(nNodes).trim() ? { n_nodes: Math.round(num(nNodes, 0)) } : {}),
         root_depth_cm: isCom ? num(rootDepthCm, rootFallback) : null,
         total_days,
         time_unit: rainMode === "uniform" ? timeUnit : "days",
@@ -913,6 +925,7 @@ export default function Home() {
   const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
   const cropLabel = isCom ? (cropName.trim() || cropEntry?.name || crop) : "Sem cultura";
   const resultsWaterOnly = result ? (result.water_only || !result.solutes?.length) : waterOnly;
+  const scenario = SCENARIOS.find((s) => s.id === exampleId);
   const headerTitle = step === 4 && resultsWaterOnly
     ? "Resultados da Modelagem Física 1D — Fluxo de Água"
     : STEP_TITLES[step].title;
@@ -962,7 +975,6 @@ export default function Home() {
       <header className="app-header">
         <div className="header-logos">
           <img src="/ppg_header.png" alt="PPG Engenharia de Sistemas Agrícolas" className="header-logo-img" />
-          <img src="/gpeas_header.png" alt="GPEAS" className="header-logo-img" />
         </div>
         <p className="app-subtitle">Simulação de transporte de água e nutrientes no perfil do solo</p>
       </header>
@@ -975,14 +987,27 @@ export default function Home() {
         ) : (
           <>
             {step >= 1 && step <= 3 && (
-              <label className="field" style={{ marginBottom: 14 }}>
-                <span className="field-label">Exemplo de aula</span>
-                <select value={exampleId} onChange={(e) => applyExample(e.target.value)}>
-                  <option value="">—</option>
-                  <option value="ponded">Exemplo de aula: infiltração empoçada em coluna de areia (1 h)</option>
-                  <option value="pulse">Exemplo de aula: pulso de K a 10 ppm (3 h)</option>
-                </select>
-              </label>
+              <div className="scenario-field">
+                <label className="field">
+                  <span className="field-label">Cenário</span>
+                  <select
+                    value={exampleId}
+                    onChange={(e) => applyExample(e.target.value)}
+                    aria-label="Cenário"
+                  >
+                    <option value="">—</option>
+                    {SCENARIOS.map((s) => (
+                      <option key={s.id} value={s.id}>{s.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {scenario && (
+                  <>
+                    <p className="scenario-current">{scenario.label}</p>
+                    <p className="scenario-desc">{scenario.description}</p>
+                  </>
+                )}
+              </div>
             )}
             <div className="wizard-question-header">
               <h2 className="wizard-question-title">{headerTitle}</h2>
@@ -1017,8 +1042,6 @@ export default function Home() {
                 setDepthCm={setDepthCm}
                 dzCm={dzCm}
                 setDzCm={setDzCm}
-                nNodes={nNodes}
-                setNNodes={setNNodes}
                 rootDepthCm={rootDepthCm}
                 setRootDepthCm={setRootDepthCm}
                 isCustomSoil={isCustomSoil}

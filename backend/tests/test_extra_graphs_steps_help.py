@@ -1,12 +1,17 @@
 """T15/T17/T18: gráficos extras, ZIP, passo a passo, ajuda e jobs expirados."""
 
 import io
+import re
 import time
 import zipfile
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app.main import app
+
+_ROOT = Path(__file__).resolve().parents[2]
+_CLASSROOM = re.compile(r"aula|orientador|professor|\bcurso\b|esalq", re.IGNORECASE)
 
 
 def _payload(**overrides):
@@ -113,12 +118,46 @@ def test_help_entries() -> None:
         entries = r.json()
         assert isinstance(entries, list) and len(entries) >= 20
         by_key = {e["key"]: e for e in entries}
-        for key in ("theta_r", "kd_tab", "water_source", "placement_mode", "release_type"):
+        for key in ("theta_r", "kd_tab", "water_source", "placement_mode", "release_type", "dz_cm", "n_nodes", "ic_mode"):
             assert key in by_key, key
             e = by_key[key]
             assert e["title"].strip()
             assert e["what"].strip()
             assert "simulation" in e
+        dz = by_key["dz_cm"]
+        nodes = by_key["n_nodes"]
+        assert "pontos de cálculo" in dz["what"]
+        assert "precisão" in dz["simulation"]
+        assert "pressão" in nodes["what"]
+        assert "Δz" in nodes["simulation"]
+        assert dz["what"] != nodes["what"]
+        assert "van Genuchten" not in dz["simulation"]
+        blob = " ".join(e["title"] + e["what"] + e["simulation"] for e in entries)
+        assert _CLASSROOM.search(blob) is None
+
+
+def test_scenario_copy_has_no_classroom_terms() -> None:
+    page = (_ROOT / "frontend/app/page.tsx").read_text(encoding="utf-8")
+    soil = (_ROOT / "frontend/components/StepSoil.tsx").read_text(encoding="utf-8")
+    assert "Infiltração sob carga hidráulica constante (h = 0)" in page
+    assert "Transporte de potássio (K, 10 mg/L)" in page
+    assert "Exemplo de aula" not in page
+    assert "n_nodes" not in page
+    assert 'const [dzCm, setDzCm] = useState("1")' in page
+    for path in (
+        _ROOT / "frontend/app/page.tsx",
+        _ROOT / "frontend/app/layout.tsx",
+        _ROOT / "frontend/components/StepSoil.tsx",
+        _ROOT / "frontend/components/StepWater.tsx",
+        _ROOT / "frontend/components/StepNutrients.tsx",
+        _ROOT / "packages/hydrus-core/hydrus_core/field_help.py",
+        _ROOT / "backend/app/soils.py",
+    ):
+        text = path.read_text(encoding="utf-8")
+        assert _CLASSROOM.search(text) is None, path
+    assert 'helpKey="dz_cm"' in soil
+    assert 'helpKey="n_nodes"' in soil
+    assert soil.count('helpKey="dz_cm"') == 1
 
 
 def test_expired_job_endpoints() -> None:

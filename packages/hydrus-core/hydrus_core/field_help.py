@@ -317,6 +317,12 @@ FIELD_HELP = {
         "Fluxo constante no topo desde t = 0 (Neumann), positivo para baixo.",
         "Não é um evento de chuva no meio do dia. 1 cm/d = 0,0416667 cm/h.",
     ),
+    "ic_mode": (
+        "Condição inicial",
+        "",
+        "Estado da água no perfil no instante inicial: umidade, pressão uniforme ou tabela por profundidade.",
+        "Umidade é a fração entre o residual e a capacidade de campo. Pressão e tabela definem h (ou θ) ao longo da coluna.",
+    ),
     "ic_head": (
         "Condição inicial por pressão",
         "[cm]",
@@ -324,10 +330,16 @@ FIELD_HELP = {
         "h negativo é sucção. O nó da superfície segue o contorno quando a carga é prescrita.",
     ),
     "dz_cm": (
-        "Δz da malha",
+        "Espaçamento da malha, Δz",
         "[cm]",
-        "Espessura de cada camada. O padrão continua 1,0 cm. O número de nós é profundidade/Δz + 1.",
-        "A curva de retenção é van Genuchten–Mualem: θ(h) e K(h) com θr, θs, α, n, Ks e l.",
+        "Distância vertical entre os pontos de cálculo.",
+        "Quanto menor o Δz, maior a precisão e maior o tempo de cálculo.",
+    ),
+    "n_nodes": (
+        "Nós da malha",
+        "",
+        "Pontos da coluna onde o modelo calcula pressão, umidade e concentração.",
+        "O número é a profundidade dividida por Δz, mais 1.",
     ),
     "time_unit": (
         "Unidade de tempo",

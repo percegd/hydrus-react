@@ -394,7 +394,7 @@ export default function StepWater(props: Props) {
                 <input value={rainMm} onChange={(e) => setRainMm(e.target.value)} inputMode="decimal" />
               </Field>
             )}
-            <Field label="Condição inicial" helpKey="ic_head">
+            <Field label="Condição inicial" helpKey="ic_mode">
               <select value={icMode} onChange={(e) => setIcMode(e.target.value)}>
                 <option value="moisture">Umidade (% residual→CC)</option>
                 <option value="head">Pressão h uniforme</option>
