@@ -3,19 +3,26 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { getHelp, type HelpEntry } from "../lib/api";
+import fallbackEntries from "../lib/helpFallback.json";
 
 let cache: HelpEntry[] | null = null;
 let inflight: Promise<HelpEntry[]> | null = null;
+
+function mergeHelp(entries: HelpEntry[]): HelpEntry[] {
+  const keys = new Set(entries.map((e) => e.key));
+  const extra = (fallbackEntries as HelpEntry[]).filter((e) => !keys.has(e.key));
+  return extra.length ? entries.concat(extra) : entries;
+}
 
 function loadHelp(): Promise<HelpEntry[]> {
   if (cache) return Promise.resolve(cache);
   if (!inflight) {
     inflight = getHelp()
       .then((entries) => {
-        cache = entries;
-        return entries;
+        cache = mergeHelp(entries);
+        return cache;
       })
-      .catch(() => [] as HelpEntry[])
+      .catch(() => mergeHelp([]))
       .finally(() => {
         inflight = null;
       }) as Promise<HelpEntry[]>;

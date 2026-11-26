@@ -1,0 +1,16 @@
+[
+  {
+    "key": "n_nodes",
+    "title": "Nós da malha",
+    "unit": "",
+    "what": "Pontos da coluna onde o modelo calcula pressão, umidade e concentração.",
+    "simulation": "O número é a profundidade dividida por Δz, mais 1."
+  },
+  {
+    "key": "ic_mode",
+    "title": "Condição inicial",
+    "unit": "",
+    "what": "Estado da água no perfil no instante inicial: umidade, pressão uniforme ou tabela por profundidade.",
+    "simulation": "Umidade é a fração entre o residual e a capacidade de campo. Pressão e tabela definem h (ou θ) ao longo da coluna."
+  }
+]

@@ -136,13 +136,57 @@ def test_help_entries() -> None:
         assert _CLASSROOM.search(blob) is None
 
 
-def test_scenario_copy_has_no_classroom_terms() -> None:
+def _frontend_help_keys() -> set[str]:
+    keys: set[str] = set()
+    root = _ROOT / "frontend"
+    for path in list(root.rglob("*.tsx")) + list(root.rglob("*.ts")):
+        if "node_modules" in path.parts or ".next" in path.parts:
+            continue
+        keys.update(re.findall(r'helpKey="([^"]+)"', path.read_text(encoding="utf-8")))
+    return keys
+
+
+def test_every_frontend_help_key_has_text() -> None:
+    """Cada helpKey da UI tem texto no backend ou no fallback local.
+
+    O GET /help do ambiente publicado pode ainda não ter a chave nova.
+    O fallback cobre esse buraco; o texto, quando existe nos dois, é o mesmo.
+    """
+    import json
+
+    from hydrus_core.field_help import FIELD_HELP
+
+    keys = _frontend_help_keys()
+    assert keys, "nenhuma helpKey no frontend"
+    fallback_path = _ROOT / "frontend/lib/helpFallback.json"
+    fallback = {e["key"]: e for e in json.loads(fallback_path.read_text(encoding="utf-8"))}
+    for key in sorted(keys):
+        backend = FIELD_HELP.get(key)
+        local = fallback.get(key)
+        assert backend or local, key
+        if backend:
+            assert str(backend[2]).strip() and str(backend[3]).strip(), key
+        if local:
+            assert str(local["what"]).strip() and str(local["simulation"]).strip(), key
+        if backend and local:
+            assert local["title"] == backend[0], key
+            assert local["unit"] == backend[1], key
+            assert local["what"] == backend[2], key
+            assert local["simulation"] == backend[3], key
+    assert "n_nodes" in fallback
+    assert "dz_cm" in FIELD_HELP
+    assert "pontos de cálculo" in FIELD_HELP["dz_cm"][2]
+    assert "pressão" in FIELD_HELP["n_nodes"][2]
+
+
+def test_step1_has_no_scenario_selector() -> None:
     page = (_ROOT / "frontend/app/page.tsx").read_text(encoding="utf-8")
-    soil = (_ROOT / "frontend/components/StepSoil.tsx").read_text(encoding="utf-8")
-    assert "Infiltração sob carga hidráulica constante (h = 0)" in page
-    assert "Transporte de potássio (K, 10 mg/L)" in page
+    css = (_ROOT / "frontend/app/globals.css").read_text(encoding="utf-8")
     assert "Exemplo de aula" not in page
-    assert "n_nodes" not in page
+    assert "exampleId" not in page
+    assert "SCENARIOS" not in page
+    assert "Cenário" not in page
+    assert "scenario-" not in css
     assert 'const [dzCm, setDzCm] = useState("1")' in page
     for path in (
         _ROOT / "frontend/app/page.tsx",
@@ -150,14 +194,12 @@ def test_scenario_copy_has_no_classroom_terms() -> None:
         _ROOT / "frontend/components/StepSoil.tsx",
         _ROOT / "frontend/components/StepWater.tsx",
         _ROOT / "frontend/components/StepNutrients.tsx",
+        _ROOT / "frontend/lib/helpFallback.json",
         _ROOT / "packages/hydrus-core/hydrus_core/field_help.py",
         _ROOT / "backend/app/soils.py",
     ):
         text = path.read_text(encoding="utf-8")
         assert _CLASSROOM.search(text) is None, path
-    assert 'helpKey="dz_cm"' in soil
-    assert 'helpKey="n_nodes"' in soil
-    assert soil.count('helpKey="dz_cm"') == 1
 
 
 def test_expired_job_endpoints() -> None:

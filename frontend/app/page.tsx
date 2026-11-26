@@ -18,21 +18,6 @@ const STEP_TITLES = [
   { title: "Resultados da Modelagem Física 1D", sub: "Balanço de água e nutrientes consolidado com base na Equação de Richards e Advecção-Dispersão." },
 ];
 
-const SCENARIOS: { id: string; label: string; description: string }[] = [
-  {
-    id: "ponded",
-    label: "Infiltração sob carga hidráulica constante (h = 0) em coluna de areia, 70 cm, 1 h",
-    description:
-      "Areia (Carsel e Parrish, 1988). Contorno superior com carga constante h = 0. Condição inicial: h = 0 na superfície e h = −100 cm no restante da coluna. Observe a frente de molhamento e a infiltração em 1 h.",
-  },
-  {
-    id: "pulse",
-    label: "Transporte de potássio (K, 10 mg/L) sob fluxo constante em coluna de areia, 70 cm, 3 h",
-    description:
-      "Areia (Carsel e Parrish, 1988). Contorno superior com fluxo constante de 1 cm/d. Condição inicial: h = −100 cm. Água de entrada com K a 10 mg/L. Observe a curva de chegada do potássio em 3 h.",
-  },
-];
-
 const DEFAULTS = {
   soil: "latossolo_medio",
   isCustomSoil: false,
@@ -214,8 +199,6 @@ export default function Home() {
   const [inletConc, setInletConc] = useState("");
   const [concUnit, setConcUnit] = useState("mg_l");
   const [molarMass, setMolarMass] = useState("");
-  const [exampleId, setExampleId] = useState("");
-  const skipKdReset = useRef(false);
   const [rainMode, setRainMode] = useState<RainMode>(DEFAULTS.rainMode);
   const [rainMm, setRainMm] = useState(DEFAULTS.rainMm);
   const [moisture, setMoisture] = useState(DEFAULTS.moisture);
@@ -384,10 +367,6 @@ export default function Home() {
       const info: Record<string, { kd: string; citation: string }> = {};
       for (const e of r.entries) info[e.symbol] = { kd: String(e.kd), citation: e.citation };
       setKdInfo(info);
-      if (skipKdReset.current) {
-        skipKdReset.current = false;
-        return;
-      }
       setRows((rs) => rs.map((row) => {
         // Igual ao Gradio: ao trocar o solo, o Kd sempre volta ao valor de literatura.
         // Linhas "Outro soluto" não têm literatura (Kd 0.20 de traçador) — preservadas.
@@ -432,51 +411,6 @@ export default function Home() {
       setLastFert({ fert_key: fertKey, gross_dose: grossDose, doses: rounded });
     } else {
       setLastFert(null);
-    }
-  }
-
-  function applyExample(id: string) {
-    setExampleId(id);
-    if (!id) return;
-    skipKdReset.current = true;
-    setIsCustomSoil(false);
-    setSoil("areia_carsel");
-    setCropMode("sem");
-    setDepthCm("70");
-    setDzCm("0.7");
-    setTimeUnit("hours");
-    setIcMode("head");
-    setHInit("-100");
-    setEt0("0");
-    setRainMm("0");
-    setRainMode("uniform");
-    setAdvEt(false);
-    setObsDepths("7, 14, 21, 28, 35, 42, 49, 56, 63, 70");
-    setConcUnit("mg_l");
-    setMolarMass("39.0983");
-    if (id === "ponded") {
-      setTopBc("head");
-      setHTop("0");
-      setIcMode("table");
-      setIcKind("h");
-      // Nó da superfície em h=0; os demais em h=−100 (referência HYDRUS-1D).
-      setIcTable("0, 0\n0.0001, -100\n70, -100");
-      setDays("1");
-      setPrintDaysLamina("0.2, 0.4, 0.6, 0.8, 1");
-      setWaterOnly(true);
-      setInletConc("");
-    } else {
-      setTopBc("flux");
-      setFluxTop("0.0416667");
-      setDays("3");
-      setPrintDaysLamina("0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3");
-      setWaterOnly(false);
-      setInletConc("10");
-      setRows(DEFAULT_ROWS.map((r) => {
-        if (r.custom) return { ...r, active: false, dose: "0" };
-        if (r.symbol === "K") return { ...r, active: true, dose: "0", kd: "0", disp: "7", res: "0", kdEdited: true };
-        return { ...r, active: false, dose: "0" };
-      }));
     }
   }
 
@@ -731,7 +665,6 @@ export default function Home() {
         } : {}),
         conc_unit: concUnit,
         ...(String(molarMass).trim() ? { molar_mass_g_mol: num(molarMass, 0) } : {}),
-        ...(exampleId === "pulse" ? { diffusion_cm2_day: 0 } : {}),
         rain_mm: num(rainMm, 0), rain_series,
         initial_moisture_pct: num(moisture, 80),
         seasonal_initial_moisture_pct: num(seasonalMoisture, 100),
@@ -925,7 +858,6 @@ export default function Home() {
   const rootDepth = isCom ? num(rootDepthCm, cropEntry?.root_depth_cm ?? 35) : num(depthCm, 200);
   const cropLabel = isCom ? (cropName.trim() || cropEntry?.name || crop) : "Sem cultura";
   const resultsWaterOnly = result ? (result.water_only || !result.solutes?.length) : waterOnly;
-  const scenario = SCENARIOS.find((s) => s.id === exampleId);
   const headerTitle = step === 4 && resultsWaterOnly
     ? "Resultados da Modelagem Física 1D — Fluxo de Água"
     : STEP_TITLES[step].title;
@@ -986,29 +918,6 @@ export default function Home() {
           <StepIntro />
         ) : (
           <>
-            {step >= 1 && step <= 3 && (
-              <div className="scenario-field">
-                <label className="field">
-                  <span className="field-label">Cenário</span>
-                  <select
-                    value={exampleId}
-                    onChange={(e) => applyExample(e.target.value)}
-                    aria-label="Cenário"
-                  >
-                    <option value="">—</option>
-                    {SCENARIOS.map((s) => (
-                      <option key={s.id} value={s.id}>{s.label}</option>
-                    ))}
-                  </select>
-                </label>
-                {scenario && (
-                  <>
-                    <p className="scenario-current">{scenario.label}</p>
-                    <p className="scenario-desc">{scenario.description}</p>
-                  </>
-                )}
-              </div>
-            )}
             <div className="wizard-question-header">
               <h2 className="wizard-question-title">{headerTitle}</h2>
               {headerSub && (
