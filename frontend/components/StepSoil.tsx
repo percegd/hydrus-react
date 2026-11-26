@@ -28,6 +28,10 @@ type Props = {
   setCropH4: (v: string) => void;
   depthCm: string;
   setDepthCm: (v: string) => void;
+  dzCm: string;
+  setDzCm: (v: string) => void;
+  nNodes: string;
+  setNNodes: (v: string) => void;
   rootDepthCm: string;
   setRootDepthCm: (v: string) => void;
   isCustomSoil: boolean;
@@ -140,6 +144,10 @@ export default function StepSoil({
   setCropH4,
   depthCm,
   setDepthCm,
+  dzCm,
+  setDzCm,
+  nNodes,
+  setNNodes,
   rootDepthCm,
   setRootDepthCm,
   isCustomSoil,
@@ -194,6 +202,22 @@ export default function StepSoil({
   onPreview,
 }: Props) {
   const comCultura = cropMode === "com";
+  const catalog = soils.find((s) => s.key === soil);
+  const fmt = (n: number | undefined, digits: number) =>
+    n == null || !Number.isFinite(n) ? "" : String(Math.round(n * 10 ** digits) / 10 ** digits);
+  const vgShown = {
+    thetaR: isCustomSoil ? thetaR : fmt(catalog?.theta_r, 4),
+    thetaS: isCustomSoil ? thetaS : fmt(catalog?.theta_s, 4),
+    alpha: isCustomSoil ? vgAlpha : fmt(catalog?.alpha, 4),
+    n: isCustomSoil ? vgN : fmt(catalog?.n, 3),
+    ks: isCustomSoil ? ks : fmt(catalog?.ks, 2),
+    bulk: isCustomSoil ? bulk : fmt(catalog?.bulk_density, 2),
+  };
+  const depthN = parseFloat(String(depthCm).replace(",", "."));
+  const dzN = parseFloat(String(dzCm).replace(",", "."));
+  const nodeHint = Number.isFinite(depthN) && Number.isFinite(dzN) && dzN > 0
+    ? String(Math.round(depthN / dzN) + 1)
+    : "";
   const [cropModalOpen, setCropModalOpen] = useState(false);
   useEffect(() => {
     if (!cropModalOpen) return;
@@ -352,24 +376,24 @@ export default function StepSoil({
       </div>
       <div className="form-row">
         <Field label="θr - Umidade residual [cm³/cm³]" helpKey="theta_r">
-          <input value={thetaR} onChange={(e) => setThetaR(e.target.value)} inputMode="decimal" type="number" step="any" min={0} max={1} />
+          <input value={vgShown.thetaR} onChange={(e) => setThetaR(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} max={1} />
         </Field>
         <Field label="θs - Umidade de saturação [cm³/cm³]" helpKey="theta_s">
-          <input value={thetaS} onChange={(e) => setThetaS(e.target.value)} inputMode="decimal" type="number" step="any" min={0} max={1} />
+          <input value={vgShown.thetaS} onChange={(e) => setThetaS(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} max={1} />
         </Field>
         <Field label="α - Parâmetro de escala (entrada de ar) [1/cm]" helpKey="alpha">
-          <input value={vgAlpha} onChange={(e) => setVgAlpha(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
+          <input value={vgShown.alpha} onChange={(e) => setVgAlpha(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} />
         </Field>
       </div>
       <div className="form-row">
         <Field label="n - Índice de poros [-]" helpKey="n">
-          <input value={vgN} onChange={(e) => setVgN(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
+          <input value={vgShown.n} onChange={(e) => setVgN(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} />
         </Field>
         <Field label="Ks - Condutividade saturada [cm/dia]" helpKey="ks">
-          <input value={ks} onChange={(e) => setKs(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
+          <input value={vgShown.ks} onChange={(e) => setKs(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} />
         </Field>
         <Field label="ρb - Densidade aparente [g/cm³]" helpKey="bulk_density">
-          <input value={bulk} onChange={(e) => setBulk(e.target.value)} inputMode="decimal" type="number" step="any" min={0} />
+          <input value={vgShown.bulk} onChange={(e) => setBulk(e.target.value)} readOnly={!isCustomSoil} disabled={!isCustomSoil} inputMode="decimal" type="number" step="any" min={0} />
         </Field>
       </div>
 
@@ -386,6 +410,12 @@ export default function StepSoil({
             min={1}
             max={300}
           />
+        </Field>
+        <Field label="Δz [cm]" helpKey="dz_cm">
+          <input value={dzCm} onChange={(e) => setDzCm(e.target.value)} inputMode="decimal" type="number" min={0.05} step="any" />
+        </Field>
+        <Field label="Nós" helpKey="dz_cm">
+          <input value={nNodes} onChange={(e) => setNNodes(e.target.value)} inputMode="numeric" placeholder={nodeHint} />
         </Field>
       </div>
 

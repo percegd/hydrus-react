@@ -210,6 +210,33 @@ export default function Results(props: Props) {
               {wb && wb.balance_error_pct != null && <div className="metric-sub">WatBalR {wb.balance_error_pct.toFixed(2)}%</div>}
             </div>
           </div>
+          {result.level_rows && result.level_rows.length > 0 && (result.time_unit !== "days" || result.top_bc !== "atmospheric") && (
+            <div className="climate-table-wrap" style={{ marginTop: 16 }}>
+              <table className="climate-table">
+                <thead>
+                  <tr>
+                    <th>t ({result.time_unit === "hours" ? "h" : result.time_unit === "minutes" ? "min" : "d"})</th>
+                    <th>Volume (cm)</th>
+                    <th>Fluxo topo ({result.time_unit === "hours" ? "cm/h" : result.time_unit === "minutes" ? "cm/min" : "cm/d"})</th>
+                    <th>Fluxo fundo</th>
+                    <th>h médio (cm)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.level_rows.map((row) => (
+                    <tr key={row.t}>
+                      <td>{row.t.toFixed(3)}</td>
+                      <td>{row.volume_cm.toFixed(3)}</td>
+                      <td>{row.q_top == null ? "—" : row.q_top.toFixed(3)}</td>
+                      <td>{row.q_bottom == null ? "—" : row.q_bottom.toExponential(3)}</td>
+                      <td>{row.h_mean_cm.toFixed(3)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="hint-text">Fluxo negativo = para baixo. Volume com meia célula nas extremidades.</p>
+            </div>
+          )}
           {result.solutes.length > 0 && (
             <div className="solute-balance-list">
               {result.solutes.map((s) => {
@@ -255,8 +282,14 @@ export default function Results(props: Props) {
                 if ((s.capsule_pct ?? 0) > 0.05) {
                   rows.push({ label: "Ainda no grânulo (não liberado)", value: pctKg(s.capsule_pct ?? 0, capKg) });
                 }
-                if (s.is_fertigation && s.fertigation_c0_mg_l != null) {
-                  rows.push({ label: "C₀ calculado (= dose ÷ lâmina na injeção)", value: `${s.fertigation_c0_mg_l.toFixed(1)} mg/L` });
+                if (s.fertigation_c0_mg_l != null && s.fertigation_c0_mg_l > 0) {
+                  const cMg = s.fertigation_c0_mg_l;
+                  const M = result.molar_mass_g_mol;
+                  const showMmol = result.conc_unit === "mmol_l" && M;
+                  rows.push({
+                    label: s.is_fertigation ? "C₀ calculado (= dose ÷ lâmina na injeção)" : "C₀ na água de entrada",
+                    value: showMmol ? `${cMg.toFixed(3)} mg/L · ${(cMg / M).toFixed(4)} mmol/L` : `${cMg.toFixed(1)} mg/L`,
+                  });
                 }
                 rows.push({ label: "Pico no perfil", value: fmtPeak(s.peak_depth_cm) });
                 if (Number.isFinite(kdNum)) rows.push({ label: "Kd", value: `${kdNum.toFixed(3)} cm³/g` });

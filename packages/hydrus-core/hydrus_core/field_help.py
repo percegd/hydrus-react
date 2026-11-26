@@ -111,7 +111,7 @@ FIELD_HELP = {
         "Kd — Coeficiente de adsorção",
         "[cm³/g]",
         "Quanto do nutriente gruda nas partículas do solo em vez de ficar dissolvido na água.",
-        "Vem da literatura pela textura; Kd alto = nutriente preso (lixivia pouco), Kd ≈ 0 (nitrato) = viaja com a água. Vale por soluto. O laudo e os cartões mostram o Kd efetivo usado no transporte quando a competição (Ca) ou Langmuir o altera.",
+        "Vem da literatura pela textura; Kd alto = nutriente preso (lixivia pouco), Kd ≈ 0 (nitrato) = viaja com a água. O retardo é R = 1 + ρ Kd / θ. Vale por soluto. O laudo e os cartões mostram o Kd efetivo usado no transporte quando a competição (Ca) ou Langmuir o altera.",
     ),
     "disp_tab": (
         "Dispersividade da coluna (λ)",
@@ -298,6 +298,48 @@ FIELD_HELP = {
         "",
         "Teto da absorção acumulada pela demanda nutricional do ciclo.",
         "Extensão agronômica: cap(t) = demanda·(F(t)−F(0)); o HYDRUS-1D não limita a absorção passiva (só cRootMax/ativa SPot, §3.5).",
+    ),
+    "top_bc": (
+        "Contorno no topo",
+        "",
+        "Como a água entra: chuva/irrigação, carga de pressão fixa ou fluxo constante desde o início.",
+        "Darcy: q = −K ∂H/∂z. Na carga prescrita o gradiente inicial é alto e o fluxo passa de Ks; o teto em Ks (e o escoamento) vale só no modo atmosférico.",
+    ),
+    "h_top": (
+        "Carga prescrita",
+        "[cm]",
+        "Potencial de pressão fixo na superfície durante toda a simulação (Dirichlet).",
+        "h = 0 cm é uma lâmina rasa empoçada. A infiltração sai da solução; não é cortada em Ks.",
+    ),
+    "flux_top": (
+        "Fluxo prescrito",
+        "[cm / unidade de tempo]",
+        "Fluxo constante no topo desde t = 0 (Neumann), positivo para baixo.",
+        "Não é um evento de chuva no meio do dia. 1 cm/d = 0,0416667 cm/h.",
+    ),
+    "ic_head": (
+        "Condição inicial por pressão",
+        "[cm]",
+        "h uniforme no perfil, ou uma tabela profundidade → h (ou θ) com interpolação linear.",
+        "h negativo é sucção. O nó da superfície segue o contorno quando a carga é prescrita.",
+    ),
+    "dz_cm": (
+        "Δz da malha",
+        "[cm]",
+        "Espessura de cada camada. O padrão continua 1,0 cm. O número de nós é profundidade/Δz + 1.",
+        "A curva de retenção é van Genuchten–Mualem: θ(h) e K(h) com θr, θs, α, n, Ks e l.",
+    ),
+    "time_unit": (
+        "Unidade de tempo",
+        "",
+        "Dias (padrão), horas ou minutos. A duração e os tempos de leitura usam a mesma unidade, a partir de t = 0.",
+        "Gráficos e a tabela de balanço mostram o eixo nessa unidade.",
+    ),
+    "inlet_conc": (
+        "Concentração na água de entrada",
+        "[mg/L ou mmol/L]",
+        "Condição de Cauchy: a água que entra carrega essa concentração. mmol/L = (mg/L) / massa molar.",
+        "10 mg/L de K ÷ 39,0983 g/mol = 0,2557 mmol/L = 0,0002557 mmol/cm³. kg/ha = mg/L × lâmina (mm) × 0,01.",
     ),
     "crop_preview": (
         "Prévia da cultura no dia 1",

@@ -187,6 +187,21 @@ export default function Home() {
   const [depthCm, setDepthCm] = useState(DEFAULTS.depthCm);
   const [rootDepthCm, setRootDepthCm] = useState(DEFAULTS.rootDepthCm);
   const [days, setDays] = useState(DEFAULTS.days);
+  const [dzCm, setDzCm] = useState("1");
+  const [nNodes, setNNodes] = useState("");
+  const [timeUnit, setTimeUnit] = useState("days");
+  const [topBc, setTopBc] = useState("atmospheric");
+  const [hTop, setHTop] = useState("0");
+  const [fluxTop, setFluxTop] = useState("1");
+  const [icMode, setIcMode] = useState("moisture");
+  const [hInit, setHInit] = useState("-100");
+  const [icTable, setIcTable] = useState("");
+  const [icKind, setIcKind] = useState("h");
+  const [inletConc, setInletConc] = useState("");
+  const [concUnit, setConcUnit] = useState("mg_l");
+  const [molarMass, setMolarMass] = useState("");
+  const [exampleId, setExampleId] = useState("");
+  const skipKdReset = useRef(false);
   const [rainMode, setRainMode] = useState<RainMode>(DEFAULTS.rainMode);
   const [rainMm, setRainMm] = useState(DEFAULTS.rainMm);
   const [moisture, setMoisture] = useState(DEFAULTS.moisture);
@@ -355,6 +370,10 @@ export default function Home() {
       const info: Record<string, { kd: string; citation: string }> = {};
       for (const e of r.entries) info[e.symbol] = { kd: String(e.kd), citation: e.citation };
       setKdInfo(info);
+      if (skipKdReset.current) {
+        skipKdReset.current = false;
+        return;
+      }
       setRows((rs) => rs.map((row) => {
         // Igual ao Gradio: ao trocar o solo, o Kd sempre volta ao valor de literatura.
         // Linhas "Outro soluto" não têm literatura (Kd 0.20 de traçador) — preservadas.
@@ -399,6 +418,48 @@ export default function Home() {
       setLastFert({ fert_key: fertKey, gross_dose: grossDose, doses: rounded });
     } else {
       setLastFert(null);
+    }
+  }
+
+  function applyExample(id: string) {
+    setExampleId(id);
+    if (!id) return;
+    skipKdReset.current = true;
+    setIsCustomSoil(false);
+    setSoil("areia_carsel");
+    setCropMode("sem");
+    setDepthCm("70");
+    setDzCm("0.7");
+    setNNodes("101");
+    setTimeUnit("hours");
+    setIcMode("head");
+    setHInit("-100");
+    setEt0("0");
+    setRainMm("0");
+    setRainMode("uniform");
+    setAdvEt(false);
+    setObsDepths("7, 14, 21, 28, 35, 42, 49, 56, 63, 70");
+    setConcUnit("mg_l");
+    setMolarMass("39.0983");
+    if (id === "ponded") {
+      setTopBc("head");
+      setHTop("0");
+      setDays("1");
+      setPrintDaysLamina("0.2, 0.4, 0.6, 0.8, 1");
+      setWaterOnly(true);
+      setInletConc("");
+    } else {
+      setTopBc("flux");
+      setFluxTop("0.0416667");
+      setDays("3");
+      setPrintDaysLamina("1, 2, 3");
+      setWaterOnly(false);
+      setInletConc("10");
+      setRows(DEFAULT_ROWS.map((r) => {
+        if (r.custom) return { ...r, active: false, dose: "0" };
+        if (r.symbol === "K") return { ...r, active: true, dose: "0", kd: "0", disp: "7", res: "0", kdEdited: true };
+        return { ...r, active: false, dose: "0" };
+      }));
     }
   }
 
@@ -502,6 +563,8 @@ export default function Home() {
     const relDays = num(releaseDays, 60);
     const unnamedCustom = !waterOnly && rows.some((r) => r.custom && r.active && !String(r.name).trim());
     if (unnamedCustom) { openValidation(["Outro soluto: informe o nome/símbolo da espécie (ex: Br⁻, Cl⁻, Atrazina) ou desmarque a linha."]); return; }
+    const inletNum = parseFloat(String(inletConc).replace(",", "."));
+    const hasInlet = Number.isFinite(inletNum) && inletNum >= 0 && String(inletConc).trim() !== "";
     const solutes = waterOnly ? [] : rows
       .filter((r) => r.active)
       .map((r) => {
@@ -513,10 +576,11 @@ export default function Home() {
           dispersivity_cm: dispNum > 0 ? dispNum : dispDefault,
           initial_residual_mg_dm3: r.res === "" ? 0 : num(r.res, 0),
           release_type: relType, release_days: relDays,
+          ...(hasInlet ? { inlet_conc: inletNum } : {}),
         };
       })
-      .filter((s) => s.symbol && s.dose_kg_ha > 0);
-    if (!waterOnly && !solutes.length) { openValidation(["Modo de simulação: modo 'Água + nutrientes' exige ao menos um soluto com dose > 0. Marque um nutriente ou troque para 'Somente água'."]); return; }
+      .filter((s) => s.symbol && (s.dose_kg_ha > 0 || hasInlet));
+    if (!waterOnly && !solutes.length) { openValidation(["Modo de simulação: modo 'Água + nutrientes' exige ao menos um soluto com dose > 0 ou concentração na água de entrada. Marque um nutriente ou troque para 'Somente água'."]); return; }
     let print_days: number[] | undefined;
     let obs_depths_cm: number[] | undefined;
     let analysis_start_day = 1;
@@ -628,8 +692,30 @@ export default function Home() {
           bare_after_harvest: false,
         }),
         depth_cm: depthVal,
+        dz_cm: num(dzCm, 1),
+        ...(String(nNodes).trim() ? { n_nodes: Math.round(num(nNodes, 0)) } : {}),
         root_depth_cm: isCom ? num(rootDepthCm, rootFallback) : null,
         total_days,
+        time_unit: rainMode === "uniform" ? timeUnit : "days",
+        top_bc: rainMode === "uniform" ? topBc : "atmospheric",
+        ...(rainMode === "uniform" && topBc === "head" ? { h_top_cm: num(hTop, 0) } : {}),
+        ...(rainMode === "uniform" && topBc === "flux" ? { flux_top: num(fluxTop, 0) } : {}),
+        ic_mode: rainMode === "uniform" ? icMode : "moisture",
+        ...(rainMode === "uniform" && icMode === "head" ? { initial_head_cm: num(hInit, -100) } : {}),
+        ...(rainMode === "uniform" && icMode === "table" ? {
+          initial_profile_kind: icKind,
+          initial_profile: icTable.split(/\n+/).map((line) => {
+            const bits = line.split(/[\s,;]+/).filter(Boolean);
+            if (bits.length < 2) return null;
+            const depth_cm = Number(bits[0].replace(",", "."));
+            const value = Number(bits[1].replace(",", "."));
+            if (!Number.isFinite(depth_cm) || !Number.isFinite(value)) return null;
+            return { depth_cm, value };
+          }).filter((p): p is { depth_cm: number; value: number } => p !== null),
+        } : {}),
+        conc_unit: concUnit,
+        ...(String(molarMass).trim() ? { molar_mass_g_mol: num(molarMass, 0) } : {}),
+        ...(exampleId === "pulse" ? { diffusion_cm2_day: 0 } : {}),
         rain_mm: num(rainMm, 0), rain_series,
         initial_moisture_pct: num(moisture, 80),
         seasonal_initial_moisture_pct: num(seasonalMoisture, 100),
@@ -884,6 +970,16 @@ export default function Home() {
           <StepIntro />
         ) : (
           <>
+            {step >= 1 && step <= 3 && (
+              <label className="field" style={{ marginBottom: 14 }}>
+                <span className="field-label">Exemplo de aula</span>
+                <select value={exampleId} onChange={(e) => applyExample(e.target.value)}>
+                  <option value="">—</option>
+                  <option value="ponded">Exemplo de aula: infiltração empoçada em coluna de areia (1 h)</option>
+                  <option value="pulse">Exemplo de aula: pulso de K a 10 ppm (3 h)</option>
+                </select>
+              </label>
+            )}
             <div className="wizard-question-header">
               <h2 className="wizard-question-title">{headerTitle}</h2>
               {headerSub && (
@@ -915,6 +1011,10 @@ export default function Home() {
                 setCropH4={setCropH4}
                 depthCm={depthCm}
                 setDepthCm={setDepthCm}
+                dzCm={dzCm}
+                setDzCm={setDzCm}
+                nNodes={nNodes}
+                setNNodes={setNNodes}
                 rootDepthCm={rootDepthCm}
                 setRootDepthCm={setRootDepthCm}
                 isCustomSoil={isCustomSoil}
@@ -996,6 +1096,19 @@ export default function Home() {
                 setReleaseType={setReleaseType}
                 releaseDays={releaseDays}
                 setReleaseDays={setReleaseDays}
+                inletConc={inletConc}
+                setInletConc={setInletConc}
+                concUnit={concUnit}
+                setConcUnit={setConcUnit}
+                molarMass={molarMass}
+                setMolarMass={setMolarMass}
+                laminaMm={(() => {
+                  if (topBc !== "flux" || rainMode !== "uniform") return "";
+                  const q = num(fluxTop, 0);
+                  const dur = num(days, 0);
+                  const cm = timeUnit === "hours" ? q * dur : timeUnit === "minutes" ? q * dur : q * dur;
+                  return String(Math.round(cm * 10 * 1000) / 1000);
+                })()}
               />
             )}
 
@@ -1042,6 +1155,22 @@ export default function Home() {
                 setPrintDaysLamina={setPrintDaysLamina}
                 obsDepths={obsDepths}
                 setObsDepths={setObsDepths}
+                timeUnit={timeUnit}
+                setTimeUnit={setTimeUnit}
+                topBc={topBc}
+                setTopBc={setTopBc}
+                hTop={hTop}
+                setHTop={setHTop}
+                fluxTop={fluxTop}
+                setFluxTop={setFluxTop}
+                icMode={icMode}
+                setIcMode={setIcMode}
+                hInit={hInit}
+                setHInit={setHInit}
+                icTable={icTable}
+                setIcTable={setIcTable}
+                icKind={icKind}
+                setIcKind={setIcKind}
                 useDualKc={useDualKc}
                 activeDay1={cropPreview?.active_day1 !== false}
                 kcbDay1={cropPreview?.kcb_day1 ?? null}

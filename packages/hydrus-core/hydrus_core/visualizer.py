@@ -12,6 +12,39 @@ from hydrus_core.crop import CropParameters
 from hydrus_core.soil_physics import SoilParameters, water_content_from_h
 
 
+def _time_meta(results):
+    """Escala (dias → unidade do pedido) e sufixo. Padrão: dias, textos históricos."""
+    unit = str(getattr(results, "time_unit", "days") or "days")
+    if unit == "hours":
+        return 24.0, "h"
+    if unit == "minutes":
+        return 1440.0, "min"
+    return 1.0, "d"
+
+
+def _t_label(d, results) -> str:
+    scale, suf = _time_meta(results)
+    v = float(d) * scale
+    if suf == "d":
+        return "0 d" if v <= 0 else f"{v:.0f} d"
+    return f"{v:.3g} {suf}"
+
+
+def _t_xlabel(results, long: bool = False) -> str:
+    _scale, suf = _time_meta(results)
+    if suf == "d":
+        return "Tempo Decorrido [dias]" if long else "Tempo [dias]"
+    name = "h" if suf == "h" else "min"
+    return f"Tempo decorrido [{name}]" if long else f"Tempo [{name}]"
+
+
+def _plot_times(times, results):
+    scale, _suf = _time_meta(results)
+    if scale == 1.0:
+        return times
+    return [float(t) * scale for t in times]
+
+
 def _liquid_mg_l(c_total, theta, kd, rho) -> np.ndarray:
     """Concentração total no solo [mg/cm³] → fase líquida [mg/L]."""
     th = np.asarray(theta, dtype=float)
@@ -326,6 +359,7 @@ def plot_breakthrough_curves(
     times = getattr(results, "obs_times_days", [])
     if not times or len(times) < 2:
         return None
+    times = _plot_times(times, results)
 
     depths = getattr(results, "obs_depths_cm", [])
     if not depths:
@@ -368,7 +402,7 @@ def plot_breakthrough_curves(
                     label=_depth_label(d)
                 )
         ax.set_title("Evolução da Umidade no Tempo θ(t)", fontsize=11, fontweight="bold", pad=8)
-        ax.set_xlabel("Tempo Decorrido [dias]", fontsize=10)
+        ax.set_xlabel(_t_xlabel(results, long=True), fontsize=10)
         ax.set_ylabel("Umidade volumétrica θ [cm³/cm³]", fontsize=10)
         ax.grid(True, linestyle=":", alpha=0.5)
         _ys = []
@@ -410,7 +444,7 @@ def plot_breakthrough_curves(
                     label=_depth_label(d)
                 )
         ax.set_title(f"Avanço do Soluto ({sym}) no Tempo C(t)", fontsize=11, fontweight="bold", pad=8)
-        ax.set_xlabel("Tempo Decorrido [dias]", fontsize=10)
+        ax.set_xlabel(_t_xlabel(results, long=True), fontsize=10)
         ax.set_ylabel("Concentração na Fase Líquida [mg/L]", fontsize=10)
         ax.grid(True, linestyle=":", alpha=0.5)
         ncol = 2 if len(depths) >= 4 else 1
@@ -525,7 +559,7 @@ def plot_profiles_at_days(
         for i, d in enumerate(days):
             theta = np.asarray(profs[d].get("theta"), dtype=float)
             if theta is not None and len(theta) == len(z):
-                ax.plot(theta, z, color=cmap(i / max(1, n_days - 1)), lw=2.2, label=f"{d:.0f} d")
+                ax.plot(theta, z, color=cmap(i / max(1, n_days - 1)), lw=2.2, label=_t_label(d, results))
         ax.set_xlabel("θ [cm³/cm³]", fontsize=10)
         ax.set_title("Perfil de Umidade", fontsize=11, fontweight="bold")
         ax.grid(True, linestyle=":", alpha=0.5)
@@ -550,7 +584,7 @@ def plot_profiles_at_days(
             if c_total is not None and theta is not None and len(theta) == len(z):
                 ret_cap = np.maximum(theta + rho * max(0.0, kd), 1e-6)
                 c_aq_mg_l = np.asarray(c_total, dtype=float) / ret_cap * 1000.0  # mg/L na solução
-                ax.plot(c_aq_mg_l, z, color=cmap(i / max(1, n_days - 1)), lw=2.2, label=f"{d:.0f} d")
+                ax.plot(c_aq_mg_l, z, color=cmap(i / max(1, n_days - 1)), lw=2.2, label=_t_label(d, results))
         ax.set_xlabel(f"{name} ({sym}) na solução [mg/L]", fontsize=10)
         ax.set_title(f"Perfil de Concentração — {name} ({sym})", fontsize=11, fontweight="bold")
         ax.grid(True, linestyle=":", alpha=0.5)
@@ -641,7 +675,7 @@ def plot_hydrus_profiles(results, soil, output_path: str, nutrient_symbol: str =
 
     ax_th, ax_h = axes[0], axes[1]
     for i, (d, th, hh, _ct) in enumerate(snaps):
-        lbl = "0 d" if d <= 0 else f"{d:.0f} d"
+        lbl = _t_label(d, results)
         ax_th.plot(th, z, color=_color(i), lw=2.0, label=lbl)
         ax_h.plot(hh, z, color=_color(i), lw=2.0, label=lbl)
     ax_th.set_xlabel("Umidade volumétrica θ [cm³/cm³]", fontsize=10)
@@ -662,7 +696,7 @@ def plot_hydrus_profiles(results, soil, output_path: str, nutrient_symbol: str =
             if arr is None:
                 continue
             c_liq = _liquid_mg_l(arr, th, kd, rho)
-            lbl = "0 d" if d <= 0 else f"{d:.0f} d"
+            lbl = _t_label(d, results)
             ax_c.plot(c_liq, z, color=_color(i), lw=2.0, label=lbl)
         ax_c.set_xlabel(f"{name} ({sym}) na fase líquida [mg/L]", fontsize=10)
         ax_c.set_title("Concentração", fontsize=11, fontweight="bold")
@@ -682,6 +716,7 @@ def plot_hydrus_observations(results, output_path: str, nutrient_symbol: str = N
     depths = list(getattr(results, "obs_depths_cm", []) or [])
     if len(times) < 2 or not depths:
         return None
+    times = _plot_times(times, results)
     obs_th = getattr(results, "obs_theta_series", {}) or {}
     obs_h = getattr(results, "obs_h_series", {}) or {}
     obs_c = getattr(results, "obs_c_series", {}) or {}
@@ -695,7 +730,7 @@ def plot_hydrus_observations(results, output_path: str, nutrient_symbol: str = N
             vals = (store or {}).get(d, [])
             if len(vals) == len(times):
                 ax.plot(times, vals, color=palette[i % len(palette)], lw=1.8, label=f"z = {d:.0f} cm")
-        ax.set_xlabel("Tempo [dias]", fontsize=10)
+        ax.set_xlabel(_t_xlabel(results), fontsize=10)
         ax.set_ylabel(ylabel, fontsize=10)
         ax.set_title(title, fontsize=11, fontweight="bold")
         ax.grid(True, linestyle=":", alpha=0.5)
@@ -728,6 +763,7 @@ def plot_hydrus_cumflux(results, output_path: str, show_transpiration: bool = Tr
     t = list(getattr(results, "flux_times_days", []) or [])
     if len(t) < 2:
         return None
+    t = _plot_times(t, results)
     series = [
         ("Infiltração", getattr(results, "cum_infil_cm", []), "#1f77b4"),
         ("Evaporação", getattr(results, "cum_evap_series_cm", []), "#ff7f0e"),
@@ -739,7 +775,7 @@ def plot_hydrus_cumflux(results, output_path: str, show_transpiration: bool = Tr
     for name, vals, color in series:
         if len(vals) == len(t):
             ax.plot(t, np.asarray(vals, dtype=float) * 10.0, color=color, lw=2.0, label=name)
-    ax.set_xlabel("Tempo [dias]", fontsize=10)
+    ax.set_xlabel(_t_xlabel(results), fontsize=10)
     ax.set_ylabel("Fluxo acumulado [mm]", fontsize=10)
     ax.set_title("Fluxos acumulados (T_LEVEL)", fontsize=11, fontweight="bold")
     ax.grid(True, linestyle=":", alpha=0.5)

@@ -339,7 +339,8 @@ def validate_fert(p: Dict[str, Any], out: List[ValidationIssue]) -> None:
 
 
 def _validate_row(out: List[ValidationIssue], sym: str, label: str, active: bool,
-                  dose: Any, kd: Any, disp: Any, res: Any, tag: str) -> Optional[dict]:
+                  dose: Any, kd: Any, disp: Any, res: Any, tag: str,
+                  allow_zero_dose: bool = False) -> Optional[dict]:
     """Valida uma linha ativa da tabela. Retorna o dict do soluto ou None."""
     if not active:
         return None
@@ -358,7 +359,7 @@ def _validate_row(out: List[ValidationIssue], sym: str, label: str, active: bool
         out.append(ValidationIssue(f"dose_{tag}", f"Dose de {label}", f"val-dose-{tag}",
                                    f"Dose de {sym} ({d:.0f} kg/ha) acima de 10000 kg/ha elementar: provável erro de digitação (adubo bruto vs elemento puro)."))
         return None
-    if d == 0:
+    if d == 0 and not allow_zero_dose:
         out.append(ValidationIssue(f"dose_{tag}", f"Dose de {label}", f"val-dose-{tag}",
                                    f"{sym} marcado com dose 0 kg/ha. Informe a dose aplicada ou desmarque o soluto."))
         return None
@@ -406,13 +407,19 @@ def validate_nutrients(p: Dict[str, Any], out: List[ValidationIssue]) -> List[di
     if not have:
         return []
     solutes: List[dict] = []
+    allow_zero = False
+    try:
+        allow_zero = float(p.get("inlet_conc_mg_l") or 0.0) > 0.0
+    except (TypeError, ValueError):
+        allow_zero = False
     for sym in NUTRIENT_SYMBOLS:
         low = sym.lower()
         if f"multi_{low}_active" not in p and f"multi_{low}_dose" not in p:
             continue
         row = _validate_row(out, sym, sym, bool(p.get(f"multi_{low}_active")),
                             p.get(f"multi_{low}_dose"), p.get(f"multi_{low}_kd"),
-                            p.get(f"multi_{low}_disp"), p.get(f"multi_{low}_res"), sym)
+                            p.get(f"multi_{low}_disp"), p.get(f"multi_{low}_res"), sym,
+                            allow_zero_dose=allow_zero)
         if row:
             solutes.append(row)
     for prefix, row_label, tag in CUSTOM_ROWS:
@@ -428,7 +435,7 @@ def validate_nutrients(p: Dict[str, Any], out: List[ValidationIssue]) -> List[di
             continue
         row = _validate_row(out, name, row_label, True, p.get(f"{prefix}_dose"),
                             p.get(f"{prefix}_kd"), p.get(f"{prefix}_disp"),
-                            p.get(f"{prefix}_res"), tag)
+                            p.get(f"{prefix}_res"), tag, allow_zero_dose=allow_zero)
         if row:
             solutes.append(row)
     if "simulation_mode" in p and str(p.get("simulation_mode")) == "Água + nutrientes":
@@ -507,13 +514,24 @@ def validate_analysis_window(p: Dict[str, Any], out: List[ValidationIssue]) -> N
             if td > 0:
                 txt = p.get("print_days_text")
                 if txt is not None and str(txt).strip():
-                    bad = [f for f in _day_list(txt)
-                           if f is not None and not (1 <= f <= td)]
-                    if bad:
-                        out.append(ValidationIssue(
-                            "print_days_text", "Dias de leitura", "val-print-days",
-                            f"Dia de leitura {int(bad[0])} além da duração do ensaio ({td:.0f} dias). "
-                            "Use dias entre 1 e a duração."))
+                    unit = str(p.get("time_unit") or "days").strip().lower()
+                    short = unit in ("hours", "hour", "h", "minutes", "minute", "min")
+                    if short:
+                        bad = [f for f in _day_list(txt)
+                               if f is not None and not (0.0 < f <= td + 1e-9)]
+                        if bad:
+                            out.append(ValidationIssue(
+                                "print_days_text", "Tempos de leitura", "val-print-days",
+                                f"Tempo de leitura {bad[0]:g} fora da duração ({td:g}). "
+                                "Use valores entre 0 e a duração."))
+                    else:
+                        bad = [f for f in _day_list(txt)
+                               if f is not None and not (1 <= f <= td)]
+                        if bad:
+                            out.append(ValidationIssue(
+                                "print_days_text", "Dias de leitura", "val-print-days",
+                                f"Dia de leitura {int(bad[0])} além da duração do ensaio ({td:.0f} dias). "
+                                "Use dias entre 1 e a duração."))
         return
     # Série/upload: só checa se há contexto suficiente.
     if not any(k in p for k in ("analysis_start_day", "analysis_end_day")):

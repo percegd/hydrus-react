@@ -110,6 +110,20 @@ SOIL_DATABASE = {
         clay_pct=22.0,
         citation="Guia_Validacao_HYDRUS_1D.pdf (cenario franco de validacao)"
     ),
+    "areia_carsel": SoilParameters(
+        name="Areia (Carsel & Parrish, 1988)",
+        descr="Areia de referência van Genuchten–Mualem (Carsel & Parrish, 1988).",
+        theta_r=0.045,
+        theta_s=0.43,
+        alpha=0.145,
+        n=2.68,
+        ks=712.8,  # 29,7 cm/h
+        l=0.5,
+        bulk_density=1.5,
+        sand_pct=92.0,
+        clay_pct=5.0,
+        citation="Carsel & Parrish (1988), Water Resources Research 24(5)."
+    ),
     "argila_pesada": SoilParameters(
         name="Argila Pesada / Gleissolo",
         descr="Drenagem muito lenta, propício ao encharcamento e desnitrificação.",
