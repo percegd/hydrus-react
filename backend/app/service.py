@@ -20,7 +20,7 @@ from hydrus_core.hydrus_solver import Hydrus1DSimulator, SimulationConfig
 from hydrus_core.soil_physics import SOIL_DATABASE
 from hydrus_core.visualizer import plot_nutrient_profile
 
-from .schemas import SimulateRequest, SimulateResponse, SoluteBalance, WaterBalance
+from .schemas import LevelRow, SimulateRequest, SimulateResponse, SoluteBalance, WaterBalance
 from .water_report import (
     seasonal_water_only_report,
     column_water_only_report,
@@ -33,6 +33,49 @@ def _peak_or_none(value) -> float | None:
     except (TypeError, ValueError):
         return None
     return None if math.isnan(v) else v
+
+
+_MOLAR_G_MOL = {
+    "N": 14.007,
+    "K": 39.0983,
+    "P": 30.973761,
+    "S": 32.065,
+    "Ca": 40.078,
+    "Mg": 24.305,
+}
+_DAY_PER_UNIT = {"days": 1.0, "hours": 1.0 / 24.0, "minutes": 1.0 / 1440.0}
+_PER_DAY = {"days": 1.0, "hours": 24.0, "minutes": 1440.0}
+
+
+def _time_unit_name(req: SimulateRequest) -> str:
+    raw = str(getattr(req, "time_unit", "days") or "days").strip().lower()
+    if raw in ("h", "hour", "hours", "hora", "horas"):
+        return "hours"
+    if raw in ("min", "minute", "minutes", "minuto", "minutos"):
+        return "minutes"
+    return "days"
+
+
+def _top_bc_name(req: SimulateRequest) -> str:
+    raw = str(getattr(req, "top_bc", "atmospheric") or "atmospheric").strip().lower()
+    if raw in ("head", "pressure", "dirichlet", "carga"):
+        return "head"
+    if raw in ("flux", "neumann", "fluxo"):
+        return "flux"
+    return "atmospheric"
+
+
+def _conc_unit_name(req: SimulateRequest) -> str:
+    raw = str(getattr(req, "conc_unit", "mg_l") or "mg_l").strip().lower()
+    if raw in ("mmol", "mmol_l", "mmol/l"):
+        return "mmol_l"
+    return "mg_l"
+
+
+def _molar_of(symbol: str, explicit: float | None) -> float:
+    if explicit is not None and float(explicit) > 0:
+        return float(explicit)
+    return float(_MOLAR_G_MOL.get(str(symbol or "").strip().upper(), 0.0) or 0.0)
 
 
 def _is_seasonal(req: SimulateRequest) -> bool:
@@ -127,6 +170,25 @@ def _effective_obs_depths(req: SimulateRequest, depth_cm: float) -> list[float] 
         if filt:
             return filt
     return _default_obs_depths(prof, _is_seasonal(req))
+
+
+def _storage_mm_control(results) -> float:
+    """ΔS com meia célula nas pontas — a mesma integração do volume de T_Level."""
+    try:
+        import numpy as _np
+
+        z = _np.asarray(getattr(results, "z", []), dtype=float)
+        th = getattr(results, "theta_profiles", []) or []
+        if z.size < 2 or len(th) < 2:
+            return 0.0
+        dz = float(z[1] - z[0])
+        dv = _np.full(z.size, dz)
+        dv[0] = 0.5 * dz
+        dv[-1] = 0.5 * dz
+        dth = _np.asarray(th[-1], dtype=float) - _np.asarray(th[0], dtype=float)
+        return float(_np.sum(dth * dv) * 10.0)
+    except Exception:
+        return 0.0
 
 
 def _storage_mm(results) -> float:
@@ -940,20 +1002,59 @@ def _run_core(req: SimulateRequest):
                 _nd = 0.0
             _n["fertigation_c0_mg_l"] = float(_nd * 100.0 / _W) if _W > 0 else 0.0
 
+    # Concentração explícita da água de entrada (mg/L ou mmol/L) substitui o C0 da dose.
+    _conc_unit = _conc_unit_name(req)
+    _molar_explicit = getattr(req, "molar_mass_g_mol", None)
+    for _n, _s in zip(nutrients, req.solutes or []):
+        _raw = getattr(_s, "inlet_conc", None)
+        if _raw is None:
+            continue
+        _M = _molar_of(str(getattr(_s, "symbol", "") or _n.get("symbol", "")), _molar_explicit)
+        _c = float(_raw)
+        if _conc_unit == "mmol_l":
+            if _M <= 0:
+                raise ValueError("mmol/L exige massa molar (g/mol).")
+            _c = _c * _M
+        _n["fertigation_c0_mg_l"] = float(_c)
+
     # v5: agenda do ciclo nos DOIS modos (série e Lâmina) quando há ciclo;
     # sem ciclo (custom) o solver usa Kc dual constante + sem teto (compat).
+    _unit = "days" if req.rain_series else _time_unit_name(req)
+    _day_per = _DAY_PER_UNIT[_unit]
+    _user_span = float(total_days)
+    if _unit != "days":
+        total_days = _user_span * _day_per
     _sched = _schedule_for_request(req, crop, total_days, sw)
 
+    _bc = _top_bc_name(req)
+    _nn = getattr(req, "n_nodes", None)
+    _dz_req = getattr(req, "dz_cm", None)
+    _cfg_dz = 1.0
+    _cfg_nodes = None
+    if _nn:
+        _cfg_nodes = int(_nn)
+        _cfg_dz = float(req.depth_cm) / max(_cfg_nodes - 1, 1)
+    elif _dz_req is not None and abs(float(_dz_req) - 1.0) > 1e-9:
+        _cfg_nodes = int(round(float(req.depth_cm) / float(_dz_req))) + 1
+        _cfg_dz = float(req.depth_cm) / max(_cfg_nodes - 1, 1)
     cfg = SimulationConfig(
         depth_cm=float(req.depth_cm),
-        dz=1.0,
+        dz=_cfg_dz,
         total_days=total_days,
         target_depth_cm=root_depth,
+        n_nodes=_cfg_nodes,
     )
+    if _unit != "days" or _bc == "head":
+        cfg.dt_init = min(float(cfg.dt_init), max(total_days / 400.0, 1e-8))
+        cfg.dt_min = min(float(cfg.dt_min), max(total_days / 5.0e6, 1e-12))
+        cfg.dt_max = min(float(cfg.dt_max), max(total_days / 80.0, 1e-6))
     sim = Hydrus1DSimulator(soil=soil, crop=crop, config=cfg)
     # Defaults iguais ao Gradio: dias de leitura por frações da duração e
     # nós de observação default do campo do Gradio [10, 20, 30, 50].
-    _print_days_eff = _effective_print_days(req, total_days, sw, ew)
+    _print_span = _user_span if _unit != "days" else total_days
+    _print_days_eff = _effective_print_days(req, _print_span, sw, ew)
+    if _unit != "days":
+        _print_days_eff = [float(p) * _day_per for p in _print_days_eff]
     _obs_depths = _effective_obs_depths(req, float(req.depth_cm))
     # Umidade inicial: no modo série, % do intervalo θr→CC informada em
     # seasonal_initial_moisture_pct (default 100% = capacidade de campo,
@@ -995,7 +1096,33 @@ def _run_core(req: SimulateRequest):
         use_dual_kc=bool(getattr(req, "use_dual_kc", False)),
         growing_root=bool(getattr(req, "growing_root", False)),
         bare_after_harvest=bool(getattr(req, "bare_after_harvest", False)),
+        top_bc=_bc,
+        h_top_cm=(float(req.h_top_cm) if _bc == "head" and req.h_top_cm is not None else None),
+        flux_top_cm_day=(
+            float(req.flux_top) * _PER_DAY[_unit]
+            if _bc == "flux" and req.flux_top is not None else None
+        ),
+        initial_head_cm=(
+            float(req.initial_head_cm)
+            if str(getattr(req, "ic_mode", "moisture") or "moisture") == "head"
+            and req.initial_head_cm is not None else None
+        ),
+        initial_profile=(
+            [(float(p.depth_cm), float(p.value)) for p in (req.initial_profile or [])]
+            if str(getattr(req, "ic_mode", "moisture") or "moisture") == "table"
+            and req.initial_profile else None
+        ),
+        initial_profile_kind=str(getattr(req, "initial_profile_kind", "h") or "h"),
+        diffusion_cm2_day=getattr(req, "diffusion_cm2_day", None),
+        snap_print_times=(_unit != "days" or _bc != "atmospheric"),
     )
+    results.time_unit = _unit
+    results.top_bc = _bc
+    results.conc_unit = _conc_unit
+    _mshow = _molar_explicit
+    if _mshow is None and req.solutes:
+        _mshow = _MOLAR_G_MOL.get(str(req.solutes[0].symbol or "").strip().upper())
+    results.conc_molar_mass = float(_mshow) if _mshow else None
     return results, soil, crop, root_depth, total_rain, total_days
 
 
@@ -1145,10 +1272,17 @@ def _water_balance(req: SimulateRequest, results, total_rain: float, total_days:
         transp_mm = float(getattr(results, "transp_cum_cm", 0.0) or 0.0) * 10.0
     except (TypeError, ValueError):
         transp_mm = None
-    applied = float(total_rain)
+    _bc_wb = _top_bc_name(req)
+    if _bc_wb != "atmospheric":
+        applied = float(getattr(results, "infil_cum_cm", 0.0) or 0.0) * 10.0
+        applied_label = "Infiltração" if _bc_wb == "head" else "Fluxo prescrito"
+        storage = float(_storage_mm_control(results))
+        runoff = 0.0
+    else:
+        applied = float(total_rain)
+        storage = float(_storage_mm(results))
+        runoff = float(getattr(results, "runoff_cum_cm", 0.0) or 0.0) * 10.0
     drainage = float(getattr(results, "q_bottom_cum_cm", 0.0) or 0.0) * 10.0
-    storage = float(_storage_mm(results))
-    runoff = float(getattr(results, "runoff_cum_cm", 0.0) or 0.0) * 10.0
     evap_v = float(evap_mm or 0.0)
     transp_v = float(transp_mm or 0.0)
     # Resíduo dos termos exibidos: P − RO − E − T − D − ΔS (WatBalR relativo à soma dos módulos).
@@ -1393,6 +1527,50 @@ def build_extra_plots(req: SimulateRequest, results, soil, crop, root_depth: flo
     return encode_files(files), files
 
 
+def _level_rows(req: SimulateRequest, results) -> list[LevelRow]:
+    """Tabela T_Level na unidade do pedido. Fluxo negativo = para baixo."""
+    unit = str(getattr(results, "time_unit", None) or _time_unit_name(req))
+    if req.rain_series:
+        unit = "days"
+    per_day = _PER_DAY.get(unit, 1.0)
+    times = list(getattr(results, "level_times_days", []) or [])
+    vols = list(getattr(results, "level_volume_cm", []) or [])
+    qt = list(getattr(results, "level_q_top_cm_day", []) or [])
+    qb = list(getattr(results, "level_q_bot_cm_day", []) or [])
+    hm = list(getattr(results, "level_h_mean_cm", []) or [])
+    inf = list(getattr(results, "level_infil_cum_cm", []) or [])
+    dr = list(getattr(results, "level_drain_cum_cm", []) or [])
+    rows: list[LevelRow] = []
+    n = min(len(times), len(vols), len(qt), len(qb), len(hm))
+    for i in range(n):
+        qtop = qt[i]
+        rows.append(LevelRow(
+            t=float(times[i]) * per_day,
+            volume_cm=float(vols[i]),
+            q_top=None if qtop is None else -float(qtop) / per_day,
+            q_bottom=-float(qb[i]) / per_day,
+            h_mean_cm=float(hm[i]),
+            infil_cum_cm=float(inf[i]) if i < len(inf) else 0.0,
+            drain_cum_cm=float(dr[i]) if i < len(dr) else 0.0,
+        ))
+    return rows
+
+
+def _presentation(req: SimulateRequest, results) -> dict:
+    unit = str(getattr(results, "time_unit", None) or ("days" if req.rain_series else _time_unit_name(req)))
+    bc = str(getattr(results, "top_bc", None) or _top_bc_name(req))
+    conc = str(getattr(results, "conc_unit", None) or _conc_unit_name(req))
+    molar = getattr(results, "conc_molar_mass", None)
+    show = unit != "days" or bc != "atmospheric"
+    return {
+        "time_unit": unit,
+        "top_bc": bc,
+        "conc_unit": conc,
+        "molar_mass_g_mol": (float(molar) if molar else None),
+        "level_rows": _level_rows(req, results) if show else [],
+    }
+
+
 def build_steps_markdown(req: SimulateRequest, results, soil, crop, root_depth: float,
                           total_rain: float, total_days: float) -> str:
     """Passo a passo via hydrus_core.explanatory_pipeline, como o Gradio monta."""
@@ -1433,6 +1611,7 @@ def run_simulation(req: SimulateRequest, with_plot: bool = True) -> SimulateResp
         profiles=_profiles_payload(results),
         water_only=water_only,
         water_balance=_water_balance(req, results, total_rain, total_days),
+        **_presentation(req, results),
     )
 
 
@@ -1621,13 +1800,52 @@ def write_hydrus_project(req: SimulateRequest, soil, crop, total_days: float, jo
         _sw, _ew = _effective_window(req, len(req.rain_series))
     else:
         _sw, _ew = 1, max(1, int(round(days)))
-    print_days = _effective_print_days(req, days, _sw, _ew)
+    _exp_unit = "days" if req.rain_series else _time_unit_name(req)
+    _exp_per = _PER_DAY[_exp_unit]
+    if _exp_unit != "days":
+        _prints_user = _effective_print_days(req, float(days) * _exp_per, _sw, _ew)
+        print_days = [float(p) / _exp_per for p in _prints_user]
+    else:
+        print_days = _effective_print_days(req, days, _sw, _ew)
     obs = _effective_obs_depths(req, float(req.depth_cm))
+    _bc_ex = _top_bc_name(req)
+    if getattr(req, "n_nodes", None):
+        _dz_ex = float(req.depth_cm) / max(int(req.n_nodes) - 1, 1)
+    elif getattr(req, "dz_cm", None) is not None:
+        _dz_ex = float(req.dz_cm)
+    else:
+        _dz_ex = 1.0
+    _ic = str(getattr(req, "ic_mode", "moisture") or "moisture")
+    _head_ex = float(req.initial_head_cm) if _ic == "head" and req.initial_head_cm is not None else None
+    _prof_ex = None
+    if _ic == "table" and req.initial_profile:
+        from hydrus_core.soil_physics import matric_head_from_theta
+        import numpy as _np
+        kind = str(getattr(req, "initial_profile_kind", "h") or "h").lower()
+        _prof_ex = []
+        for _pt in req.initial_profile:
+            _val = float(_pt.value)
+            if kind in ("theta", "t", "umidade"):
+                _val = float(matric_head_from_theta(_np.array([_val]), soil)[0])
+            _prof_ex.append((float(_pt.depth_cm), _val))
+    _c_file = None
+    _mass_unit = "mmol" if _conc_unit_name(req) == "mmol_l" else "mg"
+    if req.solutes and req.solutes[0].inlet_conc is not None:
+        _raw_c = float(req.solutes[0].inlet_conc)
+        if _mass_unit == "mmol":
+            # mmol/L → mmol/cm³ (M/L³ com L = cm).
+            _c_file = _raw_c / 1000.0
+        else:
+            _c_file = _raw_c * 0.001
+    _flux_day = None
+    if _bc_ex == "flux" and req.flux_top is not None:
+        _flux_day = float(req.flux_top) * _exp_per
     out = os.path.join(job_dir, "hydrus1d")
     export_to_hydrus1d_project(
         out, soil, crop=crop,
         fertilizer_kg_ha=float(specs[0]["dose_kg_ha"]) if specs else 0.0,
         water_events=events, total_days=days, depth_cm=float(req.depth_cm),
+        dz=_dz_ex,
         kd=float(specs[0]["kd"]) if specs else 0.0,
         dispersivity_cm=disp,
         placement_mode=str(req.placement.mode or "surface"),
@@ -1647,6 +1865,14 @@ def write_hydrus_project(req: SimulateRequest, soil, crop, total_days: float, jo
         crop_schedule=sched,
         application_day=app_day,
         water_only=water_only,
+        top_bc=_bc_ex,
+        h_top_cm=(float(req.h_top_cm) if req.h_top_cm is not None else None),
+        flux_top_cm_day=_flux_day,
+        time_unit=_exp_unit,
+        mass_unit=_mass_unit,
+        initial_head_cm=_head_ex,
+        initial_head_profile=_prof_ex,
+        c_top=_c_file,
     )
     try:
         import zipfile
@@ -1739,6 +1965,7 @@ def execute_job_fast(
         water_only=water_only,
         water_balance=_water_balance(req, results, total_rain, total_days),
         screen=screen,
+        **_presentation(req, results),
     )
     excel_path = build_excel(req, results, soil, crop, root_depth, total_rain, total_days, job_dir)
     report_md = build_report(req, results, soil, crop, root_depth, total_rain, total_days)
@@ -2453,6 +2680,10 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
                 prof_depth = float(max(z))
             except Exception:
                 prof_depth = float(req.depth_cm)
+            _bc_rep = _top_bc_name(req)
+            _applied_rep = None
+            if _bc_rep != "atmospheric":
+                _applied_rep = float(getattr(results, "infil_cum_cm", 0.0) or 0.0) * 10.0
             base = column_water_only_report(
                 soil=soil, crop=crop, col_depth=float(prof_depth),
                 rain_mm=float(total_rain), total_days=float(total_days),
@@ -2461,6 +2692,12 @@ def build_report(req: SimulateRequest, results, soil, crop, root_depth: float,
                 drainage_mm=float(getattr(results, "q_bottom_cum_cm", 0.0) or 0.0) * 10.0,
                 runoff_mm=float(runoff), storage_mm=float(storage),
                 obs_depths_cm=list(getattr(results, "obs_depths_cm", []) or []),
+                time_unit=str(getattr(results, "time_unit", "days") or "days"),
+                top_bc=_bc_rep,
+                h_top_cm=req.h_top_cm,
+                ic_mode=str(getattr(req, "ic_mode", "moisture") or "moisture"),
+                initial_head_cm=req.initial_head_cm,
+                applied_mm=_applied_rep,
             )
         step_md, step_html = generate_simulation_step_by_step(params)
         return f"{base}\n\n---\n\n{step_md}"

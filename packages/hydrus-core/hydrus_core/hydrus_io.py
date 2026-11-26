@@ -88,6 +88,14 @@ def export_to_hydrus1d_project(
     crop_schedule: Optional[dict] = None,
     application_day: float = 0.0,
     water_only: bool = False,
+    top_bc: str = "atmospheric",
+    h_top_cm: Optional[float] = None,
+    flux_top_cm_day: Optional[float] = None,
+    time_unit: str = "days",
+    mass_unit: str = "mg",
+    initial_head_cm: Optional[float] = None,
+    initial_head_profile: Optional[List[Tuple[float, float]]] = None,
+    c_top: Optional[float] = None,
 ):
     """Gera SELECTOR.IN, ATMOSPH.IN e PROFILE.DAT no formato oficial do HYDRUS-1D.
 
@@ -100,6 +108,23 @@ def export_to_hydrus1d_project(
     nz = int(round(float(depth_cm) / float(dz))) + 1
     z_nodes = np.linspace(0.0, float(depth_cm), nz)
     theta0, h_init = _initial_state(soil, initial_moisture_pct)
+    bc = str(top_bc or "atmospheric").strip().lower()
+    if bc in ("head", "pressure", "dirichlet", "carga"):
+        bc = "head"
+    elif bc in ("flux", "neumann", "fluxo"):
+        bc = "flux"
+    else:
+        bc = "atmospheric"
+    unit = str(time_unit or "days").strip().lower()
+    if unit in ("h", "hour", "hours"):
+        unit = "hours"
+    elif unit in ("min", "minute", "minutes"):
+        unit = "minutes"
+    else:
+        unit = "days"
+    t_scale = {"days": 1.0, "hours": 24.0, "minutes": 1440.0}[unit]
+    t_name = {"days": "days", "hours": "hours", "minutes": "min"}[unit]
+    m_name = "mmol" if str(mass_unit or "mg").strip().lower().startswith("mmol") else "mg"
 
     crop_title = crop.name if crop else "Coluna de Solo (Solo Nu)"
     h1 = float(crop.h1) if crop else -10.0
@@ -145,8 +170,8 @@ def export_to_hydrus1d_project(
         f.write(f"Simulacao - {crop_title} em {soil.name}\n")
         f.write("LUnit  TUnit  MUnit  (indicated units are obligatory for all input data)\n")
         f.write("cm\n")
-        f.write("days\n")
-        f.write("mg\n")
+        f.write(f"{t_name}\n")
+        f.write(f"{m_name}\n")
         f.write("lWat   lChem lTemp  lSink lRoot lShort lWDep lScreen lVariabBC lEquil lInverse\n")
         f.write(f" t     {l_chem}     f      {l_sink}     {l_root}     f      f     f       t         t         f\n")
         f.write("NMat    NLay  CosAlpha\n")
@@ -155,7 +180,14 @@ def export_to_hydrus1d_project(
         f.write("MaxIt   TolTh   TolH       (maximum number of iterations and tolerances)\n")
         f.write("  20    0.001    0.1\n")
         f.write("TopInf WLayer KodTop InitCond\n")
-        f.write(" t     f      -1       f\n")
+        if bc == "head":
+            # KodTop = +1: carga de pressão constante (Dirichlet).
+            f.write(" f     f       1       f\n")
+        elif bc == "flux":
+            # KodTop = -1 com TopInf falso: fluxo constante (Neumann).
+            f.write(" f     f      -1       f\n")
+        else:
+            f.write(" t     f      -1       f\n")
         f.write("BotInf qGWLF FreeD SeepF KodBot DrainF\n")
         f.write(" f     f     t     f     -1      f\n")
         f.write("    hTab1   hTabN\n")
@@ -163,14 +195,15 @@ def export_to_hydrus1d_project(
         f.write("    Model   Hysteresis\n")
         f.write("      0          0\n")
         f.write("   thr     ths    Alfa      n         Ks       l\n")
-        f.write(f" {soil.theta_r:8.4f} {soil.theta_s:8.4f} {soil.alpha:8.4f} {soil.n:8.4f} {soil.ks:10.3f}     0.5\n")
+        ks_out = float(soil.ks) / t_scale
+        f.write(f" {soil.theta_r:8.4f} {soil.theta_s:8.4f} {soil.alpha:8.4f} {soil.n:8.4f} {ks_out:10.3f}     0.5\n")
         f.write("*** BLOCK C: TIME INFORMATION ******************************************\n")
         f.write("        dt       dtMin       dtMax     DMul    DMul2  ItMin ItMax  MPL\n")
         f.write(f"     0.001      1e-005         1.0     1.3     0.7     3     7    {mpl:2d}\n")
         f.write("      tInit        tMax\n")
-        f.write(f"          0      {float(total_days):8.2f}\n")
+        f.write(f"          0      {float(total_days) * t_scale:8.2f}\n")
         f.write("TPrint(1),TPrint(2),...,TPrint(MPL)\n")
-        f.write(" ".join(f"{t:11.2f}" for t in tprint) + "\n")
+        f.write(" ".join(f"{t * t_scale:11.2f}" for t in tprint) + "\n")
         f.write("*** BLOCK F: SOLUTE TRANSPORT INFORMATION ******************************\n")
         f.write(" Epsi  lUpW  lArtD lTDep    cTolA    cTolR   MaxItC    PeCr  No.Solutes  lTort\n")
         f.write(f"  0.5     f     f     f      0.001    0.001    20       2      {nsol:5d}        t\n")
@@ -248,6 +281,18 @@ def export_to_hydrus1d_project(
                 c_liq = c_bulk / max(theta0 + rho * max(0.0, kd_j), 1e-8)
                 conc[z_nodes <= 20.0 + 1e-6, j] += c_liq
 
+    if initial_head_profile:
+        pts = [(float(a), float(b)) for a, b in initial_head_profile]
+        zd = np.array([p[0] for p in pts], dtype=float)
+        vv = np.array([p[1] for p in pts], dtype=float)
+        order = np.argsort(zd, kind="mergesort")
+        zd, vv = zd[order], vv[order]
+        h_nodes = np.interp(z_nodes, zd, vv)
+    elif initial_head_cm is not None:
+        h_nodes = np.full(nz, float(initial_head_cm))
+    else:
+        h_nodes = np.full(nz, h_init)
+
     profile_path = os.path.join(project_dir, "PROFILE.DAT")
     with open(profile_path, "w") as f:
         f.write("    2\n")
@@ -258,7 +303,7 @@ def export_to_hydrus1d_project(
             conc_txt = "  ".join(f"{float(conc[i, j]):12.6e}" for j in range(nsol))
             sconc_txt = "  ".join(f"{0.0:12.6e}" for _ in range(nsol))
             f.write(
-                f"{i+1:5d}  {-float(z):12.4e}  {h_init:12.4e}    1    1  "
+                f"{i+1:5d}  {-float(z):12.4e}  {float(h_nodes[i]):12.4e}    1    1  "
                 f"{float(beta_vals[i]):12.6e}  {1.0:12.6e}  {1.0:12.6e}  {1.0:12.6e}  {20.0:12.6e}  {conc_txt}  {sconc_txt}\n"
             )
         f.write(f"{len(obs_indices):5d}\n")
@@ -273,6 +318,8 @@ def export_to_hydrus1d_project(
     app_day = float(application_day or 0.0)
     pulse = float(pulse_days) if pulse_days and float(pulse_days) > 0 else float(total_days)
 
+    if bc != "atmospheric":
+        n_records = 1
     atmosph_path = os.path.join(project_dir, "ATMOSPH.IN")
     with open(atmosph_path, "w") as f:
         f.write("*** BLOCK I: ATMOSPHERIC INFORMATION  **********************************\n")
@@ -281,7 +328,22 @@ def export_to_hydrus1d_project(
         f.write(" hCritS                 (max. allowed pressure head at the soil surface)\n")
         f.write(" 1e+030\n")
         f.write("       tAtm        Prec       rSoil       rRoot      hCritA          rB          hB          ht        tTop        tBot        Ampl        cTop        cBot\n")
-        for d in range(1, n_records + 1):
+        if bc != "atmospheric":
+            t_file = float(total_days) * t_scale
+            precip_cm = 0.0
+            ht = 0.0
+            if bc == "flux" and flux_top_cm_day is not None:
+                precip_cm = float(flux_top_cm_day) / t_scale
+            if bc == "head" and h_top_cm is not None:
+                ht = float(h_top_cm)
+            c_vals = [float(c_top) if c_top is not None else 0.0 for _ in specs] or [0.0]
+            c_txt = "  ".join(f"{c:10.5f}" for c in c_vals) + "  " + "  ".join("0.0000" for _ in c_vals)
+            f.write(
+                f"  {t_file:10.2f}  {precip_cm:10.4f}  {0.0:10.4f}  {0.0:10.4f}  "
+                f"{10000.0:10.1f}      0.0000      0.0000  {ht:10.4f}"
+                f"      20.000      20.000      0.0000  {c_txt}\n"
+            )
+        for d in range(1, n_records + 1) if bc == "atmospheric" else []:
             t_start = float(d - 1)
             t_end = float(d)
             precip_cm = 0.0

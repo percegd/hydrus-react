@@ -14,6 +14,16 @@ class SoluteInput(BaseModel):
     dispersivity_cm: float = Field(default=20.0, gt=0)
     release_type: str = Field(default="immediate", examples=["immediate"])
     release_days: float = Field(default=60.0, gt=0)
+    # Concentração da água que entra (Cauchy). Unidade: conc_unit do request.
+    # None = o app deriva C0 da dose, como antes.
+    inlet_conc: Optional[float] = Field(default=None, ge=0)
+
+
+class ProfilePoint(BaseModel):
+    """Um ponto da condição inicial (profundidade → h ou θ)."""
+
+    depth_cm: float = Field(ge=0)
+    value: float
 
 
 class PlacementInput(BaseModel):
@@ -141,12 +151,33 @@ class SimulateRequest(BaseModel):
     h4: Optional[float] = Field(default=None, examples=[-12000.0])
     depth_cm: float = Field(default=200.0, gt=0, le=300)
     root_depth_cm: Optional[float] = Field(default=None, gt=0)
+    # None = Δz histórico de 1,0 cm. n_nodes, se vier, define a malha.
+    dz_cm: Optional[float] = Field(default=None, gt=0)
+    n_nodes: Optional[int] = Field(default=None, ge=2, le=2001)
     total_days: float = Field(default=7.0, gt=0, le=730)
+    # days | hours | minutes. total_days e print_days ficam nessa unidade.
+    # O padrão "days" não muda os cenários antigos.
+    time_unit: str = Field(default="days")
     rain_mm: float = Field(default=60.0, ge=0)
     rain_series: Optional[list[float]] = Field(
         default=None, description="Chuva diária em mm; se informada, define total_days"
     )
     initial_moisture_pct: float = Field(default=80.0, ge=0, le=100)
+    # moisture (padrão, % do intervalo residual→CC) | head | table
+    ic_mode: str = Field(default="moisture")
+    initial_head_cm: Optional[float] = Field(default=None)
+    initial_profile: Optional[list[ProfilePoint]] = Field(default=None)
+    initial_profile_kind: str = Field(default="h", description="h ou theta")
+    # atmospheric (padrão) | head (Dirichlet) | flux (Neumann constante desde t=0)
+    top_bc: str = Field(default="atmospheric")
+    h_top_cm: Optional[float] = Field(default=None, description="Carga prescrita no topo [cm]")
+    # Fluxo prescrito, positivo para baixo, na unidade de tempo do request (cm/dia, cm/h ou cm/min).
+    flux_top: Optional[float] = Field(default=None)
+    # mg_l (padrão) ou mmol_l. Vale para inlet_conc e para o rótulo dos resultados.
+    conc_unit: str = Field(default="mg_l")
+    molar_mass_g_mol: Optional[float] = Field(default=None, gt=0)
+    # None = 1 cm²/dia no solver (histórico). 0 = sem difusão molecular.
+    diffusion_cm2_day: Optional[float] = Field(default=None, ge=0)
     # Umidade inicial no modo série [% do intervalo θr→CC]; default 100%
     # (perfil na capacidade de campo — prática usual sem medição).
     # No modo Lâmina vale initial_moisture_pct.
@@ -290,9 +321,26 @@ class ScreenImages(BaseModel):
     hydrus_fluxos: Optional[str] = None
 
 
+class LevelRow(BaseModel):
+    """Instantâneo no estilo T_Level. Fluxos na convenção HYDRUS (negativo = para baixo)."""
+
+    t: float
+    volume_cm: float
+    q_top: Optional[float] = None
+    q_bottom: Optional[float] = None
+    h_mean_cm: float
+    infil_cum_cm: float = 0.0
+    drain_cum_cm: float = 0.0
+
+
 class SimulateResponse(BaseModel):
     drainage_mm: float
     solutes: list[SoluteBalance]
+    time_unit: str = "days"
+    top_bc: str = "atmospheric"
+    conc_unit: str = "mg_l"
+    molar_mass_g_mol: Optional[float] = None
+    level_rows: list[LevelRow] = Field(default_factory=list)
     plot_png_base64: Optional[str] = None
     plots_png_base64: Optional[dict[str, str]] = None
     extra_plots: list[ExtraPlot] = Field(default_factory=list)

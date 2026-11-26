@@ -22,11 +22,44 @@ def column_water_only_report(
     runoff_mm: float,
     storage_mm: float,
     obs_depths_cm,
+    time_unit: str = "days",
+    top_bc: str = "atmospheric",
+    h_top_cm: float | None = None,
+    ic_mode: str = "moisture",
+    initial_head_cm: float | None = None,
+    applied_mm: float | None = None,
 ) -> str:
     """Ramo coluna do laudo só-água do Gradio (Balanço Hídrico no domínio)."""
     e_cm = float(evap_mm_day) / 10.0
     t_cm = float(transp_mm_day) / 10.0
     t_days = float(total_days)
+    if time_unit == "hours":
+        n = t_days * 24.0
+        dur_txt = f"{n:.3g} " + ("hora" if abs(n - 1.0) < 1e-6 else "horas")
+    elif time_unit == "minutes":
+        n = t_days * 1440.0
+        dur_txt = f"{n:.3g} " + ("minuto" if abs(n - 1.0) < 1e-6 else "minutos")
+    else:
+        dur_txt = f"{t_days:.0f} dias"
+    if ic_mode == "head" and initial_head_cm is not None:
+        ic_line = f"* **Condição inicial:** h = {float(initial_head_cm):.0f} cm em todo o perfil\n"
+    elif ic_mode == "table":
+        ic_line = "* **Condição inicial:** tabela profundidade → h (ou θ), interpolação linear\n"
+    else:
+        ic_line = f"* **Umidade Prévia do Solo:** {float(initial_moisture_pct):.0f}% da capacidade de campo\n"
+    entry_mm = float(rain_mm if applied_mm is None else applied_mm)
+    if top_bc == "head":
+        htxt = f"{float(h_top_cm):.3g} cm" if h_top_cm is not None else "prescrita"
+        bc_line = f"* **Contorno de topo:** carga de pressão prescrita h = {htxt}, ensaio de **{dur_txt}**\n"
+        entry_name = "infiltração (carga prescrita)"
+    elif top_bc == "flux":
+        bc_line = f"* **Contorno de topo:** fluxo constante prescrito, ensaio de **{dur_txt}**\n"
+        entry_name = "fluxo prescrito"
+    else:
+        bc_line = (
+            f"* **Lâmina de Chuva/Irrigação:** **{float(rain_mm):.0f} mm** aplicada no início do ensaio de **{dur_txt}**\n"
+        )
+        entry_name = "chuva/irrigação"
     if crop is not None:
         transp_line = (
             f"* **Transpiração da cultura (T):** {t_cm * 10:.2f} mm/dia — {crop.name} "
@@ -45,13 +78,13 @@ def column_water_only_report(
         f"α = {float(soil.alpha):.4f} 1/cm, n = {float(soil.n):.3f}, Ks = {float(soil.ks):.1f} cm/dia, "
         f"ρb = {float(soil.bulk_density):.2f} g/cm³)\n\n"
         "#### 2. Condições do Ensaio\n"
-        f"* **Lâmina de Chuva/Irrigação:** **{float(rain_mm):.0f} mm** aplicada no início do ensaio de **{t_days:.0f} dias**\n"
-        f"* **Umidade Prévia do Solo:** {float(initial_moisture_pct):.0f}% da capacidade de campo\n"
+        f"{bc_line}"
+        f"{ic_line}"
         f"* **Evaporação do solo (E):** {e_cm * 10:.2f} mm/dia\n"
         f"{transp_line}\n"
         "#### 3. Balanço Hídrico (domínio completo, 0 a "
         f"{float(col_depth):.0f} cm)\n"
-        f"* **Entrada (chuva/irrigação):** {float(rain_mm):.1f} mm\n"
+        f"* **Entrada ({entry_name}):** {entry_mm:.1f} mm\n"
         f"* **Drenagem no fundo do perfil:** {float(drainage_mm):.1f} mm\n"
         f"* **Escoamento superficial:** {float(runoff_mm):.1f} mm\n"
         f"* **Δ Armazenamento no perfil (θfinal − θinicial):** {float(storage_mm):+.1f} mm\n"

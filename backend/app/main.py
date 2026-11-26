@@ -286,7 +286,17 @@ def health() -> dict:
 @app.get("/soils")
 def soils() -> list[dict]:
     return [
-        {"key": k, "name": s.name, "texture": {"sand_pct": s.sand_pct, "clay_pct": s.clay_pct}}
+        {
+            "key": k,
+            "name": s.name,
+            "texture": {"sand_pct": s.sand_pct, "clay_pct": s.clay_pct},
+            "theta_r": s.theta_r,
+            "theta_s": s.theta_s,
+            "alpha": s.alpha,
+            "n": s.n,
+            "ks": s.ks,
+            "bulk_density": s.bulk_density,
+        }
         for k, s in SOIL_DATABASE.items()
     ]
 

@@ -91,6 +91,22 @@ type Props = {
   setAnalysisEnd: (v: string) => void;
   printDays: string;
   setPrintDays: (v: string) => void;
+  timeUnit: string;
+  setTimeUnit: (v: string) => void;
+  topBc: string;
+  setTopBc: (v: string) => void;
+  hTop: string;
+  setHTop: (v: string) => void;
+  fluxTop: string;
+  setFluxTop: (v: string) => void;
+  icMode: string;
+  setIcMode: (v: string) => void;
+  hInit: string;
+  setHInit: (v: string) => void;
+  icTable: string;
+  setIcTable: (v: string) => void;
+  icKind: string;
+  setIcKind: (v: string) => void;
 };
 
 function Field({ label, children, helpKey }: { label: string; children: React.ReactNode; helpKey?: string }) {
@@ -196,7 +212,11 @@ export default function StepWater(props: Props) {
     appDay, setAppDay, printDaysLamina, setPrintDaysLamina, obsDepths, setObsDepths,
     useDualKc, activeDay1, kcbDay1, keDay1, etVaries,
     analysisStart, setAnalysisStart, analysisEnd, setAnalysisEnd, printDays, setPrintDays,
+    timeUnit, setTimeUnit, topBc, setTopBc, hTop, setHTop, fluxTop, setFluxTop,
+    icMode, setIcMode, hInit, setHInit, icTable, setIcTable, icKind, setIcKind,
   } = props;
+  const timeWord = timeUnit === "hours" ? "horas" : timeUnit === "minutes" ? "minutos" : "dias";
+  const fluxUnit = timeUnit === "hours" ? "cm/h" : timeUnit === "minutes" ? "cm/min" : "cm/dia";
   const [hubs, setHubs] = useState<HubInfo[]>([]);
   const [hubError, setHubError] = useState("");
   const [seriesInfo, setSeriesInfo] = useState("");
@@ -340,16 +360,71 @@ export default function StepWater(props: Props) {
       {isUniform && (
         <>
           <div className="form-row" style={{ marginTop: 16 }}>
-            <Field label="Lâmina de Chuva / Irrigação [mm]" helpKey="rain_mm">
-              <input value={rainMm} onChange={(e) => setRainMm(e.target.value)} inputMode="decimal" />
+            <Field label="Contorno no topo" helpKey="top_bc">
+              <select value={topBc} onChange={(e) => setTopBc(e.target.value)}>
+                <option value="atmospheric">Atmosférica (chuva/irrigação)</option>
+                <option value="head">Carga de pressão prescrita</option>
+                <option value="flux">Fluxo constante prescrito</option>
+              </select>
             </Field>
-            <Field label="Umidade Prévia do Solo [% do intervalo residual→CC]" helpKey="moisture">
-              <input value={moisture} onChange={(e) => setMoisture(e.target.value)} inputMode="decimal" />
+            <Field label="Unidade de tempo" helpKey="time_unit">
+              <select value={timeUnit} onChange={(e) => setTimeUnit(e.target.value)}>
+                <option value="days">Dias</option>
+                <option value="hours">Horas</option>
+                <option value="minutes">Minutos</option>
+              </select>
             </Field>
-            <Field label="Duração do Ensaio [dias]" helpKey="total_days">
+            <Field label={`Duração [${timeWord}]`} helpKey="total_days">
               <input value={days} onChange={(e) => setDays(e.target.value)} inputMode="decimal" />
             </Field>
           </div>
+          <div className="form-row">
+            {topBc === "head" && (
+              <Field label="Carga h no topo [cm]" helpKey="h_top">
+                <input value={hTop} onChange={(e) => setHTop(e.target.value)} inputMode="decimal" />
+              </Field>
+            )}
+            {topBc === "flux" && (
+              <Field label={`Fluxo prescrito [${fluxUnit}]`} helpKey="flux_top">
+                <input value={fluxTop} onChange={(e) => setFluxTop(e.target.value)} inputMode="decimal" />
+              </Field>
+            )}
+            {topBc === "atmospheric" && (
+              <Field label="Lâmina de Chuva / Irrigação [mm]" helpKey="rain_mm">
+                <input value={rainMm} onChange={(e) => setRainMm(e.target.value)} inputMode="decimal" />
+              </Field>
+            )}
+            <Field label="Condição inicial" helpKey="ic_head">
+              <select value={icMode} onChange={(e) => setIcMode(e.target.value)}>
+                <option value="moisture">Umidade (% residual→CC)</option>
+                <option value="head">Pressão h uniforme</option>
+                <option value="table">Tabela profundidade</option>
+              </select>
+            </Field>
+            {icMode === "moisture" && (
+              <Field label="Umidade Prévia do Solo [% do intervalo residual→CC]" helpKey="moisture">
+                <input value={moisture} onChange={(e) => setMoisture(e.target.value)} inputMode="decimal" />
+              </Field>
+            )}
+            {icMode === "head" && (
+              <Field label="h inicial [cm]" helpKey="ic_head">
+                <input value={hInit} onChange={(e) => setHInit(e.target.value)} inputMode="decimal" />
+              </Field>
+            )}
+          </div>
+          {icMode === "table" && (
+            <div className="form-row">
+              <Field label="Tabela (profundidade, valor)" helpKey="ic_head">
+                <textarea value={icTable} onChange={(e) => setIcTable(e.target.value)} rows={4} placeholder={"0, -100\n70, -100"} />
+              </Field>
+              <Field label="Valor da tabela" helpKey="ic_head">
+                <select value={icKind} onChange={(e) => setIcKind(e.target.value)}>
+                  <option value="h">h [cm]</option>
+                  <option value="theta">θ [cm³/cm³]</option>
+                </select>
+              </Field>
+            </div>
+          )}
           <div className="step-section-title">Evapotranspiração</div>
           <div className="form-row">
             <Field label="ET0 - Evapotranspiração de referência [mm/dia]" helpKey="et0">
@@ -389,7 +464,7 @@ export default function StepWater(props: Props) {
             </div>
           )}
           <div className="form-row">
-            <Field label="Dias de leitura [dia do ensaio]" helpKey="print_days">
+            <Field label={`Tempos de leitura [${timeWord}]`} helpKey="print_days">
               <input value={printDaysLamina} onChange={(e) => setPrintDaysLamina(e.target.value)} placeholder="vazio = 25, 50, 75 e 100% da duração" />
             </Field>
             <Field label="Nós de observação [cm]" helpKey="obs_depths">

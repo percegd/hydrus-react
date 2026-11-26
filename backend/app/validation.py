@@ -199,6 +199,17 @@ def build_payload(req: SimulateRequest) -> dict:
         p["print_days_text"] = ", ".join(
             str(int(v) if float(v).is_integer() else str(float(v))) for v in req.print_days
         )
+    p["time_unit"] = str(getattr(req, "time_unit", "days") or "days")
+    _inlet = 0.0
+    for _s in (req.solutes or []):
+        try:
+            _iv = getattr(_s, "inlet_conc", None)
+            if _iv is not None and float(_iv) > _inlet:
+                _inlet = float(_iv)
+        except (TypeError, ValueError):
+            continue
+    if _inlet > 0.0:
+        p["inlet_conc_mg_l"] = _inlet
 
     # Solutos: linhas NPK + 3 "Outro soluto" (mesmas chaves do Gradio).
     # T5: modo "Somente água" não exige soluto (validate_nutrients só cobra

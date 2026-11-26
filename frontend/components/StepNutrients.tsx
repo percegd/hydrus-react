@@ -117,6 +117,13 @@ type Props = {
   setReleaseType: (v: string) => void;
   releaseDays: string;
   setReleaseDays: (v: string) => void;
+  inletConc: string;
+  setInletConc: (v: string) => void;
+  concUnit: string;
+  setConcUnit: (v: string) => void;
+  molarMass: string;
+  setMolarMass: (v: string) => void;
+  laminaMm: string;
 };
 
 function FlaskIcon() {
@@ -175,7 +182,16 @@ export default function StepNutrients(props: Props) {
     fertContinuous, setFertContinuous,
     releaseType, setReleaseType,
     releaseDays, setReleaseDays,
+    inletConc, setInletConc, concUnit, setConcUnit, molarMass, setMolarMass, laminaMm,
   } = props;
+  const activeSym = rows.find((r) => r.active && !r.custom)?.symbol || rows.find((r) => r.active)?.symbol || "K";
+  const molarAuto: Record<string, number> = { N: 14.007, K: 39.0983, P: 30.973761, S: 32.065, Ca: 40.078, Mg: 24.305 };
+  const molarNum = parseFloat(String(molarMass).replace(",", ".")) || molarAuto[activeSym] || 0;
+  const concNum = parseFloat(String(inletConc).replace(",", "."));
+  const laminaNum = parseFloat(String(laminaMm).replace(",", "."));
+  const mgL = Number.isFinite(concNum) ? (concUnit === "mmol_l" ? concNum * molarNum : concNum) : NaN;
+  const mmolL = Number.isFinite(mgL) && molarNum > 0 ? mgL / molarNum : NaN;
+  const kgHa = Number.isFinite(mgL) && Number.isFinite(laminaNum) ? mgL * laminaNum * 0.01 : NaN;
 
   const [catalog, setCatalog] = useState<FertilizerInfo[]>([]);
   const [fertKey, setFertKey] = useState("polialita");
@@ -267,6 +283,27 @@ export default function StepNutrients(props: Props) {
 
       {!waterOnly && (
         <>
+          <div className="form-row" style={{ marginTop: 16 }}>
+            <Field label="Concentração na água de entrada" helpKey="inlet_conc">
+              <input value={inletConc} onChange={(e) => setInletConc(e.target.value)} inputMode="decimal" placeholder="vazio = dose ÷ lâmina" />
+            </Field>
+            <Field label="Unidade" helpKey="inlet_conc">
+              <select value={concUnit} onChange={(e) => setConcUnit(e.target.value)}>
+                <option value="mg_l">mg/L (ppm)</option>
+                <option value="mmol_l">mmol/L</option>
+              </select>
+            </Field>
+            <Field label="Massa molar [g/mol]" helpKey="inlet_conc">
+              <input value={molarMass} onChange={(e) => setMolarMass(e.target.value)} inputMode="decimal" placeholder={String(molarAuto[activeSym] ?? "")} />
+            </Field>
+          </div>
+          <p className="hint-text">
+            {Number.isFinite(mgL) && molarNum > 0
+              ? `${mgL.toFixed(4)} mg/L ÷ ${molarNum} g/mol = ${mmolL.toFixed(4)} mmol/L = ${(mmolL / 1000).toExponential(4)} mmol/cm³. `
+              : `mmol/L = (mg/L) / M. K = 39,0983 g/mol; N = 14,007. `}
+            {Number.isFinite(kgHa) ? `kg/ha = mg/L × ${laminaNum} mm × 0,01 = ${kgHa.toFixed(4)}.` : "kg/ha = mg/L × lâmina (mm) × 0,01."}
+            {" "}R = 1 + ρ Kd / θ.
+          </p>
           <div className="section-header-row">
             <button type="button" className="btn-modal-open" onClick={() => { setFertMsg(""); setFertError(""); setFertOpen(true); }}>
               <span className="cube-icon"><CubeIcon /></span>
