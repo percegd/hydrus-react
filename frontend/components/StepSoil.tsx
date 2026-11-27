@@ -194,6 +194,7 @@ export default function StepSoil({
   onPreview,
 }: Props) {
   const comCultura = cropMode === "com";
+  const canAdultPerennial = crops.some((c) => c.key === crop && c.adult_perennial === true);
   const [cropModalOpen, setCropModalOpen] = useState(false);
   useEffect(() => {
     if (!cropModalOpen) return;
@@ -421,19 +422,17 @@ export default function StepSoil({
           <div style={{ marginTop: 18 }}>
             <span className="step-section-title-inline">Situação da cultura no início da simulação</span>
             <div className="choice-cards" role="radiogroup" aria-label="Situação inicial">
-              {(["planting", "established", "perennial"] as const).map((m) => {
-                const isPer = m === "perennial";
-                const canPer = crop === "cafe" || crop === "cana_de_acucar";
-                const dis = isPer && !canPer;
+              {(["planting", "established", "perennial"] as const).filter((m) => m !== "perennial" || canAdultPerennial).map((m) => {
                 const label = m === "planting" ? "Plantio durante a simulação" : m === "established" ? "Cultura já estabelecida" : "Perene adulta";
                 return (
-                  <label key={m} className={`choice-card${cropStartMode === m ? " selected" : ""}${dis ? " is-disabled" : ""}`} title={dis ? "Perene adulta só para café e cana" : undefined}>
-                    <input type="radio" name="crop-start-mode" value={m} checked={cropStartMode === m} disabled={dis} onChange={() => setCropStartMode(m)} />
+                  <label key={m} className={`choice-card${cropStartMode === m ? " selected" : ""}`}>
+                    <input type="radio" name="crop-start-mode" value={m} checked={cropStartMode === m} onChange={() => setCropStartMode(m)} />
                     {label}
                   </label>
                 );
               })}
             </div>
+            {!canAdultPerennial && <p className="field-hint" style={{ margin: "8px 0 0" }}>Cultura anual: perene adulta não se aplica.</p>}
             {cropStartMode === "planting" && (
               <>
                 <div className="form-row" style={{ marginTop: 10 }}>

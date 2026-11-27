@@ -11,6 +11,7 @@
   --text: #24211c;
   --text-2: #5c564b;
   --text-3: #7e7668;
+  --placeholder: #8a8478;
   --accent: #059669;
   --accent-hover: #047857;
   --accent-soft: rgba(5, 150, 105, 0.12);
@@ -304,6 +305,35 @@ input:focus, select:focus, textarea:focus {
 }
 .field select, select { cursor: pointer; }
 .field input:disabled, .field select:disabled, input:disabled, select:disabled, textarea:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Valor digitado usa a cor do input. O placeholder precisa da própria
+   -webkit-text-fill-color: a do input pinta os dois iguais no Chrome. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
+  -webkit-text-fill-color: var(--placeholder);
+  opacity: 1;
+  font-style: italic;
+  font-weight: 400;
+}
+input::-webkit-input-placeholder,
+textarea::-webkit-input-placeholder {
+  color: var(--placeholder);
+  -webkit-text-fill-color: var(--placeholder);
+  font-style: italic;
+  font-weight: 400;
+}
+/* Opção vazia ("Selecione…") no mesmo tom do placeholder. Tema é só claro. */
+select:has(option[value=""]:checked),
+select.is-placeholder {
+  color: var(--placeholder);
+  -webkit-text-fill-color: var(--placeholder);
+  font-style: italic;
+  font-weight: 400;
+}
+select option[value=""] {
+  color: var(--placeholder);
+  font-style: italic;
+}
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 input[type="number"] { -moz-appearance: textfield; appearance: textfield; }

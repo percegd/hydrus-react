@@ -283,6 +283,9 @@ export default function Home() {
   }
 
   const DAP_DEFAULTS: Record<string, string> = { milho: "50", soja: "60", hortalicas: "60", cana_de_acucar: "150", milho_inicial: "12", milho_desenvolvimento: "50", soja_inicial: "15", soja_desenvolvimento: "70" };
+  function allowsAdultPerennial(key: string) {
+    return crops.some((c) => c.key === key && c.adult_perennial === true);
+  }
   function defaultStartMode(key: string, series: boolean) {
     if (key === "cafe") return "perennial";
     return series ? "planting" : "established";
@@ -297,9 +300,8 @@ export default function Home() {
   }
 
   function handleCropStartModeSelect(mode: string) {
-    const canPer = crop === "cafe" || crop === "cana_de_acucar";
     setCropStartTouched(true);
-    if (mode === "perennial" && !canPer) {
+    if (mode === "perennial" && !allowsAdultPerennial(crop)) {
       const series = rainMode === "hub" || rainMode === "upload";
       setCropStartMode(series ? "planting" : "established");
       return;
@@ -318,12 +320,12 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const canPer = crop === "cafe" || crop === "cana_de_acucar";
-    if (cropStartMode === "perennial" && !canPer) {
+    if (!crops.length) return;
+    if (cropStartMode === "perennial" && !allowsAdultPerennial(crop)) {
       const series = rainMode === "hub" || rainMode === "upload";
       setCropStartMode(series ? "planting" : "established");
     }
-  }, [rainMode, crop, cropStartMode]);
+  }, [rainMode, crop, cropStartMode, crops]);
 
   function fillHydraulics(found: Soil) {
     setThetaR(formatCatalog(found.theta_r, 4));
