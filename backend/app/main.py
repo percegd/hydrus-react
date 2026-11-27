@@ -301,6 +301,18 @@ def soils() -> list[dict]:
     ]
 
 
+# Cana tem ciclo anual da soca (perennial=False): o default da simulação não muda.
+# A soca adulta ainda pode começar com Kcb de meio de ciclo e raiz fixa.
+_ADULT_PERENNIAL_KEYS = frozenset({"cana_de_acucar"})
+
+
+def crop_adult_perennial(key: str, crop) -> bool:
+    """Situação inicial "perene adulta": toda cultura com perennial=True, mais a cana."""
+    if bool(getattr(crop, "perennial", False)):
+        return True
+    return str(key) in _ADULT_PERENNIAL_KEYS
+
+
 @app.get("/crops")
 def crops() -> list[dict]:
     return [
@@ -316,6 +328,7 @@ def crops() -> list[dict]:
             # Altura média da cultura [m] (FAO-56 Tab. 12; None = 1,0 m neutro):
             # usada no Kc dual (Tp = Kcb·ET0, Ep = Ke·ET0, cap. 7).
             "height_m": (float(c.height_m) if c.height_m is not None else None),
+            "adult_perennial": crop_adult_perennial(k, c),
         }
         for k, c in CROP_DATABASE.items()
     ]

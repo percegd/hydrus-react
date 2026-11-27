@@ -354,3 +354,59 @@ def test_preview_cana_established_repeat():
     # teto logístico restante (0 < restante < demanda total N 140)
     rem_n = float(j["remaining_demand_kg_ha"]["N"])
     assert 0.0 < rem_n < 140.0, j
+
+
+def test_perene_adulta_em_toda_cultura_perene():
+    """A opção vale para toda cultura perene e o modo chega ao dia 1 da simulação.
+
+    Anuais ficam de fora (a UI esconde a opção). Cana entra mesmo com
+    perennial=False: o ciclo default da soca não muda.
+    """
+    from backend.app.main import app, crop_adult_perennial
+    with TestClient(app) as client:
+        listed = client.get("/crops").json()
+        by_key = {c["key"]: c for c in listed}
+        assert set(by_key) == set(CROP_DATABASE)
+        for key, crop in CROP_DATABASE.items():
+            assert by_key[key]["adult_perennial"] is crop_adult_perennial(key, crop)
+            if crop.perennial:
+                assert by_key[key]["adult_perennial"] is True
+
+        def preview(key, **extra):
+            r = client.post("/crops/preview", json={
+                "soil_key": "latossolo_medio", "crop_key": key,
+                "depth_cm": 100.0, "total_days": 30, "rain_mm": 60.0,
+                "solutes": [], **extra,
+            })
+            assert r.status_code == 200, r.text
+            return r.json()
+
+        perenes = [k for k, c in CROP_DATABASE.items() if crop_adult_perennial(k, c)]
+        assert "cafe" in perenes and "cana_de_acucar" in perenes
+        assert CROP_DATABASE["cana_de_acucar"].perennial is False
+        for key in ("milho", "soja", "hortalicas", "milho_inicial",
+                    "milho_desenvolvimento", "soja_inicial", "soja_desenvolvimento"):
+            assert key not in perenes
+
+        for key in perenes:
+            crop = CROP_DATABASE[key]
+            j = preview(key, crop_start_mode="perennial")
+            assert j["mode"] == "perennial", j
+            assert j["stage_day1"] == "perene", j
+            assert j["active_day1"] is True, j
+            assert abs(float(j["kcb_day1"]) - float(crop.kcb_mid)) < 1e-9, j
+            assert abs(float(j["root_day1_cm"]) - float(crop.root_depth_cm)) < 1e-9, j
+            assert (j["hydrus_equiv"] or {}).get("lRoot") is False, j
+
+        plantio = preview("cana_de_acucar", crop_start_mode="planting", planting_day=1)
+        adulta = preview("cana_de_acucar", crop_start_mode="perennial")
+        assert plantio["mode"] == "planting" and plantio["stage_day1"] == "inicial"
+        assert float(plantio["kcb_day1"]) < float(adulta["kcb_day1"])
+        assert float(plantio["root_day1_cm"]) < float(adulta["root_day1_cm"])
+        assert (plantio["hydrus_equiv"] or {}).get("lRoot") is True
+
+        estabelecida = preview("milho", crop_start_mode="established", crop_age_dap=50)
+        plantio_milho = preview("milho", crop_start_mode="planting", planting_day=1)
+        assert estabelecida["mode"] == "established"
+        assert plantio_milho["mode"] == "planting"
+        assert estabelecida["stage_day1"] != plantio_milho["stage_day1"]
